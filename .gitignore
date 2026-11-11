@@ -1,0 +1,19 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+# docmill 실행 산출물
+.docmill/
+out/
+*.tmp
+# 엔진 바이너리 (CI 캐시·로컬 설치 위치)
+.engines/
+.DS_Store
+Thumbs.db

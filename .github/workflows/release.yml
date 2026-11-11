@@ -1,0 +1,60 @@
+name: Release
+
+# main에 머지될 때마다 release-please가 릴리스 PR(버전·변경 기록)을 관리한다.
+# 릴리스 PR이 머지되면 publish 잡이 `release` 환경에서 재현의 승인을 기다린 뒤 PyPI와 GHCR에 배포한다.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      release_created: ${{ steps.rp.outputs.release_created }}
+      tag_name: ${{ steps.rp.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: rp
+        with:
+          release-type: python
+      - name: 릴리스 PR에 CI 실행
+        if: steps.rp.outputs.prs_created == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: gh workflow run CI --repo "${{ github.repository }}" --ref "$HEAD"
+
+  publish:
+    needs: release-please
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: 패키지 빌드
+        run: uv build
+      - name: PyPI 배포 (Trusted Publishing)
+        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker 이미지 배포
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/jangjaehyeonn/docmill:${{ needs.release-please.outputs.tag_name }}
+            ghcr.io/jangjaehyeonn/docmill:latest

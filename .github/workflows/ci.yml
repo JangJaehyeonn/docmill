@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - name: 의존성 설치
+        run: uv sync --locked
+      - name: 린트
+        run: uv run ruff check .
+      - name: 포맷
+        run: uv run ruff format --check .
+      - name: 타입 검사
+        run: uv run mypy
+      - name: 단위 테스트
+        run: uv run pytest -q tests/unit
+      - name: 인수 테스트 대상 계산
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: python3 scripts/active_frs.py "$PR_TITLE" >> "$GITHUB_ENV"
+      - name: 인수 테스트 (완료된 요구사항 + 이 PR의 요구사항)
+        run: uv run pytest -q tests/acceptance || [ $? -eq 5 ]
+
+  guard:
+    name: protected-paths
+    if: github.event_name == 'pull_request' && startsWith(github.head_ref, 'claude/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 보호 경로 수정 금지
+        run: |
+          changed=$(git diff --name-only "origin/${{ github.base_ref }}...HEAD")
+          echo "$changed"
+          if echo "$changed" | grep -E '^(tests/acceptance/|\.github/|\.claude/|CLAUDE\.md|\.coderabbit\.yaml|docs/requirements/)'; then
+            echo "::error::Claude 브랜치에서 보호 경로를 수정했습니다. 구현을 고치세요."
+            exit 1
+          fi
+      - name: 테스트 건너뛰기 추가 금지
+        run: |
+          if git diff "origin/${{ github.base_ref }}...HEAD" -- tests | grep -E '^\+.*(pytest\.mark\.(skip|xfail)|pytest\.skip\(|pytest\.xfail\()'; then
+            echo "::error::테스트에 skip/xfail을 추가했습니다. 구현을 고치세요."
+            exit 1
+          fi

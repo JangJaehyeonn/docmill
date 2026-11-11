@@ -1,0 +1,41 @@
+# CodeRabbit 리뷰 설정
+language: "ko-KR"
+tone_instructions: "간결하고 구체적으로. 문제, 근거, 고칠 방법을 한 번에 적는다."
+reviews:
+  profile: "assertive"
+  request_changes_workflow: true
+  high_level_summary: true
+  poem: false
+  auto_review:
+    enabled: true
+    drafts: false
+  path_filters:
+    - "!uv.lock"
+  path_instructions:
+    - path: "**/*"
+      instructions: |
+        이 PR은 Claude Code가 이슈 하나를 구현한 것이다. 다음을 확인한다.
+        - PR 본문의 `Closes #N` 이슈에 적힌 인수 기준을 모두 충족했는가. 빠진 항목은 변경 요청한다.
+        - 요구사항에 없는 기능을 추가하지 않았는가.
+        - 새 의존성(pyproject.toml 변경)이나 구조 결정이 있는데 `docs/adr/` 문서가 없으면 변경 요청한다.
+    - path: "tests/acceptance/**"
+      instructions: |
+        보호 폴더다. Claude 브랜치(claude/*)에서 이 경로를 수정했다면 무조건 변경 요청한다.
+        acceptance/* 브랜치라면 테스트가 구현 방식이 아니라 사용자에게 보이는 결과를 검증하는지 본다.
+    - path: "tests/**"
+      instructions: |
+        skip, xfail, 기대값 완화처럼 테스트를 약하게 만드는 변경이 있으면 변경 요청한다.
+    - path: "src/docmill/**"
+      instructions: |
+        - MCP로 노출하는 도구는 업무 단위 도구 6개뿐이어야 한다. 엔진의 저수준 도구를 직접 노출하면 지적한다.
+        - 엔진 호출은 DocumentTool 인터페이스를 거쳐야 한다.
+        - 엔진 실패가 서버 예외로 번지지 않고 도구 결과로 반환되는지 본다.
+        - 모든 도구 호출이 실행 ID와 함께 로그에 남는지 본다.
+        - 파일 작업이 작업별 임시 폴더 안에서만 이뤄지는지, 엔진 프로세스에 시간 제한이 있는지 본다.
+    - path: "src/docmill/recipe/**"
+      instructions: |
+        재현성이 핵심이다. 현재 시각, 난수, 정렬되지 않은 dict·set 순회, 실행 환경에 따른 경로처럼
+        같은 입력에서 다른 결과를 만들 수 있는 코드를 반드시 지적한다.
+        레시피는 엔진 명령이 아니라 docmill 도구 호출과 인자를 저장해야 한다.
+chat:
+  auto_reply: true

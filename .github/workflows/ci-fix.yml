@@ -1,0 +1,63 @@
+name: Fix failing CI
+
+# Claude PR의 CI가 실패하면 Claude가 실패 로그를 보고 고친다. 최대 3회, 넘으면 needs-human.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+concurrency:
+  group: claude-agent
+  cancel-in-progress: false
+
+jobs:
+  fix:
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      startsWith(github.event.workflow_run.head_branch, 'claude/')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          fetch-depth: 0
+      - name: PR 번호 찾기
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+        run: echo "number=$(gh pr list --head "$HEAD_BRANCH" --state open --json number --jq '.[0].number')" >> "$GITHUB_OUTPUT"
+      - name: 시도 횟수 확인
+        id: attempt
+        if: steps.pr.outputs.number != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/fix_attempt.py "${{ steps.pr.outputs.number }}" ci >> "$GITHUB_OUTPUT"
+      - uses: astral-sh/setup-uv@v6
+        if: steps.attempt.outputs.proceed == 'true'
+        with:
+          enable-cache: true
+      - if: steps.attempt.outputs.proceed == 'true'
+        run: uv sync --locked
+      - uses: anthropics/claude-code-action@v1
+        if: steps.attempt.outputs.proceed == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            PR #${{ steps.pr.outputs.number }} (브랜치 ${{ github.event.workflow_run.head_branch }})의 CI가 실패했습니다.
+            시도 ${{ steps.attempt.outputs.n }}/3 입니다. CLAUDE.md의 규칙을 반드시 따르세요.
+            1. `gh run view ${{ github.event.workflow_run.id }} --log-failed`로 실패 원인을 확인하세요.
+            2. 테스트가 아니라 구현을 고치세요. 보호 경로 위반이면 그 변경을 되돌리세요.
+            3. 품질 검사를 모두 통과시킨 뒤 같은 브랜치로 푸시하세요.
+          claude_args: >-
+            --max-turns 40
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run:*),Bash(git:*),Bash(gh pr:*),Bash(gh run view:*),Bash(DOCMILL_ACTIVE_FRS=*)"

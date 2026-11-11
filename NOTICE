@@ -1,0 +1,12 @@
+docmill
+Copyright (c) 2026 JangJaehyeonn
+Licensed under the MIT License.
+
+docmill은 아래 오픈소스 문서 엔진을 별도 실행 파일로 호출한다.
+엔진의 소스 코드는 docmill 저장소에 포함되지 않으며, 각 엔진은 자체 라이선스를 따른다.
+
+- GridCraft  https://github.com/storytold/gridcraft  (MIT OR Apache-2.0)
+- DeckCraft  https://github.com/storytold/deckcraft  (MIT OR Apache-2.0)
+- WordCraft  https://github.com/storytold/wordcraft  (MIT OR Apache-2.0)
+
+docmill은 위 프로젝트 및 ArtCraft와 제휴 관계가 없으며, ArtCraft의 이름·로고·브랜드를 사용하지 않는다.

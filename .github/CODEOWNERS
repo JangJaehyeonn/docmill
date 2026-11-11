@@ -1,0 +1,8 @@
+# 아래 경로는 재현의 승인 없이는 머지되지 않는다.
+# 자동화 규칙과 인수 기준을 AI가 스스로 바꾸지 못하게 하기 위한 장치다.
+/tests/acceptance/      @JangJaehyeonn
+/docs/requirements/     @JangJaehyeonn
+/.github/               @JangJaehyeonn
+/.claude/               @JangJaehyeonn
+/CLAUDE.md              @JangJaehyeonn
+/.coderabbit.yaml       @JangJaehyeonn

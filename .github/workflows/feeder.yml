@@ -1,0 +1,61 @@
+name: Issue feeder
+
+# 매일 01:00 (KST)에 다음 작업을 골라 Claude에게 넘긴다.
+# - `ready` 라벨이 있고, 의존 요구사항이 모두 끝났고, `needs-human`·`in-progress`가 없는 이슈 중
+#   Phase가 가장 낮고 번호가 가장 작은 것 하나.
+# - Claude가 연 PR이 아직 열려 있으면 아무것도 하지 않는다 (한 번에 하나).
+on:
+  schedule:
+    - cron: "0 16 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: claude-agent
+  cancel-in-progress: false
+
+jobs:
+  feed:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 다음 이슈 고르기
+        id: pick
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/pick_next_issue.py >> "$GITHUB_OUTPUT"
+      - name: 작업 중 표시
+        if: steps.pick.outputs.issue != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh issue edit "${{ steps.pick.outputs.issue }}" --add-label in-progress
+      - uses: astral-sh/setup-uv@v6
+        if: steps.pick.outputs.issue != ''
+        with:
+          enable-cache: true
+      - if: steps.pick.outputs.issue != ''
+        run: uv sync --locked
+      - uses: anthropics/claude-code-action@v1
+        if: steps.pick.outputs.issue != ''
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            저장소 ${{ github.repository }}의 이슈 #${{ steps.pick.outputs.issue }} (${{ steps.pick.outputs.fr }})를 구현하세요.
+            CLAUDE.md의 규칙을 반드시 따르세요.
+            1. `gh issue view ${{ steps.pick.outputs.issue }}`로 요구사항, 인수 기준, 의존 요구사항을 읽으세요.
+            2. 브랜치 `claude/${{ steps.pick.outputs.issue }}-<짧은-영문-설명>`을 만들고 구현과 단위 테스트를 작성하세요.
+            3. `DOCMILL_ACTIVE_FRS=${{ steps.pick.outputs.fr }} uv run pytest -q tests/acceptance`도 통과해야 합니다.
+            4. 커밋 후 푸시하고 `gh pr create`로 PR을 여세요. 제목 `feat(${{ steps.pick.outputs.fr }}): ...`, 본문에 `Closes #${{ steps.pick.outputs.issue }}`.
+            5. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
+          claude_args: >-
+            --max-turns 60
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run:*),Bash(uv add:*),Bash(git:*),Bash(gh issue:*),Bash(gh pr:*),Bash(DOCMILL_ACTIVE_FRS=*)"
