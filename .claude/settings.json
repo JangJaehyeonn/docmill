@@ -18,7 +18,8 @@
       "Bash(gh pr create:*)",
       "Bash(gh pr view:*)",
       "Bash(gh pr comment:*)",
-      "Bash(gh pr checks:*)"
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr merge --auto --squash:*)"
     ],
     "deny": [
       "Edit(tests/acceptance/**)",
@@ -35,7 +36,9 @@
       "Write(docs/requirements/**)",
       "Bash(git push origin main:*)",
       "Bash(git push --force:*)",
-      "Bash(gh pr merge:*)",
+      "Bash(gh pr merge --admin:*)",
+      "Bash(gh pr merge --merge:*)",
+      "Bash(gh pr merge --rebase:*)",
       "Read(./.env)",
       "Read(./.env.*)"
     ]

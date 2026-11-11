@@ -22,6 +22,7 @@ Claude Code는 이 문서를 최우선 규칙으로 따른다.
    ```
 5. 커밋 메시지는 Conventional Commits: `feat: ...`, `fix: ...`, `test: ...`, `docs: ...`, `chore: ...`. 본문 끝에 `Refs #<이슈번호>`.
 6. PR 제목: `feat(FR-05): excel_to_report_ppt 구현`. 본문은 PR 템플릿을 채우고 `Closes #<이슈번호>`를 넣는다.
+7. PR을 연 뒤 `gh pr merge --auto --squash <PR번호>`로 자동 머지를 예약한다. 다른 방식의 머지는 하지 않는다.
 
 ## 절대 하지 말 것 (보호 규칙)
 - `tests/acceptance/`, `.github/`, `CLAUDE.md`, `.claude/`, `.coderabbit.yaml`, `docs/requirements/`를 수정하지 않는다. 이 경로는 사람 승인으로만 바뀐다.

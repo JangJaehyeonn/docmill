@@ -55,7 +55,8 @@ jobs:
             2. 브랜치 `claude/${{ steps.pick.outputs.issue }}-<짧은-영문-설명>`을 만들고 구현과 단위 테스트를 작성하세요.
             3. `DOCMILL_ACTIVE_FRS=${{ steps.pick.outputs.fr }} uv run pytest -q tests/acceptance`도 통과해야 합니다.
             4. 커밋 후 푸시하고 `gh pr create`로 PR을 여세요. 제목 `feat(${{ steps.pick.outputs.fr }}): ...`, 본문에 `Closes #${{ steps.pick.outputs.issue }}`.
-            5. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
+            5. PR을 연 뒤 `gh pr merge --auto --squash <PR번호>`로 자동 머지를 예약하세요. 검사와 리뷰가 통과해야 실제로 머지됩니다.
+            6. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
           claude_args: >-
             --max-turns 60
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run:*),Bash(uv add:*),Bash(git:*),Bash(gh issue:*),Bash(gh pr:*),Bash(DOCMILL_ACTIVE_FRS=*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run:*),Bash(uv add:*),Bash(git:*),Bash(gh issue:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr comment:*),Bash(gh pr checks:*),Bash(gh pr merge --auto --squash:*),Bash(DOCMILL_ACTIVE_FRS=*)"
