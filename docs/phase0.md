@@ -33,9 +33,10 @@ claude mcp add wordcraft -- wordcraft-cli mcp
   - 위 GridCraft 작업을 `gridcraft-cli run --quiet --cmd 'range.setValues=…'`(원본 20행) `--cmd 'range.setValues=…'`(SUMIF 합계표) `--cmd 'home.bold=…'` `--cmd 'insert.chart=…' --out runN.xlsx` 스크립트로 바꿔 두 번 실행했다.
   - `gridcraft-cli cat`(값), `cat --formulas`(수식), `info` 출력을 `diff`로 비교했더니 모두 같았다.
   - run1.xlsx와 run2.xlsx는 바이트 단위로도 같다(SHA-256 `36177360…1f0e`). MCP로 만든 test.xlsx도 같은 해시였다.
+  - 이 기록은 엔진이 결정적인지 확인한 1회성 실험이다. 원본 데이터와 전체 명령은 남기지 않았다. 재현 가능한 검증은 Phase 1 인수 테스트에서 `tests/fixtures/`의 고정 입력과 전체 명령으로 다시 만든다.
 - 참고(추가 확인):
   - DeckCraft: 같은 MCP 호출을 두 번 해서 저장한 pptx 2개가 바이트 단위로 같았다.
-  - WordCraft: 같은 MCP 호출을 두 번 해서 저장한 docx 2개는 `docProps/core.xml`의 `dcterms:created`/`modified` 시각만 달랐다. 나머지 파트와 `wordcraft-cli text` 출력은 같았다. docmill에서 결과를 비교할 때는 core.xml을 빼거나 정규화해야 한다.
+  - WordCraft: 같은 MCP 호출을 두 번 해서 저장한 docx 2개는 `docProps/core.xml`의 `dcterms:created`/`modified` 시각만 달랐다. 나머지 파트와 `wordcraft-cli text` 출력은 같았다. docmill에서 결과를 비교할 때는 core.xml 전체를 빼지 말고 `dcterms:created`/`dcterms:modified` 두 시각만 고정값으로 정규화한 뒤 나머지 메타데이터(제목·작성자 등)는 그대로 비교한다.
 
 ## 가정 확인 (요구사항 정의서 v2 4장)
 - [x] 세 엔진의 헤드리스 MCP 서버가 실행된다. 세 서버 모두 `<엔진>-cli mcp`로 헤드리스 실행되고 `tools/call`에 응답했다. 단 Claude Code에 등록된 것은 gridcraft뿐이었다.
@@ -51,5 +52,5 @@ claude mcp add wordcraft -- wordcraft-cli mcp
 - 미루는 기능:
   - DeckCraft 차트의 위치·크기 자동 배치. 지금은 기본 위치에 들어가 제목과 겹치므로, Phase 1에서는 레이아웃을 `blank`로 쓰거나 `run_command`로 위치를 조정하는 정도로 처리한다.
   - GridCraft 피벗 머리글 현지화(`Row Labels` 등)
-  - WordCraft 문서 메타데이터(core.xml 시각) 고정. 재현성 비교에서 제외하는 것으로 대신한다.
+  - WordCraft 문서 메타데이터(core.xml 시각) 고정. 재현성 비교에서 `dcterms:created`/`dcterms:modified`만 정규화하는 것으로 대신한다.
   - 다른 앱(Office) 호환성 자동 검증
