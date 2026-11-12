@@ -57,7 +57,7 @@ def test_client_lists_tools_and_calls_one(
     engine: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _, env_name, binary, sample = ENGINES[engine]
-    exe = shutil.which(binary)
+    exe = os.environ.get(env_name) or shutil.which(binary)
     if exe is None:
         pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env_name, exe)
@@ -181,6 +181,8 @@ def test_render_output_outside_work_folder_rejected_before_engine_call(
     outside = tmp_path / "outside"
     outside.mkdir()
     inside_doc = workdir / f"doc{Path(ENGINES[engine][3]).suffix}"
+    # 입력 문서는 실제로 있어야 '입력 없음' 실패와 '출력 경로 거부'가 구분된다.
+    inside_doc.write_bytes(b"placeholder")
     if kind == "dotdot":
         out_dir = workdir / ".." / "outside"
     elif kind == "absolute":

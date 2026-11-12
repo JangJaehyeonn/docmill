@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import re
 import shutil
 import zipfile
@@ -80,7 +81,7 @@ def test_temp_folder_removed_after_work(
 ) -> None:
     from docmill.engines import get_tool
 
-    exe = shutil.which(binary)
+    exe = os.environ.get(env) or shutil.which(binary)
     if exe is None:
         pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env, exe)
@@ -132,7 +133,7 @@ def test_saving_twice_is_byte_identical(
 ) -> None:
     from docmill.engines import get_tool
 
-    exe = shutil.which(binary)
+    exe = os.environ.get(env) or shutil.which(binary)
     if exe is None:
         pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env, exe)
