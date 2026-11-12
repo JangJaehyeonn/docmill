@@ -82,7 +82,7 @@ def test_temp_folder_removed_after_work(
 
     exe = shutil.which(binary)
     if exe is None:
-        pytest.skip(f"{binary} 실행 파일이 없다")
+        pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env, exe)
     with get_tool(Path(sample)) as tool:
         workdir = Path(tool.workdir)
@@ -134,7 +134,7 @@ def test_saving_twice_is_byte_identical(
 
     exe = shutil.which(binary)
     if exe is None:
-        pytest.skip(f"{binary} 실행 파일이 없다")
+        pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env, exe)
     outputs: list[bytes] = []
     for i in range(2):

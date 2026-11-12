@@ -59,7 +59,7 @@ def test_client_lists_tools_and_calls_one(
     _, env_name, binary, sample = ENGINES[engine]
     exe = shutil.which(binary)
     if exe is None:
-        pytest.skip(f"{binary} 실행 파일이 없다")
+        pytest.fail(f"{binary} 실행 파일이 없다 (CI는 setup-engines로 설치한다)")
     monkeypatch.setenv(env_name, exe)
     shutil.copy(FIXTURES / sample, tmp_path / sample)
     with _adapter(engine, tmp_path) as tool:
@@ -164,3 +164,32 @@ def test_paths_outside_work_folder_rejected_before_engine_call(
         results = [tool.open(target), tool.save(target), tool.render(target, workdir)]
     assert all(not r.ok and r.message for r in results)
     assert not called.exists(), "작업 폴더 밖 경로인데 엔진이 호출됐다"
+
+
+@pytest.mark.fr("FR-02")
+@posix_only
+@pytest.mark.parametrize("engine", list(ENGINES))
+@pytest.mark.parametrize("kind", ["dotdot", "absolute", "symlink"])
+def test_render_output_outside_work_folder_rejected_before_engine_call(
+    engine: str, kind: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    called = tmp_path / "engine-called"
+    fake = _fake_engine(tmp_path, f"open({str(called)!r}, 'w').write('x')")
+    monkeypatch.setenv(ENGINES[engine][1], str(fake))
+    workdir = tmp_path / "work"
+    workdir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    inside_doc = workdir / f"doc{Path(ENGINES[engine][3]).suffix}"
+    if kind == "dotdot":
+        out_dir = workdir / ".." / "outside"
+    elif kind == "absolute":
+        out_dir = outside
+    else:
+        (workdir / "out-link").symlink_to(outside, target_is_directory=True)
+        out_dir = workdir / "out-link"
+    with _adapter(engine, workdir, timeout=5) as tool:
+        result = tool.render(inside_doc, out_dir)
+    assert not result.ok and result.message
+    assert not called.exists(), "출력 폴더가 작업 폴더 밖인데 엔진이 호출됐다"
+    assert not any(outside.iterdir()), "작업 폴더 밖에 파일이 생겼다"

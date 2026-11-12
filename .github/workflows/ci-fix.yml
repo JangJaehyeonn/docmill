@@ -50,8 +50,18 @@ jobs:
         if: steps.attempt.outputs.proceed == 'true'
         with:
           enable-cache: true
-      - uses: ./.github/actions/setup-engines
+      # 수정 대상 브랜치가 아니라 이 워크플로 리비전의 설치 액션을 쓴다 (오래된 브랜치에는 액션이 없을 수 있음).
+      - uses: actions/checkout@v4
         if: steps.attempt.outputs.proceed == 'true'
+        with:
+          ref: ${{ github.sha }}
+          path: .pipeline
+          sparse-checkout: .github/actions
+      - uses: ./.pipeline/.github/actions/setup-engines
+        if: steps.attempt.outputs.proceed == 'true'
+      - name: 설치 액션 사본 정리 (커밋에 섞이지 않게)
+        if: steps.attempt.outputs.proceed == 'true'
+        run: rm -rf .pipeline
       - if: steps.attempt.outputs.proceed == 'true'
         run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
