@@ -53,7 +53,8 @@ def _stop_hook_active() -> bool:
     if sys.stdin is None or sys.stdin.isatty():
         return False
     try:
-        payload = json.loads(sys.stdin.read() or "{}")
+        # Read bytes and decode as UTF-8: Windows would otherwise use cp949 for piped stdin.
+        payload = json.loads(sys.stdin.buffer.read().decode("utf-8") or "{}")
     except (json.JSONDecodeError, UnicodeDecodeError):
         return False
     return isinstance(payload, dict) and payload.get("stop_hook_active") is True
