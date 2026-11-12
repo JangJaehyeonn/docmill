@@ -52,8 +52,12 @@ jobs:
       - name: 보호 폴더로 옮기고 PR 열기
         env:
           GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          # claude-code-action이 끝나면서 자기 git 인증을 정리하므로 워크플로 토큰으로 다시 설정한다.
+          git config --local --unset-all http.https://github.com/.extraheader || true
+          git remote set-url origin "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
           src="tests/acceptance_draft/phase${PHASE}"
           dest="tests/acceptance/phase${PHASE}"
           if [ ! -d "$src" ] || ! find "$src" -name 'test_*.py' | grep -q .; then
