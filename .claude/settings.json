@@ -1,0 +1,67 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(uv sync:*)",
+      "Bash(uv run:*)",
+      "Bash(uv add:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git checkout:*)",
+      "Bash(git switch:*)",
+      "Bash(git push origin claude/*)",
+      "Bash(git push -u origin claude/*)",
+      "Bash(gh issue view:*)",
+      "Bash(gh issue comment:*)",
+      "Bash(gh issue edit:*)",
+      "Bash(gh pr create:*)",
+      "Bash(gh pr view:*)",
+      "Bash(gh pr comment:*)",
+      "Bash(gh pr checks:*)",
+      "Bash(gh pr merge --auto --squash:*)"
+    ],
+    "deny": [
+      "Edit(tests/acceptance/**)",
+      "Write(tests/acceptance/**)",
+      "Edit(.github/**)",
+      "Write(.github/**)",
+      "Edit(.claude/**)",
+      "Write(.claude/**)",
+      "Edit(CLAUDE.md)",
+      "Write(CLAUDE.md)",
+      "Edit(.coderabbit.yaml)",
+      "Write(.coderabbit.yaml)",
+      "Edit(docs/requirements/**)",
+      "Write(docs/requirements/**)",
+      "Edit(scripts/**)",
+      "Write(scripts/**)",
+      "Edit(ruff.toml)",
+      "Write(ruff.toml)",
+      "Edit(mypy.ini)",
+      "Write(mypy.ini)",
+      "Edit(pytest.ini)",
+      "Write(pytest.ini)",
+      "Bash(git push origin main:*)",
+      "Bash(git push --force:*)",
+      "Bash(gh pr merge --admin:*)",
+      "Bash(gh pr merge --merge:*)",
+      "Bash(gh pr merge --rebase:*)",
+      "Read(./.env)",
+      "Read(./.env.*)"
+    ]
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "uv run python scripts/check.py"
+          }
+        ]
+      }
+    ]
+  }
+}

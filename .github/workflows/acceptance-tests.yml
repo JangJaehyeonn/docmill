@@ -1,0 +1,85 @@
+name: Acceptance tests draft
+
+# Phase를 시작할 때 수동 실행한다.
+# Claude가 그 Phase 요구사항의 인수 기준을 테스트 초안으로 만들고,
+# 이 워크플로가 보호 폴더(tests/acceptance)로 옮겨 PR을 연다. 재현이 PR 하나로 승인한다.
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: "인수 테스트를 만들 Phase 번호 (1~4)"
+        required: true
+        type: choice
+        options: ["1", "2", "3", "4"]
+
+permissions: {}
+
+jobs:
+  draft:
+    concurrency:
+      group: claude-implement
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: write
+    env:
+      PHASE: ${{ inputs.phase }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          prompt: |
+            `docs/requirements/issues.toml`에서 phase = ${{ inputs.phase }}인 요구사항들의 `acceptance` 항목을 pytest 테스트로 옮기세요.
+            - 파일은 `tests/acceptance_draft/phase${{ inputs.phase }}/test_<fr번호소문자>.py`에만 쓰세요 (예: test_fr05.py). 다른 경로는 수정하지 마세요.
+            - 모든 테스트 함수에 `@pytest.mark.fr("FR-xx")`를 붙이세요. 표시가 없으면 테스트 수집이 실패합니다.
+            - 아직 구현이 없으므로 테스트는 실패해도 됩니다. 구현 방법이 아니라 사용자가 보는 결과(도구 출력, 생성 파일 내용)를 검증하세요.
+            - 샘플 파일은 `tests/fixtures/`의 파일 이름을 쓰고, 없는 파일은 테스트 상단 주석에 필요한 샘플을 적으세요.
+            - 커밋하지 마세요. 파일만 만드세요.
+          claude_args: >-
+            --max-turns 40
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*)"
+      - name: 보호 폴더로 옮기고 PR 열기
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          src="tests/acceptance_draft/phase${PHASE}"
+          dest="tests/acceptance/phase${PHASE}"
+          if [ ! -d "$src" ] || ! find "$src" -name 'test_*.py' | grep -q .; then
+            echo "::error::테스트 초안이 만들어지지 않았습니다."
+            exit 1
+          fi
+          mkdir -p "$dest"
+          for f in "$src"/*; do
+            name=$(basename "$f")
+            if [ -e "$dest/$name" ]; then
+              echo "::error::이미 있는 인수 테스트를 덮어쓰려 합니다: $dest/$name"
+              exit 1
+            fi
+          done
+          cp -r "$src"/. "$dest/"
+          find "$dest" -name 'test_*.py' | grep -q .
+          rm -rf tests/acceptance_draft
+          touch "$dest/__init__.py"
+          branch="acceptance/phase-${PHASE}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -c "$branch"
+          git add tests/acceptance
+          git commit -m "test(acceptance): Phase ${PHASE} 인수 기준 테스트 초안"
+          git push -u origin "$branch"
+          gh pr create --base main --head "$branch" \
+            --title "test(acceptance): Phase ${PHASE} 인수 기준 테스트" \
+            --body "Phase ${PHASE} 요구사항의 인수 기준을 테스트로 옮긴 초안입니다. 재현 승인 후 머지하면 이 Phase 구현 PR들의 합격 기준이 됩니다."
+          gh workflow run CI --ref "$branch"

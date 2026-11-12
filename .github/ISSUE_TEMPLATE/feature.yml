@@ -1,0 +1,33 @@
+name: 요구사항 (FR)
+description: 구현할 요구사항 하나. 보통은 scripts/create_issues.py로 자동 생성한다.
+labels: []
+body:
+  - type: input
+    id: fr
+    attributes:
+      label: 요구사항 ID
+      placeholder: FR-21
+    validations:
+      required: true
+  - type: textarea
+    id: detail
+    attributes:
+      label: 요구사항
+      description: 무엇을 해야 하는지. 입력·출력이 있으면 적는다.
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 인수 기준
+      description: 사용자 입장에서 확인할 수 있는 결과를 체크리스트로 적는다.
+      value: |
+        - [ ]
+    validations:
+      required: true
+  - type: input
+    id: depends
+    attributes:
+      label: 의존
+      description: "형식을 지켜야 이슈 공급기가 읽는다. 예: Depends on: FR-03, FR-16"
+      value: "Depends on: "
