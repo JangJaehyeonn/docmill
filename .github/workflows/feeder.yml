@@ -74,8 +74,9 @@ jobs:
             echo "이슈가 이미 닫혔습니다 (PR 머지 완료)."
             exit 0
           fi
-          count=$(gh pr list --state all --limit 200 --json headRefName \
-            --jq "[.[] | select(.headRefName | startswith(\"claude/${ISSUE}-\"))] | length")
+          # 열린 PR 또는 머지된 PR만 센다. 머지 없이 닫힌 PR만 있으면 실패로 보고 사람에게 넘긴다.
+          count=$(gh pr list --state all --limit 200 --json headRefName,state \
+            --jq "[.[] | select((.headRefName | startswith(\"claude/${ISSUE}-\")) and (.state == \"OPEN\" or .state == \"MERGED\"))] | length")
           if [ "$count" = "0" ]; then
             gh issue edit "$ISSUE" --remove-label in-progress --add-label needs-human
             gh issue comment "$ISSUE" --body "@JangJaehyeonn 자동 구현이 PR을 열지 못하고 끝났습니다. 실행 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

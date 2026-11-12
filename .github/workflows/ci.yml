@@ -69,12 +69,20 @@ jobs:
           fi
       - name: 보호 경로 수정 금지
         run: |
-          changed=$(git diff --name-only --no-renames "origin/${BASE_REF}...HEAD")
-          echo "$changed"
-          if echo "$changed" | grep -E '^(tests/acceptance/|scripts/|\.github/|\.claude/|CLAUDE\.md|\.coderabbit\.yaml|docs/requirements/|ruff\.toml|mypy\.ini|pytest\.ini)'; then
-            echo "::error::Claude 브랜치에서 보호 경로를 수정했습니다. 구현을 고치세요."
-            exit 1
-          fi
+          # -z: 한글 등 비ASCII 경로도 따옴표·이스케이프 없이 실제 경로로 검사한다.
+          git diff --name-only --no-renames -z "origin/${BASE_REF}...HEAD" | python3 -c '
+          import re, sys
+          protected = re.compile(
+              r"^(tests/acceptance/|scripts/|\.github/|\.claude/|docs/requirements/"
+              r"|CLAUDE\.md$|\.coderabbit\.yaml$|ruff\.toml$|mypy\.ini$|pytest\.ini$)"
+          )
+          paths = [p for p in sys.stdin.buffer.read().decode("utf-8", "surrogateescape").split("\0") if p]
+          print("\n".join(paths))
+          bad = [p for p in paths if protected.match(p)]
+          for p in bad:
+              print(f"::error file={p}::Claude 브랜치에서 보호 경로를 수정했습니다. 구현을 고치세요.")
+          sys.exit(1 if bad else 0)
+          '
       - name: 테스트 건너뛰기 추가 금지
         run: |
           if git diff "origin/${BASE_REF}...HEAD" -- tests | grep -E '^\+.*(pytest\.mark\.(skip|xfail)|pytest\.skip\(|pytest\.xfail\()'; then
