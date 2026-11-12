@@ -1,0 +1,80 @@
+name: Phase advance
+
+# Phase 진행을 자동으로 넘긴다. 사람이 하는 일은 인수 테스트 PR 승인 하나뿐이다.
+# 1) 인수 테스트(tests/acceptance/phaseN)가 main에 머지되면 → Phase N 이슈에 `ready`
+# 2) Phase N 이슈가 모두 닫히면 → Phase N+1 이슈 생성 + 인수 테스트 초안 워크플로 실행
+on:
+  push:
+    branches: [main]
+    paths: ["tests/acceptance/phase*/**"]
+  issues:
+    types: [closed]
+
+permissions: {}
+
+concurrency:
+  group: phase-advance
+  cancel-in-progress: false
+
+jobs:
+  ready:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: 인수 테스트가 머지된 Phase의 이슈를 ready로
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          phases=$(git diff --name-only "$BEFORE" "$AFTER" -- tests/acceptance \
+            | sed -nE 's#^tests/acceptance/phase([0-9]+)/.*#\1#p' | sort -u)
+          for p in $phases; do
+            echo "Phase $p 이슈를 ready로 표시합니다."
+            python3 scripts/create_issues.py --mark-ready "$p"
+          done
+
+  next:
+    if: >-
+      github.event_name == 'issues' &&
+      contains(join(github.event.issue.labels.*.name, ','), 'phase-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Phase가 끝났으면 다음 Phase 시작
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          phase=$(printf '%s' "$LABELS" | tr ',' '\n' | sed -nE 's/^phase-([0-9]+)$/\1/p' | head -n1)
+          [ -n "$phase" ] || exit 0
+          open=$(gh issue list --label "phase-$phase" --state open --json number --jq length)
+          if [ "$open" != "0" ]; then
+            echo "Phase $phase 남은 이슈: $open"
+            exit 0
+          fi
+          next=$((phase + 1))
+          if [ "$next" -gt 4 ]; then
+            echo "마지막 Phase까지 끝났습니다."
+            exit 0
+          fi
+          existing=$(gh issue list --label "phase-$next" --state all --json number --jq length)
+          if [ "$existing" != "0" ]; then
+            echo "Phase $next 이슈가 이미 있습니다. 중복 실행을 막기 위해 멈춥니다."
+            exit 0
+          fi
+          python3 scripts/create_issues.py --phase "$next"
+          gh workflow run acceptance-tests.yml -f phase="$next"
+          echo "Phase $next 이슈를 만들고 인수 테스트 초안 작업을 시작했습니다."
