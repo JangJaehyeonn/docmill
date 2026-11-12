@@ -12,12 +12,13 @@ on:
         type: choice
         options: ["1", "2", "3", "4"]
 
-concurrency:
-  group: claude-agent
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
   draft:
+    concurrency:
+      group: claude-implement
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 60
     permissions:
@@ -41,27 +42,40 @@ jobs:
           prompt: |
             `docs/requirements/issues.toml`에서 phase = ${{ inputs.phase }}인 요구사항들의 `acceptance` 항목을 pytest 테스트로 옮기세요.
             - 파일은 `tests/acceptance_draft/phase${{ inputs.phase }}/test_<fr번호소문자>.py`에만 쓰세요 (예: test_fr05.py). 다른 경로는 수정하지 마세요.
-            - 각 테스트 함수에 `@pytest.mark.fr("FR-xx")`를 붙이세요.
+            - 모든 테스트 함수에 `@pytest.mark.fr("FR-xx")`를 붙이세요. 표시가 없으면 테스트 수집이 실패합니다.
             - 아직 구현이 없으므로 테스트는 실패해도 됩니다. 구현 방법이 아니라 사용자가 보는 결과(도구 출력, 생성 파일 내용)를 검증하세요.
             - 샘플 파일은 `tests/fixtures/`의 파일 이름을 쓰고, 없는 파일은 테스트 상단 주석에 필요한 샘플을 적으세요.
             - 커밋하지 마세요. 파일만 만드세요.
           claude_args: >-
             --max-turns 40
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv run:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*)"
       - name: 보호 폴더로 옮기고 PR 열기
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           src="tests/acceptance_draft/phase${PHASE}"
-          if [ ! -d "$src" ]; then echo "::error::테스트 초안이 만들어지지 않았습니다."; exit 1; fi
+          dest="tests/acceptance/phase${PHASE}"
+          if [ ! -d "$src" ] || ! find "$src" -name 'test_*.py' | grep -q .; then
+            echo "::error::테스트 초안이 만들어지지 않았습니다."
+            exit 1
+          fi
+          mkdir -p "$dest"
+          for f in "$src"/*; do
+            name=$(basename "$f")
+            if [ -e "$dest/$name" ]; then
+              echo "::error::이미 있는 인수 테스트를 덮어쓰려 합니다: $dest/$name"
+              exit 1
+            fi
+          done
+          cp -r "$src"/. "$dest/"
+          find "$dest" -name 'test_*.py' | grep -q .
+          rm -rf tests/acceptance_draft
+          touch "$dest/__init__.py"
           branch="acceptance/phase-${PHASE}"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git switch -c "$branch"
-          mkdir -p "tests/acceptance/phase${PHASE}"
-          git mv -k "$src"/* "tests/acceptance/phase${PHASE}/" 2>/dev/null || cp -r "$src"/. "tests/acceptance/phase${PHASE}/"
-          rm -rf tests/acceptance_draft
-          touch "tests/acceptance/phase${PHASE}/__init__.py"
           git add tests/acceptance
           git commit -m "test(acceptance): Phase ${PHASE} 인수 기준 테스트 초안"
           git push -u origin "$branch"

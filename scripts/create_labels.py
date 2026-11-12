@@ -32,13 +32,17 @@ BASE_LABELS = [
 
 
 def main() -> int:
-    for name, color, description in BASE_LABELS:
-        ensure_label(name, color, description)
-        print(f"라벨 준비: {name}")
     spec = tomllib.loads(Path("docs/requirements/issues.toml").read_text(encoding="utf-8"))
-    for req in spec["requirement"]:
-        ensure_label(req["id"], "bfd4f2", req["title"])
-        print(f"라벨 준비: {req['id']}")
+    labels = BASE_LABELS + [(req["id"], "bfd4f2", req["title"]) for req in spec["requirement"]]
+    failed: list[str] = []
+    for name, color, description in labels:
+        if ensure_label(name, color, description):
+            print(f"라벨 준비: {name}")
+        else:
+            failed.append(name)
+    if failed:
+        print(f"라벨 {len(failed)}개 생성 실패: {', '.join(failed)}", file=sys.stderr)
+        return 1
     return 0
 
 

@@ -34,7 +34,8 @@ def main() -> int:
             pr,
             "--body",
             f"{OWNER} 자동 수정({kind})을 {MAX_ATTEMPTS}번 시도했지만 해결되지 않았습니다. "
-            "확인이 필요해 자동화를 멈춥니다. 원인을 정리한 뒤 `needs-human` 라벨을 지우면 다시 진행합니다.",
+            "확인이 필요해 자동화를 멈춥니다. 원인을 정리한 뒤 `needs-human`과 `fix-attempt-*` 라벨을 "
+            "모두 지우면 시도 횟수가 처음부터 다시 셉니다.",
         )
         print("proceed=false")
         print(f"n={n}")

@@ -6,3 +6,7 @@
 /.claude/               @JangJaehyeonn
 /CLAUDE.md              @JangJaehyeonn
 /.coderabbit.yaml       @JangJaehyeonn
+/scripts/              @JangJaehyeonn
+/ruff.toml             @JangJaehyeonn
+/mypy.ini              @JangJaehyeonn
+/pytest.ini            @JangJaehyeonn

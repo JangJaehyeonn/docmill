@@ -6,12 +6,31 @@ on:
     branches: [main]
   workflow_dispatch:
 
-concurrency:
-  group: claude-agent
-  cancel-in-progress: false
+permissions: {}
 
 jobs:
+  find:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      pr: ${{ steps.find.outputs.pr }}
+      branch: ${{ steps.find.outputs.branch }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: 충돌난 Claude PR 찾기
+        id: find
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/find_conflict.py >> "$GITHUB_OUTPUT"
+
   fix:
+    needs: find
+    if: needs.find.outputs.branch != ''
+    concurrency:
+      group: claude-fix-${{ needs.find.outputs.branch }}
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -22,32 +41,22 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
-      - name: 충돌난 PR 찾기
-        id: find
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/find_conflict.py >> "$GITHUB_OUTPUT"
-      - uses: actions/checkout@v4
-        if: steps.find.outputs.branch != ''
         with:
-          ref: ${{ steps.find.outputs.branch }}
+          ref: ${{ needs.find.outputs.branch }}
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v6
-        if: steps.find.outputs.branch != ''
         with:
           enable-cache: true
-      - if: steps.find.outputs.branch != ''
-        run: uv sync
+      - run: uv sync
       - uses: anthropics/claude-code-action@v1
-        if: steps.find.outputs.branch != ''
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
-            PR #${{ steps.find.outputs.pr }} (브랜치 ${{ steps.find.outputs.branch }})가 main과 충돌합니다.
-            1. `git fetch origin main && git merge origin/main`으로 병합하고 충돌을 해결하세요. 양쪽 변경의 의도를 모두 살리세요.
+            PR #${{ needs.find.outputs.pr }} (브랜치 ${{ needs.find.outputs.branch }})가 main과 충돌합니다.
+            1. `git fetch origin main`과 `git merge origin/main`으로 병합하고 충돌을 해결하세요. 양쪽 변경의 의도를 모두 살리세요.
             2. rebase나 강제 푸시는 하지 마세요.
-            3. 품질 검사를 모두 통과시킨 뒤 같은 브랜치로 푸시하세요.
+            3. 품질 검사를 모두 통과시킨 뒤 `git push origin ${{ needs.find.outputs.branch }}`로 푸시하세요.
           claude_args: >-
             --max-turns 30
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run:*),Bash(git:*),Bash(gh pr:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git fetch origin main),Bash(git merge origin/main:*),Bash(git push origin ${{ needs.find.outputs.branch }}),Bash(gh pr view:*)"

@@ -3,6 +3,8 @@ language: "ko-KR"
 tone_instructions: "간결하고 구체적으로. 문제, 근거, 고칠 방법을 한 번에 적는다."
 reviews:
   profile: "assertive"
+  # 지적이 모두 해결되면 CodeRabbit이 PR을 승인한다.
+  # main 규칙의 '승인 1개 필수'가 이 승인을 요구하므로, 지적이 남은 PR은 머지되지 않는다.
   request_changes_workflow: true
   high_level_summary: true
   poem: false

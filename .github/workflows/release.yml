@@ -1,24 +1,26 @@
 name: Release
 
 # main에 머지될 때마다 release-please가 릴리스 PR(버전·변경 기록)을 관리한다.
-# 릴리스 PR이 머지되면 publish 잡이 `release` 환경에서 재현의 승인을 기다린 뒤 PyPI와 GHCR에 배포한다.
+# 릴리스 PR이 머지되면 `release` 환경에서 재현의 승인을 기다린 뒤 PyPI와 GHCR에 배포한다.
+# 쓰기 권한을 가진 잡이므로 외부 액션은 커밋 SHA로 고정한다 (Dependabot이 갱신).
 on:
   push:
     branches: [main]
 
-permissions:
-  contents: write
-  pull-requests: write
-  actions: write
+permissions: {}
 
 jobs:
   release-please:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
     outputs:
       release_created: ${{ steps.rp.outputs.release_created }}
       tag_name: ${{ steps.rp.outputs.tag_name }}
     steps:
-      - uses: googleapis/release-please-action@v4
+      - uses: googleapis/release-please-action@5c625bfb5d1ff62eadeeb3772007f7f66fdcf071 # v4.4
         id: rp
         with:
           release-type: python
@@ -27,9 +29,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           HEAD: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
-        run: gh workflow run CI --repo "${{ github.repository }}" --ref "$HEAD"
+          REPO: ${{ github.repository }}
+        run: gh workflow run CI --repo "$REPO" --ref "$HEAD"
 
-  publish:
+  pypi:
     needs: release-please
     if: needs.release-please.outputs.release_created == 'true'
     runs-on: ubuntu-latest
@@ -37,21 +40,32 @@ jobs:
     permissions:
       contents: read
       id-token: write
-      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
       - name: 패키지 빌드
         run: uv build
       - name: PyPI 배포 (Trusted Publishing)
-        uses: pypa/gh-action-pypi-publish@release/v1
-      - uses: docker/login-action@v3
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # release/v1
+        with:
+          skip-existing: true
+
+  docker:
+    needs: [release-please, pypi]
+    if: needs.release-please.outputs.release_created == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Docker 이미지 배포
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           push: true

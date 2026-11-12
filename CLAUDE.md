@@ -18,14 +18,15 @@ Claude Code는 이 문서를 최우선 규칙으로 따른다.
 3. 구현과 단위 테스트(`tests/unit/`)를 함께 작성한다.
 4. 커밋 전 반드시 실행하고 전부 통과시킨다:
    ```
-   uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest -q
+   uv run ruff check . && uv run ruff format --check . && uv run mypy && DOCMILL_ACTIVE_FRS=FR-xx uv run pytest -q
    ```
+   `FR-xx`는 이 이슈의 요구사항 ID다. CI는 이미 끝난 요구사항의 인수 테스트까지 함께 돌린다.
 5. 커밋 메시지는 Conventional Commits: `feat: ...`, `fix: ...`, `test: ...`, `docs: ...`, `chore: ...`. 본문 끝에 `Refs #<이슈번호>`.
 6. PR 제목: `feat(FR-05): excel_to_report_ppt 구현`. 본문은 PR 템플릿을 채우고 `Closes #<이슈번호>`를 넣는다.
 7. PR을 연 뒤 `gh pr merge --auto --squash <PR번호>`로 자동 머지를 예약한다. 다른 방식의 머지는 하지 않는다.
 
 ## 절대 하지 말 것 (보호 규칙)
-- `tests/acceptance/`, `.github/`, `CLAUDE.md`, `.claude/`, `.coderabbit.yaml`, `docs/requirements/`를 수정하지 않는다. 이 경로는 사람 승인으로만 바뀐다.
+- `tests/acceptance/`, `scripts/`, `.github/`, `CLAUDE.md`, `.claude/`, `.coderabbit.yaml`, `docs/requirements/`, `ruff.toml`, `mypy.ini`, `pytest.ini`를 수정하지 않는다. 이 경로는 사람 승인으로만 바뀐다.
 - 테스트를 통과시키려고 테스트 기대값을 바꾸거나 `skip`·`xfail`을 붙이지 않는다. 구현을 고친다.
 - 요구사항에 없는 기능을 추가하지 않는다. 필요해 보이면 이슈에 제안 코멘트만 남긴다.
 - 비밀값·토큰·개인 정보를 코드, 로그, 테스트 샘플에 넣지 않는다.
@@ -38,6 +39,7 @@ Claude Code는 이 문서를 최우선 규칙으로 따른다.
 - 레시피는 엔진 명령이 아니라 **docmill 도구 호출과 인자**를 저장한다. 입력 파일은 `$변수`로 바꾼다.
 - 파일 작업은 작업별 임시 폴더 안에서만 하고, 엔진 프로세스에는 시간 제한(기본 60초)을 둔다.
 - 엔진 실패는 예외로 서버를 죽이지 말고, 실패한 단계와 원인을 도구 결과로 돌려준다.
+- stdio 모드에서는 stdout이 MCP 통신 채널이다. `print`나 로그를 stdout에 쓰지 말고 진단 메시지는 stderr(logging)로 보낸다.
 - 모든 도구 호출은 실행 ID와 함께 SQLite 로그에 남긴다.
 
 ## ADR (결정 기록)
