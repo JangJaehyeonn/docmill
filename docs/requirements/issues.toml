@@ -28,6 +28,8 @@ acceptance = [
   "세 엔진 각각에 대해 내부 클라이언트가 도구 목록을 가져오고 도구 하나를 호출할 수 있다",
   "엔진 실행 파일이 없으면 어떤 엔진이 없는지 알려주는 오류를 반환한다 (서버는 죽지 않음)",
   "엔진 프로세스에 시간 제한(기본 60초)이 있고 초과 시 종료된다",
+  "DeckCraft·WordCraft 엔진은 `--automation-read-root`·`--automation-write-root`를 작업 폴더로 지정해 실행하고, 작업 폴더 없이는 엔진을 실행하지 않는다",
+  "엔진에 넘기는 열기·저장·내보내기 경로가 작업 폴더 밖이면(`..`·절대 경로·링크 포함) docmill이 엔진 호출 전에 거부하고 오류를 반환한다 (Phase 0: 엔진 옵션 없이도 저장이 돼서 엔진에만 맡길 수 없음)",
 ]
 
 [[requirement]]
@@ -42,6 +44,7 @@ acceptance = [
   "GridCraft·DeckCraft·WordCraft 어댑터가 모두 DocumentTool을 구현한다",
   "확장자(.xlsx·.pptx·.docx)로 알맞은 어댑터를 고르는 함수가 있다",
   "작업이 끝나면 임시 폴더가 정리된다",
+  "같은 입력으로 두 번 저장한 파일이 바이트 단위로 같다. docx는 `docProps/core.xml`의 `dcterms:created`·`dcterms:modified`만 고정값으로 정규화한다 (Phase 0: 나머지는 이미 결정적)",
 ]
 
 [[requirement]]
