@@ -26,6 +26,35 @@ docmill run "주간 매출 보고" --input 매출_11월2주.xlsx
 | `save_recipe` | 성공한 작업을 레시피로 저장 |
 | `run_recipe` | 레시피를 새 입력 파일로 AI 없이 재실행 |
 
+## AI 앱에 연결하기
+
+docmill은 stdio MCP 서버다. `uv sync`로 설치하면 `docmill mcp` 명령으로 서버가 실행된다. 보통은 AI 앱이 이 명령을 대신 실행한다.
+
+### Claude Code
+
+```bash
+claude mcp add docmill -- uv run --directory /path/to/docmill docmill mcp
+```
+
+연결 후 `claude mcp list`로 확인한다.
+
+### Claude 데스크톱
+
+`claude_desktop_config.json`의 `mcpServers`에 추가한 뒤 앱을 다시 시작한다.
+
+```json
+{
+  "mcpServers": {
+    "docmill": {
+      "command": "uv",
+      "args": ["run", "--directory", "/path/to/docmill", "docmill", "mcp"]
+    }
+  }
+}
+```
+
+`/path/to/docmill`은 이 저장소를 내려받은 경로로 바꾼다. 서버는 업무 단위 도구만 노출하며 엔진의 저수준 도구는 노출하지 않는다.
+
 ## 구조
 
 ```
