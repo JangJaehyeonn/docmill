@@ -2,6 +2,8 @@ name: CI
 
 on:
   pull_request:
+    # edited: PR 제목(FR-xx)을 고치면 인수 테스트 대상이 바뀌므로 다시 돈다.
+    types: [opened, synchronize, reopened, edited]
   push:
     branches: [main]
   workflow_dispatch:
@@ -67,7 +69,7 @@ jobs:
           fi
       - name: 보호 경로 수정 금지
         run: |
-          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          changed=$(git diff --name-only --no-renames "origin/${BASE_REF}...HEAD")
           echo "$changed"
           if echo "$changed" | grep -E '^(tests/acceptance/|scripts/|\.github/|\.claude/|CLAUDE\.md|\.coderabbit\.yaml|docs/requirements/|ruff\.toml|mypy\.ini|pytest\.ini)'; then
             echo "::error::Claude 브랜치에서 보호 경로를 수정했습니다. 구현을 고치세요."

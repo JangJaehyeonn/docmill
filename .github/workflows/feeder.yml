@@ -62,14 +62,20 @@ jobs:
             6. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
           claude_args: >-
             --max-turns 60
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/:*),Bash(git push -u origin claude/:*),Bash(git push origin claude/:*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git push -u origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*)"
       - name: PR을 열지 못했으면 사람에게 넘기기
         if: always() && steps.pick.outputs.issue != ''
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.pick.outputs.issue }}
         run: |
-          count=$(gh pr list --state open --search "head:claude/${ISSUE}-" --json number --jq 'length')
+          state=$(gh issue view "$ISSUE" --json state --jq .state)
+          if [ "$state" = "CLOSED" ]; then
+            echo "이슈가 이미 닫혔습니다 (PR 머지 완료)."
+            exit 0
+          fi
+          count=$(gh pr list --state all --limit 200 --json headRefName \
+            --jq "[.[] | select(.headRefName | startswith(\"claude/${ISSUE}-\"))] | length")
           if [ "$count" = "0" ]; then
             gh issue edit "$ISSUE" --remove-label in-progress --add-label needs-human
             gh issue comment "$ISSUE" --body "@JangJaehyeonn 자동 구현이 PR을 열지 못하고 끝났습니다. 실행 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"

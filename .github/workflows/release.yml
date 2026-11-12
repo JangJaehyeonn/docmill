@@ -24,6 +24,27 @@ jobs:
         id: rp
         with:
           release-type: python
+      # release-please는 pyproject.toml 버전만 올리므로 uv.lock을 맞춰야 `uv sync --locked`가 통과한다.
+      - uses: actions/checkout@v4
+        if: steps.rp.outputs.prs_created == 'true'
+        with:
+          ref: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+      - uses: astral-sh/setup-uv@v6
+        if: steps.rp.outputs.prs_created == 'true'
+      - name: 릴리스 PR의 uv.lock 갱신
+        if: steps.rp.outputs.prs_created == 'true'
+        env:
+          HEAD: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+        run: |
+          uv lock
+          if git diff --quiet uv.lock; then
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          git commit -m "chore: uv.lock 버전 동기화"
+          git push origin "HEAD:$HEAD"
       - name: 릴리스 PR에 CI 실행
         if: steps.rp.outputs.prs_created == 'true'
         env:
@@ -42,6 +63,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: astral-sh/setup-uv@v6
       - name: 패키지 빌드
         run: uv build
@@ -59,6 +82,8 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io

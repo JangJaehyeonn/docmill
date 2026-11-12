@@ -1,6 +1,6 @@
 name: Fix merge conflicts
 
-# main이 바뀌면 열려 있는 Claude PR 중 충돌난 것을 Claude가 main을 병합해 해결한다.
+# main이 바뀌면 열려 있는 Claude PR 중 충돌난 것을 Claude가 main을 병합해 해결한다. 최대 3회, 넘으면 needs-human.
 on:
   push:
     branches: [main]
@@ -44,11 +44,20 @@ jobs:
         with:
           ref: ${{ needs.find.outputs.branch }}
           fetch-depth: 0
+      - name: 시도 횟수 확인
+        id: attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ needs.find.outputs.pr }}
+        run: python3 scripts/fix_attempt.py "$PR" conflict >> "$GITHUB_OUTPUT"
       - uses: astral-sh/setup-uv@v6
+        if: steps.attempt.outputs.proceed == 'true'
         with:
           enable-cache: true
-      - run: uv sync
+      - if: steps.attempt.outputs.proceed == 'true'
+        run: uv sync
       - uses: anthropics/claude-code-action@v1
+        if: steps.attempt.outputs.proceed == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
