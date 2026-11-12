@@ -54,6 +54,8 @@ jobs:
         if: steps.attempt.outputs.proceed == 'true'
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-engines
+        if: steps.attempt.outputs.proceed == 'true'
       - if: steps.attempt.outputs.proceed == 'true'
         run: uv sync
       - uses: anthropics/claude-code-action@v1

@@ -1,11 +1,12 @@
 """FR-16 실행 로그 인수 테스트 (초안).
 
-필요한 샘플: tests/fixtures/sales_q3.xlsx (비밀값 테스트의 입력 경로로만 쓴다).
+필요한 샘플: 없음 (sales_q3.xlsx는 경로 문자열로만 쓴다).
 가정(구현 방법이 정해지면 맞춰 고친다):
 - 로그 저장 폴더는 환경 변수 `DOCMILL_HOME`으로 지정하고, 그 아래 SQLite 파일
   (*.db, *.sqlite, *.sqlite3)에 쌓인다.
 - 로그 테이블에는 실행 ID 열 `run_id`와 도구 이름이 들어간다.
 - `docmill.runlog.get_run(run_id, home=...)`이 실행 ID로 기록(dict)을 조회한다.
+- `docmill.runlog.summarize_args(args)`가 비밀값을 가리고 큰 값을 줄인 인자 요약 문자열을 만든다.
 - 테스트는 테이블 이름을 가정하지 않고 모든 테이블의 모든 행을 읽어 확인한다.
 """
 
@@ -79,21 +80,21 @@ def test_log_row_can_be_found_by_run_id(tmp_path: Path) -> None:
 
 
 @pytest.mark.fr("FR-16")
-def test_args_summary_excludes_large_data_and_secrets(tmp_path: Path) -> None:
+def test_args_summary_excludes_large_data_and_secrets() -> None:
+    # Phase 1에는 인자를 받는 업무 도구가 아직 없으므로 요약 함수를 직접 검증한다.
+    # 가정: `docmill.runlog.summarize_args(args) -> str`가 로그에 남길 인자 요약을 만든다.
+    from docmill import runlog
+
     big = "X" * 20000
     args = {
         "input": str(FIXTURES / "sales_q3.xlsx"),
-        "group_by": big + SECRET,
+        "api_key": SECRET,
+        "data": big,
+        "note": f"token={SECRET}",
         "value": "매출",
     }
-    asyncio.run(asyncio.wait_for(_call_tools(tmp_path, [("excel_to_report_ppt", args)]), 60))
-    rows = _read_all_rows(tmp_path)
-    assert any("excel_to_report_ppt" in str(list(r.values())) for r in rows), (
-        "호출이 기록되지 않았다"
-    )
-    for row in rows:
-        for value in row.values():
-            text = str(value)
-            assert SECRET not in text, "비밀값이 로그에 남았다"
-            assert big not in text, "큰 데이터가 로그에 통째로 남았다"
-            assert len(text) < 5000
+    summary = runlog.summarize_args(args)
+    assert SECRET not in summary, "비밀값이 로그 요약에 남았다"
+    assert big not in summary, "큰 데이터가 로그 요약에 통째로 남았다"
+    assert len(summary) < 5000
+    assert "sales_q3.xlsx" in summary and "매출" in summary, "평범한 인자는 요약에 남아야 한다"

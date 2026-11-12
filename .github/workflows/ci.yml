@@ -26,6 +26,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-engines
       - name: 의존성 설치
         run: uv sync --locked
       - name: 린트
