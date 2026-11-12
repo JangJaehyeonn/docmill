@@ -44,6 +44,8 @@ jobs:
         if: steps.pick.outputs.issue != ''
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-engines
+        if: steps.pick.outputs.issue != ''
       - if: steps.pick.outputs.issue != ''
         run: uv sync --locked
       - uses: anthropics/claude-code-action@v1

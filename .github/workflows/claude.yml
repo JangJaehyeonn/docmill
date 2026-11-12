@@ -34,6 +34,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-engines
       - run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
         with:
@@ -75,6 +76,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
+      - uses: ./.github/actions/setup-engines
       - run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
         with:
