@@ -36,7 +36,8 @@ jobs:
             if [ "$age" -ge "$STALL_MINUTES" ]; then
               echo "PR #$n: ${age}분째 변화 없음"
               # 마지막 댓글이 이미 정체 알림이면 댓글은 건너뛰고 라벨만 다시 시도한다 (중복 알림 방지).
-              last=$(gh api "repos/$REPO/issues/$n/comments?per_page=100" --jq 'last | .body // ""')
+              last=$(gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100" --jq '.[] | .body | @json' \
+                | tail -n 1 | jq -r '. // ""')
               if ! printf '%s' "$last" | grep -q 'docmill-stall'; then
                 gh pr comment "$n" --repo "$REPO" --body "<!-- docmill-stall -->
           @JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다." || continue
