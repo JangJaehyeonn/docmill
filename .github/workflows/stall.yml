@@ -33,7 +33,8 @@ jobs:
             age=$(( (now - $(date -u -d "$ts" +%s)) / 60 ))
             if [ "$age" -ge "$STALL_MINUTES" ]; then
               echo "PR #$n: ${age}분째 변화 없음"
-              gh pr edit "$n" --repo "$REPO" --add-label needs-human
-              gh pr comment "$n" --repo "$REPO" --body "@JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다."
+              # 알림 댓글이 먼저 성공해야 라벨을 붙인다. 댓글이 실패하면 다음 실행에서 다시 시도된다.
+              gh pr comment "$n" --repo "$REPO" --body "@JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다." \
+                && gh pr edit "$n" --repo "$REPO" --add-label needs-human
             fi
           done
