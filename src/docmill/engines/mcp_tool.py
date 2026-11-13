@@ -49,6 +49,8 @@ class McpEngineTool:
         if workdir is None:
             raise ValueError(f"{self.name}: 작업 폴더 없이는 엔진을 실행하지 않는다")
         self.workdir = workdir.resolve()
+        if not self.workdir.is_dir():
+            raise ValueError(f"{self.name}: 작업 폴더가 없다: {self.workdir}")
         self.timeout = timeout
         self._stack: contextlib.ExitStack | None = None
         self._portal: anyio.from_thread.BlockingPortal | None = None
@@ -165,8 +167,14 @@ class McpEngineTool:
         output: Any = result.structured_content if result.structured_content is not None else text
         details: dict[str, Any] = {"step": tool}
         images = [c for c in result.content if isinstance(c, mcp_types.ImageContent)]
-        if images:
-            details["images"] = [base64.b64decode(img.data) for img in images]
+        try:
+            if images:
+                details["images"] = [base64.b64decode(img.data, validate=True) for img in images]
+        except ValueError as exc:  # binascii.Error is a ValueError
+            message = f"{self.name} 엔진이 잘못된 이미지 데이터를 돌려주었다 ({tool}): {exc}"
+            return EngineResult(
+                ok=False, message=message, duration_ms=elapsed, details={"step": tool}
+            )
         return EngineResult(ok=True, output=output, duration_ms=elapsed, details=details)
 
     def _check(self, *paths: Path | str) -> list[Path] | EngineResult:

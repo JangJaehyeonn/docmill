@@ -29,6 +29,16 @@ class WordCraftTool(McpEngineTool):
                 if not result.ok
                 else EngineResult(ok=False, message="wordcraft 엔진이 이미지를 돌려주지 않았다")
             )
-        target = out_dir / f"{source.stem}.png"
-        target.write_bytes(images[0])
+        checked = self._check(out_dir / f"{source.stem}.png")  # resolves symlinks
+        if isinstance(checked, EngineResult):
+            return checked
+        target = checked[0]
+        try:
+            target.write_bytes(images[0])
+        except OSError as exc:
+            return EngineResult(
+                ok=False,
+                message=f"wordcraft 이미지 저장 실패 ({target}): {exc}",
+                details={"step": "render_page"},
+            )
         return EngineResult(ok=True, output=str(target), details={"step": "render_page"})

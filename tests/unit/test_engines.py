@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
@@ -29,6 +30,11 @@ def test_resolve_inside_rejects_outside(tmp_path: Path, bad: str) -> None:
 def test_workdir_is_required() -> None:
     with pytest.raises(ValueError, match="작업 폴더"):
         GridCraftTool(workdir=None)
+
+
+def test_missing_workdir_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="작업 폴더"):
+        GridCraftTool(workdir=tmp_path / "missing")
 
 
 def test_missing_binary_message_names_engine(
@@ -65,7 +71,7 @@ def test_open_render_save_with_real_engine(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    exe = shutil.which(binary)
+    exe = shutil.which(os.environ[env]) if env in os.environ else shutil.which(binary)
     assert exe is not None, f"{binary} 없음"
     monkeypatch.setenv(env, exe)
     shutil.copy(FIXTURES / sample, tmp_path / sample)
