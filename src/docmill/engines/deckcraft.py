@@ -21,7 +21,10 @@ class DeckCraftTool(McpEngineTool):
     execute_tool = "run_command"
 
     def _render_opened(self, source: Path, out_dir: Path) -> EngineResult:
-        checked = self._check(out_dir / f"{source.stem}.png")  # resolves symlinks
+        # "all" export writes numbered files whose names we do not control, so check the
+        # base path plus every PNG already in out_dir (a planted symlink would be followed).
+        existing = sorted(out_dir.glob("*.png")) if out_dir.is_dir() else []
+        checked = self._check(out_dir / f"{source.stem}.png", *existing)
         if isinstance(checked, EngineResult):
             return checked
         return self._run("export", {"path": str(checked[0]), "format": "png", "all": True})

@@ -199,6 +199,9 @@ class McpEngineTool:
             return [resolve_inside(self.workdir, p) for p in paths]
         except PathOutsideWorkdirError as exc:
             return EngineResult(ok=False, message=str(exc), details={"step": "path-check"})
+        except (OSError, RuntimeError) as exc:  # e.g. symlink loop
+            message = f"경로를 해석하지 못했다: {exc}"
+            return EngineResult(ok=False, message=message, details={"step": "path-check"})
 
     # -- DocumentTool -----------------------------------------------------------
     def open(self, path: Path) -> EngineResult:

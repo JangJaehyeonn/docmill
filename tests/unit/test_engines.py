@@ -94,6 +94,26 @@ def test_deckcraft_render_rejects_symlinked_target(
     assert result.details["step"] == "path-check"
 
 
+def test_deckcraft_render_rejects_symlinked_numbered_output(tmp_path: Path) -> None:
+    work = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    (work / "deck-2.png").symlink_to(outside / "t.png")
+    with DeckCraftTool(work) as tool:
+        result = tool._render_opened(work / "deck.pptx", work)
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+
+
+def test_execute_returns_path_check_failure_for_symlink_loop(tmp_path: Path) -> None:
+    (tmp_path / "loop").symlink_to(tmp_path / "loop")
+    with GridCraftTool(tmp_path) as tool:
+        result = tool.execute("file.export", {"path": "loop"})
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+
+
 def test_close_is_idempotent(tmp_path: Path) -> None:
     tool = DeckCraftTool(tmp_path)
     tool.close()
