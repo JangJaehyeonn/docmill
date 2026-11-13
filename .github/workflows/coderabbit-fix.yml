@@ -15,8 +15,9 @@ jobs:
       github.event.review.user.login == 'coderabbitai[bot]' &&
       (github.event.review.state == 'changes_requested' ||
         (github.event.review.state == 'commented' &&
-          (contains(github.event.review.body, 'Actionable comments posted') ||
-           contains(github.event.review.body, 'Failed pre-merge checks')))) &&
+          (contains(github.event.review.body, 'Failed pre-merge checks') ||
+           (contains(github.event.review.body, 'Actionable comments posted') &&
+            !contains(github.event.review.body, 'Actionable comments posted: 0'))))) &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       startsWith(github.event.pull_request.head.ref, 'claude/')
     concurrency:
