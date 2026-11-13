@@ -82,6 +82,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Claude 앱이 연 PR은 작성자 권한 확인이 안 돼 검사 명령(uv run …)이 막힌다.
+          # 이 job은 저장소 소유자 코멘트로만 시작하므로 끈다.
+          restrict_untrusted_prs: "false"
           claude_args: >-
             --max-turns 40
             --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*)"
