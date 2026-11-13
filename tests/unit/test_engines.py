@@ -66,8 +66,7 @@ def test_open_render_save_with_real_engine(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     exe = shutil.which(binary)
-    if exe is None:
-        pytest.skip(f"{binary} 없음")
+    assert exe is not None, f"{binary} 없음"
     monkeypatch.setenv(env, exe)
     shutil.copy(FIXTURES / sample, tmp_path / sample)
     with cls(tmp_path) as tool:
