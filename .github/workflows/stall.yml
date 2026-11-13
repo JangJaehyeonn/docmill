@@ -23,6 +23,8 @@ jobs:
       - name: 멈춘 Claude PR 찾기
         run: |
           set -euo pipefail
+          gh label create needs-human --repo "$REPO" --color b60205 \
+            --description "에이전트가 해결하지 못해 사람 확인이 필요함" 2>/dev/null || true
           now=$(date -u +%s)
           gh pr list --repo "$REPO" --state open --limit 100 \
             --json number,headRefName,updatedAt,labels \
@@ -33,7 +35,12 @@ jobs:
             age=$(( (now - $(date -u -d "$ts" +%s)) / 60 ))
             if [ "$age" -ge "$STALL_MINUTES" ]; then
               echo "PR #$n: ${age}분째 변화 없음"
-              gh pr edit "$n" --repo "$REPO" --add-label needs-human
-              gh pr comment "$n" --repo "$REPO" --body "@JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다."
+              # 마지막 댓글이 이미 정체 알림이면 댓글은 건너뛰고 라벨만 다시 시도한다 (중복 알림 방지).
+              last=$(gh api "repos/$REPO/issues/$n/comments?per_page=100" --jq 'last | .body // ""')
+              if ! printf '%s' "$last" | grep -q 'docmill-stall'; then
+                gh pr comment "$n" --repo "$REPO" --body "<!-- docmill-stall -->
+          @JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다." || continue
+              fi
+              gh pr edit "$n" --repo "$REPO" --add-label needs-human || echo "::warning::PR #$n 라벨 추가 실패"
             fi
           done

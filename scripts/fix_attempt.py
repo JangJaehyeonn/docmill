@@ -13,6 +13,7 @@ import sys
 from _gh import ensure_label, gh, gh_json, label_names
 
 MAX_ATTEMPTS = 3
+KINDS = ("ci", "coderabbit", "conflict")
 OWNER = "@JangJaehyeonn"
 
 
@@ -24,8 +25,16 @@ def main() -> int:
         print("n=0")
         return 0
 
-    pattern = re.compile(rf"^fix-{re.escape(kind)}-(\d+)$")
-    used = [int(m.group(1)) for name in labels if (m := pattern.match(name))]
+    if kind not in KINDS:
+        print(f"알 수 없는 종류: {kind}", file=sys.stderr)
+        return 2
+    pattern = re.compile(rf"^fix-{kind}-(\d+)$")
+    # Legacy shared labels (fix-attempt-N) still count toward every kind, conservatively.
+    used = [
+        int(m.group(1))
+        for name in labels
+        if (m := pattern.match(name) or re.match(r"^fix-attempt-(\d+)$", name))
+    ]
     n = max(used, default=0) + 1
     if n > MAX_ATTEMPTS:
         ensure_label("needs-human", "b60205", "에이전트가 해결하지 못해 사람 확인이 필요함")
