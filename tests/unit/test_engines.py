@@ -114,6 +114,13 @@ def test_execute_returns_path_check_failure_for_symlink_loop(tmp_path: Path) -> 
     assert result.details["step"] == "path-check"
 
 
+def test_open_returns_path_check_failure_for_nul_byte(tmp_path: Path) -> None:
+    with GridCraftTool(tmp_path) as tool:
+        result = tool.open(Path("bad\0name.xlsx"))
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+
+
 def test_close_is_idempotent(tmp_path: Path) -> None:
     tool = DeckCraftTool(tmp_path)
     tool.close()
