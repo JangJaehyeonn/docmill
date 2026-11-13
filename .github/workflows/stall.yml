@@ -1,0 +1,39 @@
+name: Stall check
+
+# Claude PR이 오래 움직이지 않으면(자동 수정이 안 뜨거나 승인이 안 나는 경우) 사람에게 알린다.
+# 멘션은 GitHub 알림(폰 앱 포함)으로 간다.
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+      issues: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      STALL_MINUTES: "90"
+    steps:
+      - name: 멈춘 Claude PR 찾기
+        run: |
+          set -euo pipefail
+          now=$(date -u +%s)
+          gh pr list --repo "$REPO" --state open --limit 100 \
+            --json number,headRefName,updatedAt,labels \
+            --jq '.[] | select(.headRefName | startswith("claude/"))
+                  | select([.labels[].name] | index("needs-human") | not)
+                  | "\(.number) \(.updatedAt)"' |
+          while read -r n ts; do
+            age=$(( (now - $(date -u -d "$ts" +%s)) / 60 ))
+            if [ "$age" -ge "$STALL_MINUTES" ]; then
+              echo "PR #$n: ${age}분째 변화 없음"
+              gh pr edit "$n" --repo "$REPO" --add-label needs-human
+              gh pr comment "$n" --repo "$REPO" --body "@JangJaehyeonn 이 PR이 ${age}분 동안 변화가 없어 멈춘 것으로 보입니다 (CI·리뷰·자동 수정 모두 대기). 확인이 필요합니다."
+            fi
+          done
