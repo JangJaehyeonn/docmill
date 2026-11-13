@@ -21,5 +21,7 @@ class DeckCraftTool(McpEngineTool):
     execute_tool = "run_command"
 
     def _render_opened(self, source: Path, out_dir: Path) -> EngineResult:
-        target = out_dir / f"{source.stem}.png"
-        return self._run("export", {"path": str(target), "format": "png", "all": True})
+        checked = self._check(out_dir / f"{source.stem}.png")  # resolves symlinks
+        if isinstance(checked, EngineResult):
+            return checked
+        return self._run("export", {"path": str(checked[0]), "format": "png", "all": True})

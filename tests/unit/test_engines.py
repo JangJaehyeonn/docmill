@@ -48,6 +48,52 @@ def test_missing_binary_message_names_engine(
     assert "DOCMILL_WORDCRAFT_PATH" in result.message
 
 
+def _outside_paths(tmp_path: Path, tmp_outside: Path) -> dict[str, str]:
+    link = tmp_path / "link.png"
+    link.symlink_to(tmp_outside / "target.png")
+    return {"dotdot": "../x.png", "absolute": str(tmp_outside / "x.png"), "symlink": "link.png"}
+
+
+@pytest.mark.parametrize("kind", ["dotdot", "absolute", "symlink"])
+@pytest.mark.parametrize("key", ["path", "output_path", "export"])
+def test_execute_rejects_outside_paths_before_engine(
+    tmp_path: Path, kind: str, key: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    monkeypatch.setenv("DOCMILL_GRIDCRAFT_PATH", str(tmp_path / "nope"))
+    bad = _outside_paths(work, outside)[kind]
+    with GridCraftTool(work) as tool:
+        result = tool.execute("file.export", {"opts": {key: bad}})
+    assert not result.ok
+    assert result.details["step"] == "path-check"  # engine (locate) was never reached
+
+
+def test_execute_allows_paths_inside_workdir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DOCMILL_GRIDCRAFT_PATH", str(tmp_path / "nope"))
+    with GridCraftTool(tmp_path) as tool:
+        result = tool.execute("file.export", {"path": "a/out.xlsx"})
+    assert result.details["step"] == "locate"  # passed the check, failed at engine lookup
+
+
+def test_deckcraft_render_rejects_symlinked_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    (work / "deck.png").symlink_to(outside / "t.png")
+    with DeckCraftTool(work) as tool:
+        result = tool._render_opened(work / "deck.pptx", work)
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+
+
 def test_close_is_idempotent(tmp_path: Path) -> None:
     tool = DeckCraftTool(tmp_path)
     tool.close()

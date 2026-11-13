@@ -29,6 +29,23 @@ from docmill.engines.paths import PathOutsideWorkdirError, resolve_inside
 logger = logging.getLogger(__name__)
 
 
+_PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save")
+
+
+def _path_like_values(value: Any, key: str = "") -> list[str]:
+    """Collect string values whose key looks like a path (sorted traversal, deterministic)."""
+    if isinstance(value, dict):
+        found: list[str] = []
+        for k in sorted(value, key=str):
+            found += _path_like_values(value[k], str(k))
+        return found
+    if isinstance(value, list | tuple):
+        return [v for item in value for v in _path_like_values(item, key)]
+    if isinstance(value, str) and any(hint in key.lower() for hint in _PATH_KEY_HINTS):
+        return [value]
+    return []
+
+
 class EngineUnavailableError(RuntimeError):
     """엔진 실행 파일을 찾지 못했을 때 발생한다."""
 
@@ -199,7 +216,10 @@ class McpEngineTool:
         return self._run(self.save_tool, {"path": str(checked[0])})
 
     def execute(self, command: str, args: dict[str, Any]) -> EngineResult:
-        """엔진 명령 하나를 실행한다. 경로 인자는 호출하는 쪽이 `open`·`save`로 넘긴다."""
+        """엔진 명령 하나를 실행한다. 경로로 보이는 인자는 호출 전에 검사한다."""
+        checked = self._check(*_path_like_values(args))
+        if isinstance(checked, EngineResult):
+            return checked
         return self._run(self.execute_tool, {"command": command, "params": args})
 
     def render(self, path: Path, out_dir: Path) -> EngineResult:
