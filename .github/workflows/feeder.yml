@@ -51,7 +51,6 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: steps.pick.outputs.issue != ''
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             저장소 ${{ github.repository }}의 이슈 #${{ steps.pick.outputs.issue }} (${{ steps.pick.outputs.fr }})를 구현하세요.

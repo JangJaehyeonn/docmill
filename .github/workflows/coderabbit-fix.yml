@@ -63,7 +63,6 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         if: steps.attempt.outputs.proceed == 'true'
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # 리뷰·CI·머지 이벤트는 봇(CodeRabbit, Claude 앱, Actions)이 일으키므로 허용한다.
           # 포크 PR은 위 job 조건에서 이미 막고, 대상은 이 저장소의 claude/* 브랜치뿐이다.

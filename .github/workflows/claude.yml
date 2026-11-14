@@ -38,7 +38,6 @@ jobs:
       - run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             저장소 ${{ github.repository }}의 이슈 #${{ github.event.issue.number }}를 구현하세요.
@@ -94,7 +93,6 @@ jobs:
           if [ "$head" = "$REPO" ]; then echo "same_repo=true"; else echo "same_repo=false"; fi >> "$GITHUB_OUTPUT"
       - uses: anthropics/claude-code-action@v1
         with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Claude 앱이 연 PR은 작성자 권한 확인이 안 돼 검사 명령(uv run …)이 막힌다.
           # 이 저장소에서 온 PR(또는 이슈)일 때만 제한을 끄고, 포크 PR은 제한을 유지한다.
