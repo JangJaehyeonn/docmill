@@ -18,7 +18,7 @@ jobs:
       pr: ${{ steps.find.outputs.pr }}
       branch: ${{ steps.find.outputs.branch }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: 충돌난 Claude PR 찾기
         id: find
         env:
@@ -40,13 +40,13 @@ jobs:
       id-token: write
       actions: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.find.outputs.branch }}
           fetch-depth: 0
       # 시도 횟수 스크립트와 엔진 설치 액션은 수정 대상 브랜치가 아니라 이 워크플로 리비전(main)의 것을 쓴다.
       # 브랜치에서 바뀐 스크립트가 쓰기 권한으로 실행되지 않게 하고, 오래된 브랜치에도 동작하게 한다.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # pull_request_review의 github.sha는 PR 병합 커밋이라 기본 브랜치를 직접 지정한다.
           ref: ${{ github.event.repository.default_branch }}

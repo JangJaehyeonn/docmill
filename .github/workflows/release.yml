@@ -25,7 +25,7 @@ jobs:
         with:
           release-type: python
       # release-please는 pyproject.toml 버전만 올리므로 uv.lock을 맞춰야 `uv sync --locked`가 통과한다.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: steps.rp.outputs.prs_created == 'true'
         with:
           ref: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
@@ -62,7 +62,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: astral-sh/setup-uv@v6
@@ -81,7 +81,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           ref: ${{ needs.release-please.outputs.tag_name }}
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
