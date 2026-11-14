@@ -7,10 +7,12 @@ AI 앱에는 업무 단위 도구만 노출한다. 엔진의 저수준 도구는
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
 from docmill import __version__
+from docmill.runlog import logged
 
 SERVER_NAME = "docmill"
 
@@ -30,9 +32,20 @@ def _register_ping(server: MCPServer) -> None:
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping,)
 
 
+def _log_every_tool(server: MCPServer) -> None:
+    """서버에 등록되는 모든 도구를 실행 로그(FR-16)로 감싼다."""
+    add_tool = server.add_tool
+
+    def add_logged_tool(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        return add_tool(logged(fn), *args, **kwargs)
+
+    server.add_tool = add_logged_tool  # type: ignore[method-assign]
+
+
 def build_server() -> MCPServer:
     """도구가 등록된 MCP 서버를 만든다."""
     server = MCPServer(SERVER_NAME)
+    _log_every_tool(server)
     for register in TOOL_REGISTRARS:
         register(server)
     return server
