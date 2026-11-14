@@ -1,0 +1,30 @@
+"""DeckCraft(pptx) 엔진 어댑터."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+from docmill.engines.base import EngineResult
+from docmill.engines.mcp_tool import McpEngineTool
+
+
+class DeckCraftTool(McpEngineTool):
+    """`deckcraft-cli mcp`를 작업 폴더 read/write root와 함께 호출한다."""
+
+    name = "deckcraft"
+    extensions = (".pptx",)
+    env_var = "DOCMILL_DECKCRAFT_PATH"
+    binary = "deckcraft-cli"
+    confine_with_roots = True
+    open_tool = "open_presentation"
+    save_tool = "save_presentation"
+    execute_tool = "run_command"
+
+    def _render_opened(self, source: Path, out_dir: Path) -> EngineResult:
+        # "all" export writes numbered files whose names we do not control, so check the
+        # base path plus every PNG already in out_dir (a planted symlink would be followed).
+        existing = sorted(out_dir.glob("*.png")) if out_dir.is_dir() else []
+        checked = self._check(out_dir / f"{source.stem}.png", *existing)
+        if isinstance(checked, EngineResult):
+            return checked
+        return self._run("export", {"path": str(checked[0]), "format": "png", "all": True})
