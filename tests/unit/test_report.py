@@ -112,6 +112,27 @@ def test_failure_before_publish_leaves_no_output(
     assert not list((tmp_path / "outputs").glob("*.pptx"))
 
 
+def test_copy_failure_leaves_no_partial_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+
+    def partial_copy(_src: Path, dst: Path) -> None:
+        Path(dst).write_bytes(b"par")
+        raise OSError("disk full")
+
+    monkeypatch.setattr(report.shutil, "copyfile", partial_copy)
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    assert "error" in out
+    assert not [p for p in (tmp_path / "outputs").iterdir()]
+
+
 @pytest.mark.parametrize(
     ("overrides", "step"),
     [

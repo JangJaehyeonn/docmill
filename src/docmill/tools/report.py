@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shutil
 import tempfile
@@ -229,6 +230,17 @@ def _validate(args: dict[str, Any]) -> None:
         raise ReportError("input", f"읽을 수 있는 .xlsx 파일이 아니다: {args['input']}")
 
 
+def _publish(built: Path, final: Path) -> None:
+    """산출물을 임시 파일로 복사한 뒤 원자적으로 교체한다. 실패하면 임시 파일을 지운다."""
+    partial = final.with_name(f".{final.name}.part")
+    try:
+        shutil.copyfile(built, partial)
+        os.replace(partial, final)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+
+
 def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
     _validate(args)
     with tempfile.TemporaryDirectory(prefix="docmill-report-") as tmp:
@@ -260,7 +272,7 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         }
         if verification is not None:
             result["verification"] = verification
-        shutil.copyfile(built, final)  # publish only after everything else succeeded
+        _publish(built, final)  # publish only after everything else succeeded
     return result
 
 
