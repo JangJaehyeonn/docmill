@@ -158,3 +158,25 @@ def test_open_render_save_with_real_engine(
     assert (tmp_path / f"out{Path(sample).suffix}").exists()
     if cls is not GridCraftTool:
         assert list(tmp_path.glob("*.png"))
+
+
+def test_get_tool_picks_by_extension_case_insensitive() -> None:
+    from docmill.engines import get_tool
+    from docmill.engines.wordcraft import WordCraftTool
+
+    with get_tool("A.DOCX") as tool:
+        assert isinstance(tool, WordCraftTool)
+
+
+def test_get_tool_unknown_extension_and_temp_cleanup(tmp_path: Path) -> None:
+    from docmill.engines import get_tool
+
+    with pytest.raises(ValueError, match=r"\.txt"):
+        get_tool("a.txt")
+    with get_tool("a.xlsx") as tool:
+        workdir = tool.workdir
+        assert workdir.is_dir()
+    assert not workdir.exists()
+    with get_tool("a.xlsx", workdir=tmp_path):
+        pass
+    assert tmp_path.exists()
