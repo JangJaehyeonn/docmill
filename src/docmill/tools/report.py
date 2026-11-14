@@ -151,7 +151,7 @@ def _slide_commands(
             "series": [{"name": value, "values": [g.total for g in groups]}],
         }
         return [
-            ("add_slide", {"layout": "titleOnly", "title": title}),
+            ("add_slide", {"layout": "blank"}),
             ("insert_chart", chart),
         ]
     if kind == "detail":
