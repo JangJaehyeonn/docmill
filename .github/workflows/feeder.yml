@@ -74,7 +74,7 @@ jobs:
             6. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
           claude_args: >-
             --max-turns 60
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git push -u origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git push -u origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*)"
       - name: PR을 열지 못했으면 사람에게 넘기기
         if: always() && steps.pick.outputs.issue != ''
         env:
