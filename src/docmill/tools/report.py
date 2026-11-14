@@ -238,6 +238,9 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         out_dir.mkdir(parents=True, exist_ok=True)
         final = out_dir / f"{run_id}.pptx"
         verification = verify_report(built, groups) if args["verify"] else None
+        if verification is not None and verification["matched"] != verification["checked"]:
+            matched, checked = verification["matched"], verification["checked"]
+            raise ReportError("verify", f"그래프와 엑셀 합계 불일치: {matched}/{checked}건 일치")
         shutil.copyfile(built, final)
     total = sum(g.total for g in groups)
     summary = (

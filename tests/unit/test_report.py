@@ -76,6 +76,22 @@ def test_verify_report_without_chart_matches_nothing(tmp_path: Path) -> None:
     assert verify_report(pptx, [Group("A", 1.0, 100.0)]) == {"checked": 2, "matched": 0}
 
 
+def test_verification_mismatch_blocks_publishing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    monkeypatch.setattr(report, "verify_report", lambda *_a: {"checked": 3, "matched": 0})
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출"))
+    assert out["step"] == "verify"
+    assert not list((tmp_path / "outputs").glob("*.pptx"))
+
+
 @pytest.mark.parametrize(
     ("overrides", "step"),
     [
