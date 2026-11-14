@@ -198,7 +198,7 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             run_id, start, started_at = new_run_id(), time.perf_counter(), _now()
             call_args = _bind_args(fn, args, kwargs)
-            _current_run_id.set(run_id)
+            token = _current_run_id.set(run_id)
 
             async def done(result: str, status: str) -> None:
                 # SQLite work runs in a worker thread so the event loop is not blocked.
@@ -208,15 +208,18 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
                 )
 
             try:
-                value = await fn(*args, **kwargs)
-            except asyncio.CancelledError:
-                await done("CancelledError", "cancelled")
-                raise
-            except Exception as exc:
-                await done(f"{type(exc).__name__}: {exc}", "error")
-                raise
-            await done(str(value), "ok")
-            return value
+                try:
+                    value = await fn(*args, **kwargs)
+                except asyncio.CancelledError:
+                    await done("CancelledError", "cancelled")
+                    raise
+                except Exception as exc:
+                    await done(f"{type(exc).__name__}: {exc}", "error")
+                    raise
+                await done(str(value), "ok")
+                return value
+            finally:
+                _current_run_id.reset(token)
 
         return async_wrapper  # type: ignore[return-value]
 

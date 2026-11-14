@@ -8,6 +8,7 @@ pptx를 만든다. 계산과 슬라이드 구성은 입력만으로 정해지며
 from __future__ import annotations
 
 import json
+import math
 import re
 import shutil
 import tempfile
@@ -96,7 +97,12 @@ def aggregate(values: list[list[Any]], group_by: str, value: str) -> list[Group]
     if not sums:
         raise ReportError("aggregate", "합계를 낼 데이터 행이 없다")
     total = sum(sums[name] for name in sorted(sums))
-    return [Group(n, sums[n], sums[n] / total * 100 if total else 0.0) for n in sorted(sums)]
+    groups = [Group(n, sums[n], sums[n] / total * 100 if total else 0.0) for n in sorted(sums)]
+    if not math.isfinite(total) or not all(
+        math.isfinite(g.total) and math.isfinite(g.share) for g in groups
+    ):
+        raise ReportError("aggregate", "합계나 비중이 유한한 숫자가 아니다 (NaN 또는 무한대 포함)")
+    return groups
 
 
 def plan_slides(count: int) -> list[str]:
@@ -104,7 +110,7 @@ def plan_slides(count: int) -> list[str]:
     fixed = ["cover", "summary", "chart", "closing"]
     if count >= 5:
         return fixed[:3] + ["detail"] * (count - 4) + fixed[3:]
-    return {1: ["cover"], 2: ["cover", "chart"], 3: ["cover", "summary", "chart"], 4: fixed}[count]
+    return {2: ["cover", "chart"], 3: ["cover", "summary", "chart"], 4: fixed}[count]
 
 
 def _detail_lines(groups: list[Group], index: int, parts: int) -> str:
@@ -212,8 +218,8 @@ def verify_report(pptx: Path, groups: list[Group]) -> dict[str, int]:
 def _validate(args: dict[str, Any]) -> None:
     if args["chart"] not in CHART_TYPES:
         raise ReportError("arguments", f"chart는 bar·line·pie 중 하나여야 한다: {args['chart']!r}")
-    if not 1 <= args["slides"] <= MAX_SLIDES:
-        raise ReportError("arguments", f"slides는 1~{MAX_SLIDES} 사이여야 한다: {args['slides']}")
+    if not 2 <= args["slides"] <= MAX_SLIDES:
+        raise ReportError("arguments", f"slides는 2~{MAX_SLIDES} 사이여야 한다: {args['slides']}")
     source = Path(args["input"])
     if source.suffix.lower() != ".xlsx" or not source.is_file():
         raise ReportError("input", f"읽을 수 있는 .xlsx 파일이 아니다: {args['input']}")
@@ -231,8 +237,8 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         out_dir = get_home() / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         final = out_dir / f"{run_id}.pptx"
-        shutil.copyfile(built, final)
         verification = verify_report(built, groups) if args["verify"] else None
+        shutil.copyfile(built, final)
     total = sum(g.total for g in groups)
     summary = (
         f"{args['group_by']} {len(groups)}개, {args['value']} 합계 {_fmt(total)}, "

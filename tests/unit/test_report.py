@@ -45,11 +45,22 @@ def test_aggregate_rejects_non_numeric_value() -> None:
         aggregate([["g", "v"], ["a", "abc"]], "g", "v")
 
 
-@pytest.mark.parametrize("count", range(1, 9))
+def test_aggregate_rejects_non_finite_values() -> None:
+    with pytest.raises(ReportError, match="유한"):
+        aggregate([["g", "v"], ["a", "inf"]], "g", "v")
+
+
+@pytest.mark.parametrize("count", range(2, 9))
 def test_plan_slides_length_matches(count: int) -> None:
     plan = plan_slides(count)
     assert len(plan) == count
     assert plan[0] == "cover"
+    assert "chart" in plan
+
+
+def test_slides_below_two_rejected() -> None:
+    result = json.loads(excel_to_report_ppt("nope.xlsx", "g", "v", slides=1))
+    assert result["step"] == "arguments"
 
 
 def test_plan_five_slides_order() -> None:
