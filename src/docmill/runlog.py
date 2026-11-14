@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import functools
 import inspect
 import logging
@@ -48,6 +49,15 @@ CREATE TABLE IF NOT EXISTS tool_runs (
 """
 
 _F = TypeVar("_F", bound=Callable[..., Any])
+
+_current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "docmill_run_id", default=None
+)
+
+
+def current_run_id() -> str | None:
+    """지금 실행 중인 `logged` 도구 호출의 실행 ID. 로그 밖에서 부르면 `None`."""
+    return _current_run_id.get()
 
 
 def get_home(home: Path | None = None) -> Path:
@@ -188,6 +198,7 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             run_id, start, started_at = new_run_id(), time.perf_counter(), _now()
             call_args = _bind_args(fn, args, kwargs)
+            token = _current_run_id.set(run_id)
 
             async def done(result: str, status: str) -> None:
                 # SQLite work runs in a worker thread so the event loop is not blocked.
@@ -197,15 +208,18 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
                 )
 
             try:
-                value = await fn(*args, **kwargs)
-            except asyncio.CancelledError:
-                await done("CancelledError", "cancelled")
-                raise
-            except Exception as exc:
-                await done(f"{type(exc).__name__}: {exc}", "error")
-                raise
-            await done(str(value), "ok")
-            return value
+                try:
+                    value = await fn(*args, **kwargs)
+                except asyncio.CancelledError:
+                    await done("CancelledError", "cancelled")
+                    raise
+                except Exception as exc:
+                    await done(f"{type(exc).__name__}: {exc}", "error")
+                    raise
+                await done(str(value), "ok")
+                return value
+            finally:
+                _current_run_id.reset(token)
 
         return async_wrapper  # type: ignore[return-value]
 
@@ -213,11 +227,14 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         run_id, start, started_at = new_run_id(), time.perf_counter(), _now()
         call_args = _bind_args(fn, args, kwargs)
+        token = _current_run_id.set(run_id)
         try:
             value = fn(*args, **kwargs)
         except Exception as exc:
             finish(call_args, start, started_at, run_id, f"{type(exc).__name__}: {exc}", "error")
             raise
+        finally:
+            _current_run_id.reset(token)
         finish(call_args, start, started_at, run_id, str(value), "ok")
         return value
 
