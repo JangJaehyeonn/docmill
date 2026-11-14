@@ -1,0 +1,85 @@
+"""excel_to_report_ppt 단위 테스트 (FR-05)."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from docmill.tools.report import (
+    Group,
+    ReportError,
+    aggregate,
+    excel_to_report_ppt,
+    plan_slides,
+    verify_report,
+)
+
+ROWS = [
+    ["부서", "월", "매출"],
+    ["A", "7월", 10],
+    ["B", "7월", 30],
+    ["A", "8월", 20.5],
+    [None, "x", 1],
+]
+
+
+def test_aggregate_sums_and_shares_sorted() -> None:
+    groups = aggregate(ROWS, "부서", "매출")
+    assert [(g.name, g.total) for g in groups] == [("A", 30.5), ("B", 30.0)]
+    assert sum(g.share for g in groups) == pytest.approx(100)
+
+
+@pytest.mark.parametrize(
+    ("group_by", "value", "missing"), [("없음", "매출", "없음"), ("부서", "금액", "금액")]
+)
+def test_aggregate_reports_missing_column(group_by: str, value: str, missing: str) -> None:
+    with pytest.raises(ReportError, match=missing) as info:
+        aggregate(ROWS, group_by, value)
+    assert info.value.step == "columns"
+
+
+def test_aggregate_rejects_non_numeric_value() -> None:
+    with pytest.raises(ReportError, match="2행"):
+        aggregate([["g", "v"], ["a", "abc"]], "g", "v")
+
+
+@pytest.mark.parametrize("count", range(1, 9))
+def test_plan_slides_length_matches(count: int) -> None:
+    plan = plan_slides(count)
+    assert len(plan) == count
+    assert plan[0] == "cover"
+
+
+def test_plan_five_slides_order() -> None:
+    assert plan_slides(5) == ["cover", "summary", "chart", "detail", "closing"]
+
+
+def test_verify_report_without_chart_matches_nothing(tmp_path: Path) -> None:
+    import zipfile
+
+    pptx = tmp_path / "x.pptx"
+    with zipfile.ZipFile(pptx, "w") as z:
+        z.writestr("ppt/slides/slide1.xml", "<a/>")
+    assert verify_report(pptx, [Group("A", 1.0, 100.0)]) == {"checked": 2, "matched": 0}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "step"),
+    [
+        ({"chart": "radar"}, "arguments"),
+        ({"slides": 0}, "arguments"),
+        ({"input": "nope.xlsx"}, "input"),
+    ],
+)
+def test_invalid_arguments_return_error(
+    overrides: dict[str, object], step: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    args: dict[str, object] = {"input": "nope.xlsx", "group_by": "a", "value": "b"}
+    args.update(overrides)
+    out = json.loads(excel_to_report_ppt(**args))  # type: ignore[arg-type]
+    assert out["step"] == step
+    assert out["error"]
+    assert out["run_id"]

@@ -13,6 +13,7 @@ from mcp.server.mcpserver import MCPServer
 
 from docmill import __version__
 from docmill.runlog import logged
+from docmill.tools.report import excel_to_report_ppt
 
 SERVER_NAME = "docmill"
 
@@ -29,7 +30,12 @@ def _register_ping(server: MCPServer) -> None:
 
 
 # 업무 도구를 추가할 때 등록 함수를 이 목록에 넣으면 같은 서버에 노출된다.
-TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping,)
+def _register_report(server: MCPServer) -> None:
+    """`excel_to_report_ppt` 업무 도구(FR-05)를 등록한다."""
+    server.tool()(excel_to_report_ppt)
+
+
+TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping, _register_report)
 
 
 def _log_every_tool(server: MCPServer) -> None:
