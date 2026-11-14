@@ -72,6 +72,7 @@ class McpEngineTool:
         self._stack: contextlib.ExitStack | None = None
         self._portal: anyio.from_thread.BlockingPortal | None = None
         self._session: ClientSession | None = None
+        self.owns_workdir = False  # True면 close()가 작업 폴더까지 지운다
 
     # -- 생명주기 -----------------------------------------------------------
     def __enter__(self) -> McpEngineTool:
@@ -95,6 +96,8 @@ class McpEngineTool:
                 stack.close()
             except Exception as exc:
                 logger.warning("%s 엔진 종료 중 오류: %r", self.name, exc)
+        if self.owns_workdir:
+            shutil.rmtree(self.workdir, ignore_errors=True)
 
     # -- 실행 파일·인자 -------------------------------------------------------
     def _executable(self) -> str:
