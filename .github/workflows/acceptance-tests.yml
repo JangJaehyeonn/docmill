@@ -38,6 +38,8 @@ jobs:
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # Phase 진행 자동화(phase.yml)가 워크플로 토큰으로 이 워크플로를 실행하므로 Actions 봇을 허용한다.
+          allowed_bots: "github-actions"
           prompt: |
             `docs/requirements/issues.toml`에서 phase = ${{ inputs.phase }}인 요구사항들의 `acceptance` 항목을 pytest 테스트로 옮기세요.
             - 파일은 `tests/acceptance_draft/phase${{ inputs.phase }}/test_<fr번호소문자>.py`에만 쓰세요 (예: test_fr05.py). 다른 경로는 수정하지 마세요.
