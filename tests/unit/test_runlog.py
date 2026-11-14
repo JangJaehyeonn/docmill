@@ -62,6 +62,38 @@ def test_logged_async_records_cancel_and_start_time(
     assert rows["slow"]["status"] == "cancelled"
 
 
+def test_logged_async_keeps_record_when_cancelled_while_executor_busy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """실행기가 가득 찬 상태에서 기록 대기 중 취소돼도 기록은 남아야 한다."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    release = threading.Event()
+
+    async def quick() -> str:
+        return "fine"
+
+    async def main() -> None:
+        loop = asyncio.get_running_loop()
+        loop.set_default_executor(ThreadPoolExecutor(max_workers=1))
+        blocker = loop.run_in_executor(None, release.wait)
+        task = asyncio.create_task(runlog.logged(quick)())
+        await asyncio.sleep(0.05)  # task is now waiting for the busy executor
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        release.set()
+        await blocker
+
+    asyncio.run(main())
+    con = runlog._connect(tmp_path)
+    rows = list(con.execute("SELECT tool, status FROM tool_runs"))
+    con.close()
+    assert [(r["tool"], r["status"]) for r in rows] == [("quick", "ok")]
+
+
 def test_record_run_keeps_given_started_at(tmp_path: Path) -> None:
     runlog.record_run(
         run_id="r2",

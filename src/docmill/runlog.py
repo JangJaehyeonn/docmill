@@ -191,8 +191,9 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
 
             async def done(result: str, status: str) -> None:
                 # SQLite work runs in a worker thread so the event loop is not blocked.
-                await asyncio.to_thread(
-                    finish, call_args, start, started_at, run_id, result, status
+                # shield: cancelling the caller must not drop the queued log write.
+                await asyncio.shield(
+                    asyncio.to_thread(finish, call_args, start, started_at, run_id, result, status)
                 )
 
             try:
