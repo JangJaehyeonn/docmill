@@ -17,3 +17,6 @@ out/
 .engines/
 .DS_Store
 Thumbs.db
+
+# 에이전트 임시 탐색 파일
+.scratch/
