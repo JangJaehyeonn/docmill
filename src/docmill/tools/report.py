@@ -165,7 +165,7 @@ def _read_sheet(source: Path, workdir: Path) -> list[list[Any]]:
     shutil.copyfile(source, staged)
     with get_tool(staged, workdir) as grid:
         _engine_json(grid.open(staged), "open_workbook")
-        data = _engine_json(grid._run("read_range", {}), "read_range")
+        data = _engine_json(grid.call_tool("read_range", {}), "read_range")
     rows = data.get("values")
     return rows if isinstance(rows, list) else []
 
@@ -175,11 +175,11 @@ def _build_deck(groups: list[Group], args: dict[str, Any], target: Path, workdir
     if args.get("template"):
         params["theme"] = args["template"]
     with get_tool(target, workdir) as deck:
-        _engine_json(deck._run("new_presentation", params), "new_presentation")
+        _engine_json(deck.call_tool("new_presentation", params), "new_presentation")
         detail_no = 0
         for kind in plan_slides(args["slides"]):
             for tool, tool_args in _slide_commands(kind, groups, args, detail_no):
-                _engine_json(deck._run(tool, tool_args), tool)
+                _engine_json(deck.call_tool(tool, tool_args), tool)
             detail_no += kind == "detail"
         _engine_json(deck.save(target), "save_presentation")
 
