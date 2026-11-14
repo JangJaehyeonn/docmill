@@ -92,6 +92,26 @@ def test_verification_mismatch_blocks_publishing(
     assert not list((tmp_path / "outputs").glob("*.pptx"))
 
 
+def test_failure_before_publish_leaves_no_output(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+
+    def boom(_number: float) -> str:
+        raise RuntimeError("summary failed")
+
+    monkeypatch.setattr(report, "_fmt", boom)
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    assert out["step"] == "unexpected"
+    assert not list((tmp_path / "outputs").glob("*.pptx"))
+
+
 @pytest.mark.parametrize(
     ("overrides", "step"),
     [

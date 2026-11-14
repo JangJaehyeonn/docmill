@@ -19,7 +19,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.engines import get_tool
-from docmill.engines.base import EngineResult
+from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.runlog import current_run_id, get_home, new_run_id
 
 CHART_TYPES = {"bar": "column", "line": "line", "pie": "pie"}
@@ -160,12 +160,16 @@ def _slide_commands(
     return [("add_slide", {"layout": "title", "title": "마무리", "body": "감사합니다"})]
 
 
+def _call(engine: DirectToolCaller, tool: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    return _engine_json(engine.call_tool(tool, arguments), tool)
+
+
 def _read_sheet(source: Path, workdir: Path) -> list[list[Any]]:
     staged = workdir / "input.xlsx"
     shutil.copyfile(source, staged)
     with get_tool(staged, workdir) as grid:
         _engine_json(grid.open(staged), "open_workbook")
-        data = _engine_json(grid.call_tool("read_range", {}), "read_range")
+        data = _call(grid, "read_range", {})
     rows = data.get("values")
     return rows if isinstance(rows, list) else []
 
@@ -175,11 +179,11 @@ def _build_deck(groups: list[Group], args: dict[str, Any], target: Path, workdir
     if args.get("template"):
         params["theme"] = args["template"]
     with get_tool(target, workdir) as deck:
-        _engine_json(deck.call_tool("new_presentation", params), "new_presentation")
+        _call(deck, "new_presentation", params)
         detail_no = 0
         for kind in plan_slides(args["slides"]):
             for tool, tool_args in _slide_commands(kind, groups, args, detail_no):
-                _engine_json(deck.call_tool(tool, tool_args), tool)
+                _call(deck, tool, tool_args)
             detail_no += kind == "detail"
         _engine_json(deck.save(target), "save_presentation")
 
@@ -241,20 +245,22 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         if verification is not None and verification["matched"] != verification["checked"]:
             matched, checked = verification["matched"], verification["checked"]
             raise ReportError("verify", f"그래프와 엑셀 합계 불일치: {matched}/{checked}건 일치")
-        shutil.copyfile(built, final)
-    total = sum(g.total for g in groups)
-    summary = (
-        f"{args['group_by']} {len(groups)}개, {args['value']} 합계 {_fmt(total)}, "
-        f"슬라이드 {args['slides']}장({args['chart']} 그래프)"
-    )
-    result: dict[str, Any] = {
-        "path": str(final),
-        "summary": summary,
-        "run_id": run_id,
-        "groups": [{"name": g.name, "total": g.total, "share": round(g.share, 1)} for g in groups],
-    }
-    if verification is not None:
-        result["verification"] = verification
+        total = sum(g.total for g in groups)
+        summary = (
+            f"{args['group_by']} {len(groups)}개, {args['value']} 합계 {_fmt(total)}, "
+            f"슬라이드 {args['slides']}장({args['chart']} 그래프)"
+        )
+        result: dict[str, Any] = {
+            "path": str(final),
+            "summary": summary,
+            "run_id": run_id,
+            "groups": [
+                {"name": g.name, "total": g.total, "share": round(g.share, 1)} for g in groups
+            ],
+        }
+        if verification is not None:
+            result["verification"] = verification
+        shutil.copyfile(built, final)  # publish only after everything else succeeded
     return result
 
 
