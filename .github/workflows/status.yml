@@ -37,7 +37,9 @@ jobs:
           sparse-checkout: |
             scripts
             docs/requirements
-      - name: 현황판 갱신
+      - name: 현황판 갱신 (+ 노션 페이지, 설정돼 있으면)
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/status_board.py
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_PAGE_ID: ${{ vars.NOTION_PAGE_ID }}
+        run: python3 scripts/status_board.py --notion
