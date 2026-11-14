@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      actions: write
     steps:
       - uses: actions/checkout@v4
         with:
@@ -40,6 +41,10 @@ jobs:
             echo "Phase $p 이슈를 ready로 표시합니다."
             python3 scripts/create_issues.py --mark-ready "$p"
           done
+          # 정기 실행(3시간)을 기다리지 않고 바로 첫 이슈를 집게 한다.
+          if [ -n "$phases" ]; then
+            gh workflow run feeder.yml --ref "${{ github.event.repository.default_branch }}"
+          fi
 
   next:
     if: >-
