@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
@@ -28,7 +29,8 @@ REDACTED = "***"
 
 _SECRET_KEY = re.compile(r"key|token|secret|passw|credential|auth|cookie", re.IGNORECASE)
 _SECRET_VALUE = re.compile(
-    r"(?:(?:api[_-]?key|token|secret|password|passwd)\s*[=:]\s*)\S+|sk-[A-Za-z0-9_\-]{8,}",
+    r"""(?:["']?(?:api[_-]?key|token|secret|password|passwd)["']?\s*[=:]\s*)"""
+    r"""(?:"[^"]*"|'[^']*'|[^\s,}]+)|sk-[A-Za-z0-9_\-]{8,}""",
     re.IGNORECASE,
 )
 
@@ -92,6 +94,10 @@ def summarize_args(args: Mapping[str, Any]) -> str:
     return text if len(text) <= MAX_SUMMARY_LEN else text[:MAX_SUMMARY_LEN] + "...(생략)"
 
 
+def _now() -> str:
+    return datetime.now(UTC).isoformat(timespec="seconds")
+
+
 def new_run_id() -> str:
     """새 실행 ID를 발급한다."""
     return uuid.uuid4().hex
@@ -106,10 +112,11 @@ def record_run(
     status: str,
     duration_ms: int,
     ai_used: bool,
+    started_at: str | None = None,
     home: Path | None = None,
 ) -> None:
-    """호출 한 건을 로그에 기록한다."""
-    started = datetime.now(UTC).isoformat(timespec="seconds")
+    """호출 한 건을 로그에 기록한다. `started_at`은 호출 시작 시각(UTC ISO)이다."""
+    started = started_at or _now()
     con = _connect(home)
     try:
         with con:
@@ -156,43 +163,61 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
     """도구 함수를 감싸 호출마다 실행 로그를 남긴다. 예외는 기록 후 그대로 던진다."""
     name = fn.__name__
 
-    def finish(call_args: dict[str, Any], start: float, run_id: str, result: str, ok: bool) -> None:
+    def finish(
+        call_args: dict[str, Any],
+        start: float,
+        started_at: str,
+        run_id: str,
+        result: str,
+        status: str,
+    ) -> None:
         _safe_record(
             run_id=run_id,
             tool=name,
             args_summary=summarize_args(call_args),
             result=_clip(result),
-            status="ok" if ok else "error",
+            status=status,
             duration_ms=int((time.perf_counter() - start) * 1000),
             ai_used=ai_used,
+            started_at=started_at,
         )
 
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            run_id, start = new_run_id(), time.perf_counter()
+            run_id, start, started_at = new_run_id(), time.perf_counter(), _now()
             call_args = _bind_args(fn, args, kwargs)
+
+            async def done(result: str, status: str) -> None:
+                # SQLite work runs in a worker thread so the event loop is not blocked.
+                await asyncio.to_thread(
+                    finish, call_args, start, started_at, run_id, result, status
+                )
+
             try:
                 value = await fn(*args, **kwargs)
-            except Exception as exc:
-                finish(call_args, start, run_id, f"{type(exc).__name__}: {exc}", False)
+            except asyncio.CancelledError:
+                await done("CancelledError", "cancelled")
                 raise
-            finish(call_args, start, run_id, str(value), True)
+            except Exception as exc:
+                await done(f"{type(exc).__name__}: {exc}", "error")
+                raise
+            await done(str(value), "ok")
             return value
 
         return async_wrapper  # type: ignore[return-value]
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        run_id, start = new_run_id(), time.perf_counter()
+        run_id, start, started_at = new_run_id(), time.perf_counter(), _now()
         call_args = _bind_args(fn, args, kwargs)
         try:
             value = fn(*args, **kwargs)
         except Exception as exc:
-            finish(call_args, start, run_id, f"{type(exc).__name__}: {exc}", False)
+            finish(call_args, start, started_at, run_id, f"{type(exc).__name__}: {exc}", "error")
             raise
-        finish(call_args, start, run_id, str(value), True)
+        finish(call_args, start, started_at, run_id, str(value), "ok")
         return value
 
     return wrapper  # type: ignore[return-value]
