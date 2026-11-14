@@ -200,6 +200,9 @@ def upsert(name: str, body: str) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--print", action="store_true", help="본문만 출력")
+    parser.add_argument(
+        "--notion", action="store_true", help="노션 페이지에도 반영 (NOTION_TOKEN, NOTION_PAGE_ID)"
+    )
     args = parser.parse_args()
     name = repo()
     body = build(name)
@@ -207,6 +210,10 @@ def main() -> int:
         sys.stdout.write(body)
         return 0
     upsert(name, body)
+    if args.notion:
+        from notion_sync import sync
+
+        sync(body)
     return 0
 
 
