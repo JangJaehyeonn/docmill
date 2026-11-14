@@ -198,7 +198,14 @@ class McpEngineTool:
         return EngineResult(ok=True, output=output, duration_ms=elapsed, details=details)
 
     def call_tool(self, tool: str, arguments: dict[str, Any]) -> EngineResult:
-        """엔진이 직접 제공하는 MCP 도구 하나를 호출한다. 실패는 `EngineResult`로 돌려준다."""
+        """엔진이 직접 제공하는 MCP 도구 하나를 호출한다.
+
+        경로로 보이는 인자는 호출 전에 작업 폴더 안인지 검사한다.
+        실패는 `EngineResult`로 돌려준다.
+        """
+        checked = self._check(*_path_like_values(arguments))
+        if isinstance(checked, EngineResult):
+            return checked
         return self._run(tool, arguments)
 
     def _check(self, *paths: Path | str) -> list[Path] | EngineResult:
