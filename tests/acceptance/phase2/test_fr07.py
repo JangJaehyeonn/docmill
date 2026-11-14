@@ -2,9 +2,9 @@
 
 필요한 샘플:
 - tests/fixtures/company_intro.pptx (있음): 양식을 적용할 PPT
-- tests/fixtures/template_default.pptx (없음, 추가 필요): 제목 크기·색·정렬이
-  company_intro.pptx와 다른 양식 PPT. 제목 서식은 슬라이드 제목 도형의 런/문단 속성
-  (`sz`·`srgbClr`·`algn`)에 직접 지정돼 있다.
+- tests/fixtures/template_default.pptx (있음): 제목 40pt·`1F4E79`·가운데·Pretendard.
+  company_intro.pptx(3장, 제목 32pt·`333333`·왼쪽·Arial)와 다르다. 제목 서식은 슬라이드 제목 도형의
+  런/문단 속성(`sz`·`srgbClr`·`algn`)에 직접 지정돼 있다.
 가정(구현 방법이 정해지면 맞춰 고친다):
 - 양식은 FR-18의 `docmill.templates.register_template(name, source, home=...)`로 등록한다.
 - 도구 인자: `input`, `template`(양식 이름), 선택 `out_dir`.

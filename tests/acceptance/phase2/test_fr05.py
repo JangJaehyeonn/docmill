@@ -1,9 +1,9 @@
 """FR-05 excel_to_report_ppt 업무 도구 인수 테스트 (초안).
 
 필요한 샘플:
-- tests/fixtures/sales_q3.xlsx (있음)
+- tests/fixtures/sales_q3.xlsx (있음): 첫 행 머리글 `부서·월·매출`, 5개 부서 × 3개월 = 15행
 가정(구현 방법이 정해지면 맞춰 고친다):
-- 시트 첫 행이 머리글이고, 그룹 열 `GROUP_BY`와 값 열 `VALUE`가 있다 (샘플에 맞게 고칠 것).
+- 시트 첫 행이 머리글이고, 그룹 열 `GROUP_BY`와 값 열 `VALUE`가 있다.
 - 도구 결과는 JSON 텍스트이며 `path`·`summary`·`run_id`를 가진다.
   verify=true면 `verification`에 `checked`(대조 개수)·`matched`(일치 개수)가 들어간다.
 - 열이 없으면 `error`에 빠진 열 이름이 들어간다.
@@ -73,10 +73,14 @@ def _expected_sums() -> dict[str, float]:
         cells: dict[str, str] = {}
         for c in row.findall("m:c", NS):
             col = re.match(r"[A-Z]+", c.get("r", ""))
-            v = c.find("m:v", NS)
-            if col is None or v is None or v.text is None:
+            if col is None:
                 continue
-            cells[col.group()] = strings[int(v.text)] if c.get("t") == "s" else v.text
+            inline = c.find("m:is", NS)
+            v = c.find("m:v", NS)
+            if inline is not None:
+                cells[col.group()] = "".join(t.text or "" for t in inline.iter(f"{{{NS['m']}}}t"))
+            elif v is not None and v.text is not None:
+                cells[col.group()] = strings[int(v.text)] if c.get("t") == "s" else v.text
         rows.append(cells)
     header = {name: col for col, name in rows[0].items()}
     sums: dict[str, float] = defaultdict(float)
@@ -85,15 +89,18 @@ def _expected_sums() -> dict[str, float]:
     return dict(sums)
 
 
-def _chart_values(pptx: Path) -> list[float]:
-    values: list[float] = []
+def _chart_values(pptx: Path) -> list[list[float]]:
+    """차트마다 값 목록을 돌려준다 (슬라이드 여러 장에 차트가 여러 개일 수 있다)."""
+    charts: list[list[float]] = []
     with zipfile.ZipFile(pptx) as z:
         for name in sorted(z.namelist()):
             if re.fullmatch(r"ppt/charts/chart\d+\.xml", name):
                 text = z.read(name).decode("utf-8")
+                values: list[float] = []
                 for block in re.findall(r"<c:val>.*?</c:val>", text, re.S):
                     values += [float(v) for v in re.findall(r"<c:v>([^<]+)</c:v>", block)]
-    return values
+                charts.append(values)
+    return charts
 
 
 def _slide_count(pptx: Path) -> int:
@@ -114,8 +121,11 @@ def test_slide_count_matches_slides_argument(tmp_path: Path, slides: int) -> Non
 def test_chart_values_equal_group_sums(tmp_path: Path) -> None:
     out = _run(tmp_path)
     expected = sorted(_expected_sums().values())
-    actual = sorted(_chart_values(Path(out["path"])))
-    assert actual == pytest.approx(expected)
+    charts = _chart_values(Path(out["path"]))
+    assert charts, "그래프가 없다"
+    assert any(sorted(values) == pytest.approx(expected) for values in charts), (
+        "group_by별 value 합계를 그린 그래프가 없다"
+    )
 
 
 @pytest.mark.fr("FR-05")

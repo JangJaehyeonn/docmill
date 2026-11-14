@@ -1,7 +1,7 @@
 """FR-18 양식 등록 인수 테스트 (초안).
 
 필요한 샘플:
-- tests/fixtures/template_default.pptx (없음, 추가 필요): 샘플 양식 PPT
+- tests/fixtures/template_default.pptx (있음): 샘플 양식 PPT (제목 40pt·`1F4E79`·가운데·Pretendard)
 - tests/fixtures/company_intro.pptx (있음): 양식을 적용할 PPT
 가정(구현 방법이 정해지면 맞춰 고친다):
 - `docmill.templates.register_template(name, source, home=...)`이 양식 PPT에서 규칙을 추출해
