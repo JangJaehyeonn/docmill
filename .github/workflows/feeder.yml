@@ -57,6 +57,7 @@ jobs:
       - if: steps.pick.outputs.issue != ''
         run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
+        id: claude
         if: steps.pick.outputs.issue != ''
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -79,6 +80,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE: ${{ steps.pick.outputs.issue }}
+          EXEC_FILE: ${{ steps.claude.outputs.execution_file }}
         run: |
           state=$(gh issue view "$ISSUE" --json state --jq .state)
           if [ "$state" = "CLOSED" ]; then
@@ -89,6 +91,19 @@ jobs:
           count=$(gh pr list --state all --limit 200 --json headRefName,state \
             --jq "[.[] | select((.headRefName | startswith(\"claude/${ISSUE}-\")) and (.state == \"OPEN\" or .state == \"MERGED\"))] | length")
           if [ "$count" = "0" ]; then
+            # 실행 로그는 보안상 Claude 출력을 숨기므로, 마지막 메시지와 거부된 명령을 이슈에 남겨 원인을 바로 보이게 한다.
+            reason="(실행 기록 없음)"
+            denied=""
+            if [ -n "$EXEC_FILE" ] && [ -f "$EXEC_FILE" ]; then
+              reason=$(jq -r '[.[] | select(.type == "result")] | last | .result // "(마지막 메시지 없음)"' "$EXEC_FILE" | head -c 3000)
+              denied=$(jq -r '[.[] | select(.type == "result")] | last | (.permission_denials // [])
+                | map("- `" + .tool_name + "` " + ((.tool_input.command // .tool_input.file_path // "") | tostring | .[0:150]))
+                | unique | join("\n")' "$EXEC_FILE")
+            fi
             gh issue edit "$ISSUE" --remove-label in-progress --add-label needs-human
-            gh issue comment "$ISSUE" --body "@JangJaehyeonn 자동 구현이 PR을 열지 못하고 끝났습니다. 실행 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            body=$(printf '%s\n\n%s\n\n<details><summary>Claude 마지막 메시지</summary>\n\n%s\n\n</details>\n\n거부된 명령:\n%s\n' \
+              "@JangJaehyeonn 자동 구현이 PR을 열지 못하고 끝났습니다." \
+              "실행 로그: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              "$reason" "${denied:-- 없음}")
+            gh issue comment "$ISSUE" --body "$body"
           fi
