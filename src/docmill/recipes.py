@@ -44,18 +44,20 @@ class SessionRecorder:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.outputs: list[str | None] = []  # result `path` of each call
 
-    def add(self, tool: str, args: dict[str, Any]) -> None:
-        """성공한 호출 하나를 기록한다."""
+    def add(self, tool: str, args: dict[str, Any], output: str | None = None) -> None:
+        """성공한 호출 하나와 그 결과 산출물 경로를 기록한다."""
         self.calls.append((tool, dict(args)))
+        self.outputs.append(output)
 
 
-def _is_success(value: Any) -> bool:
+def _parse_success(value: Any) -> dict[str, Any] | None:
     try:
         data = json.loads(value) if isinstance(value, str) else value
     except ValueError:
-        return False
-    return isinstance(data, dict) and "error" not in data
+        return None
+    return data if isinstance(data, dict) and "error" not in data else None
 
 
 def recording(fn: _F, recorder: SessionRecorder) -> _F:
@@ -66,32 +68,48 @@ def recording(fn: _F, recorder: SessionRecorder) -> _F:
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
         value = fn(*args, **kwargs)
-        if _is_success(value):
+        data = _parse_success(value)
+        if data is not None:
             bound = inspect.signature(fn).bind_partial(*args, **kwargs)
-            recorder.add(fn.__name__, dict(bound.arguments))
+            path = data.get("path")
+            recorder.add(
+                fn.__name__, dict(bound.arguments), path if isinstance(path, str) else None
+            )
         return value
 
     return wrapper  # type: ignore[return-value]
 
 
-def build_steps(calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
-    """기록된 호출을 레시피 단계로 바꾼다. 입력 파일 경로는 `$변수`로 치환한다."""
-    variables: dict[tuple[str, str], str] = {}  # (arg name, path) -> variable
+def build_steps(
+    calls: list[tuple[str, dict[str, Any]]], outputs: list[str | None] | None = None
+) -> list[dict[str, Any]]:
+    """기록된 호출을 레시피 단계로 바꾼다.
+
+    입력 경로가 앞 단계 산출물이면 `$stepN`(N은 1부터 센 그 단계 번호)으로, 그 외에는 경로마다
+    변수 하나(`$input`, `$input2`, ...)로 바꾼다. 같은 파일이면 인자 이름이 달라도 같은 변수다.
+    """
+    produced: dict[str, int] = {}  # output path -> step number that made it
+    variables: dict[str, str] = {}  # path -> variable
     steps: list[dict[str, Any]] = []
-    for tool, args in calls:
+    for number, (tool, args) in enumerate(calls, start=1):
         stored: dict[str, Any] = {}
         for key in sorted(args):
             if key in DROPPED_ARGS:
                 continue
             value = args[key]
             if key in INPUT_ARGS and isinstance(value, str):
-                ident = (key, value)
-                if ident not in variables:
-                    same = sum(1 for name, _ in variables if name == key)
-                    variables[ident] = f"${key}" if same == 0 else f"${key}{same + 1}"
-                value = variables[ident]
+                if value in produced:
+                    value = f"$step{produced[value]}"
+                else:
+                    if value not in variables:
+                        count = len(variables) + 1
+                        variables[value] = "$input" if count == 1 else f"$input{count}"
+                    value = variables[value]
             stored[key] = value
         steps.append({"tool": tool, "args": stored})
+        output = outputs[number - 1] if outputs and number <= len(outputs) else None
+        if output is not None:
+            produced[output] = number
     return steps
 
 
@@ -110,7 +128,7 @@ def _validate_name(name: str) -> str:
 def save_session_recipe(recorder: SessionRecorder, name: str) -> dict[str, Any]:
     """세션의 성공한 호출을 `name` 레시피로 저장하고 name·steps·path를 돌려준다."""
     clean = _validate_name(name)
-    steps = build_steps(recorder.calls)
+    steps = build_steps(recorder.calls, recorder.outputs)
     if not steps:
         raise RecipeError("steps", "저장할 성공한 도구 호출이 이 세션에 없다")
     folder = recipes_dir()

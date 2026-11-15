@@ -2,7 +2,7 @@
 
 저장된 레시피(`DOCMILL_HOME/recipes/<이름>.json`)의 단계를 순서대로 실행한다. 각 단계는
 docmill 업무 도구 함수를 직접 호출하므로 AI를 쓰지 않으며, 같은 입력이면 같은 결과가 나온다.
-`$변수`에는 실행할 때 받은 입력 파일 경로가 들어간다.
+`$input`에는 실행할 때 받은 입력 파일 경로가, `$stepN`에는 N번째 단계의 산출물 경로가 들어간다.
 """
 
 from __future__ import annotations
@@ -46,36 +46,29 @@ def load_recipe(recipe: str) -> list[dict[str, Any]]:
     return steps
 
 
-def bind_args(
-    args: dict[str, Any], variables: dict[str, str], step: str, previous: str | None = None
-) -> dict[str, Any]:
-    """인자 값이 `$변수`이면 입력 값으로 바꾼다.
+def bind_args(args: dict[str, Any], variables: dict[str, str], step: str) -> dict[str, Any]:
+    """인자 값이 `$변수`이면 바인딩된 값으로 바꾼다.
 
-    `$input` 외의 변수는 앞 단계가 만든 산출물(previous)로 바꾼다. 앞 단계가 없으면 `RecipeError`.
+    `$input`은 입력 파일, `$stepN`은 N번째 단계 산출물이다. 알 수 없는 변수는 `RecipeError`.
     """
     bound: dict[str, Any] = {}
     for key in sorted(args):
         value = args[key]
         if isinstance(value, str) and value.startswith("$"):
-            if value in variables:
-                value = variables[value]
-            elif previous is not None:
-                value = previous
-            else:
+            if value not in variables:
                 raise RecipeError(step, f"변수 {value}에 넣을 값이 없다")
+            value = variables[value]
         bound[key] = value
     return bound
 
 
-def _run_step(
-    index: int, step: dict[str, Any], variables: dict[str, str], previous: str | None = None
-) -> dict[str, Any]:
+def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> dict[str, Any]:
     tool = step.get("tool")
     label = f"{index}:{tool}"
     runner = RUNNERS.get(tool) if isinstance(tool, str) else None
     if runner is None:
         raise RecipeError(label, f"실행할 수 없는 도구다: {tool!r}")
-    args = bind_args(step.get("args", {}), variables, label, previous)
+    args = bind_args(step.get("args", {}), variables, label)
     try:
         data = json.loads(runner(**args))
     except TypeError as exc:
@@ -110,10 +103,10 @@ def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, An
     variables = {"$input": input}
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps, start=1):
-        previous = next(
-            (r["path"] for r in reversed(results) if isinstance(r.get("path"), str)), None
-        )
-        results.append(_run_step(index, step, variables, previous))
+        result = _run_step(index, step, variables)
+        results.append(result)
+        if isinstance(result.get("path"), str):
+            variables[f"$step{index}"] = result["path"]
     produced = [r["path"] for r in results if isinstance(r.get("path"), str)]
     if not produced:
         raise RecipeError("output", "레시피가 산출물을 만들지 않았다")

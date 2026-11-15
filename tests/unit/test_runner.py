@@ -72,34 +72,50 @@ def test_unknown_tool_in_recipe(tmp_path: Path) -> None:
     assert json.loads(run_recipe("r", "x"))["step"] == "1:rm_rf"
 
 
-def test_bind_args_uses_previous_output_for_other_variables() -> None:
-    bound = bind_args({"input": "$input2"}, {"$input": "a.xlsx"}, "s", previous="made.pptx")
-    assert bound == {"input": "made.pptx"}
+def test_bind_args_step_variable() -> None:
+    bound = bind_args({"document": "$step1"}, {"$input": "a", "$step1": "made.pptx"}, "s")
+    assert bound == {"document": "made.pptx"}
 
 
-def test_chained_steps_pass_previous_output(
+def test_unknown_variable_error_names_step_and_variable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _save(tmp_path, "r", [{"tool": "verify_numbers", "args": {"source": "$input2"}}])
+    out = json.loads(run_recipe("r", "x.xlsx"))
+    assert out["step"] == "1:verify_numbers" and "$input2" in out["error"]
+
+
+def test_saved_report_then_verify_session_replays_with_new_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docmill.recipes import SessionRecorder, make_save_recipe, recording
+
     built = tmp_path / "built.pptx"
     built.write_bytes(b"x")
-    seen: list[str] = []
 
-    def first(input: str) -> str:
+    def excel_to_report_ppt(input: str) -> str:
         return json.dumps({"path": str(built), "summary": "one"})
 
-    def second(input: str, source: str) -> str:
-        seen.append(source)
-        return json.dumps({"path": str(built), "summary": "two"})
+    def verify_numbers(document: str, source: str) -> str:
+        return json.dumps({"summary": "checked"})
 
-    monkeypatch.setitem(runner.RUNNERS, "excel_to_report_ppt", first)
-    monkeypatch.setitem(runner.RUNNERS, "apply_template", second)
-    steps = [
-        {"tool": "excel_to_report_ppt", "args": {"input": "$input"}},
-        {"tool": "apply_template", "args": {"input": "$input", "source": "$source"}},
-    ]
-    _save(tmp_path, "r", steps)
-    out = json.loads(run_recipe("r", "new.xlsx"))
-    assert seen == [str(built)] and out["summary"] == "two"
+    rec = SessionRecorder()
+    recording(excel_to_report_ppt, rec)(input="/a.xlsx")
+    recording(verify_numbers, rec)(document=str(built), source="/a.xlsx")
+    steps = json.loads(make_save_recipe(rec)("r"))["steps"]
+    assert steps[1]["args"] == {"document": "$step1", "source": "$input"}
+
+    seen: list[dict[str, str]] = []
+
+    def replay_verify(document: str, source: str) -> str:
+        seen.append({"document": document, "source": source})
+        return json.dumps({"path": document, "summary": "checked"})
+
+    monkeypatch.setitem(runner.RUNNERS, "excel_to_report_ppt", excel_to_report_ppt)
+    monkeypatch.setitem(runner.RUNNERS, "verify_numbers", replay_verify)
+    out = json.loads(run_recipe("r", "/b.xlsx"))
+    assert seen == [{"document": str(built), "source": "/b.xlsx"}]
+    assert out["summary"] == "checked"
 
 
 def test_deliver_leaves_no_partial_files_and_is_repeatable(tmp_path: Path) -> None:
