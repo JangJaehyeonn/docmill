@@ -29,7 +29,7 @@ from docmill.engines.paths import PathOutsideWorkdirError, resolve_inside
 logger = logging.getLogger(__name__)
 
 
-_PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save")
+_PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save", "original")
 
 
 def _path_like_values(value: Any, key: str = "") -> list[str]:

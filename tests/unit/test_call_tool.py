@@ -55,6 +55,37 @@ def test_call_tool_rejects_outside_paths_before_engine(
     assert calls == []
 
 
+@pytest.mark.parametrize("kind", ["dotdot", "absolute", "symlink"])
+@pytest.mark.parametrize("nested", [False, True])
+def test_call_tool_rejects_original_key_before_engine(
+    tmp_path: Path, kind: str, nested: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """WordCraft `review.compare`의 `original` 경로도 `_run` 전에 거부한다."""
+    work = tmp_path / "work"
+    outside = tmp_path / "outside"
+    work.mkdir()
+    outside.mkdir()
+    (work / "link.docx").symlink_to(outside / "target.docx")
+    bad = {
+        "dotdot": "../x.docx",
+        "absolute": str(outside / "x.docx"),
+        "symlink": "link.docx",
+    }[kind]
+    arguments: dict[str, Any] = {"params": {"original": bad}} if nested else {"original": bad}
+    calls: list[str] = []
+
+    def fake_run(self: Any, tool: str, arguments: dict[str, Any]) -> EngineResult:
+        calls.append(tool)
+        return EngineResult(ok=True)
+
+    monkeypatch.setattr(GridCraftTool, "_run", fake_run)
+    with GridCraftTool(work) as grid:
+        result = grid.call_tool("review_compare", arguments)
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+    assert calls == []
+
+
 def test_report_call_tool_arguments_stay_inside_workdir(tmp_path: Path) -> None:
     """report.py가 넘기는 인자 중 경로 힌트에 걸리는 값은 모두 작업 폴더 안이다.
 
