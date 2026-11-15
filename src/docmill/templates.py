@@ -101,6 +101,17 @@ def _theme_font(theme: ElementTree.Element | None, face: str, slot: str = "latin
     return None if node is None else node.get("typeface")
 
 
+def _ratio(raw: str) -> float:
+    """`"75%"`는 100으로, `"75000"`은 100000으로 나눠 0.75로 만든다. 읽을 수 없으면 0."""
+    text = raw.strip()
+    try:
+        if text.endswith("%"):
+            return float(text[:-1]) / 100
+        return int(text) / 100000
+    except ValueError:
+        return 0.0
+
+
 def _apply_transforms(rgb: str, color: ElementTree.Element) -> str:
     """색 요소의 자식 `lumMod`·`lumOff`를 문서 순서대로 HSL 밝기에 적용한다."""
     ops = [c for c in color if c.tag.rsplit("}", 1)[-1] in ("lumMod", "lumOff")]
@@ -109,7 +120,7 @@ def _apply_transforms(rgb: str, color: ElementTree.Element) -> str:
     r, g, b = (int(rgb[i : i + 2], 16) / 255 for i in (0, 2, 4))
     h, lum, sat = colorsys.rgb_to_hls(r, g, b)
     for op in ops:
-        val = int(op.get("val", "0")) / 100000
+        val = _ratio(op.get("val", "0"))
         lum = lum * val if op.tag.endswith("lumMod") else lum + val
         lum = min(1.0, max(0.0, lum))
     out = colorsys.hls_to_rgb(h, lum, sat)

@@ -153,3 +153,16 @@ def test_east_asian_font_extracted_separately() -> None:
     rules = _props("<a:latin typeface='Arial'/><a:ea typeface='맑은 고딕'/>")
     assert rules["font"] == "Arial"
     assert rules["font_ea"] == "맑은 고딕"
+
+
+def test_luminance_percent_and_integer_forms_match() -> None:
+    def fill(mod: str, off: str) -> str:
+        return (
+            "<a:solidFill><a:srgbClr val='336699'>"
+            f"<a:lumMod val='{mod}'/><a:lumOff val='{off}'/></a:srgbClr></a:solidFill>"
+        )
+
+    pct = _props(fill("75%", "25%"))["title_color"]
+    integer = _props(fill("75000", "25000"))["title_color"]
+    assert pct == integer
+    assert pct != "336699"
