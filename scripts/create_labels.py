@@ -25,6 +25,7 @@ BASE_LABELS = [
     ("phase-2", "c5def5", "업무 도구"),
     ("phase-3", "c5def5", "레시피"),
     ("phase-4", "c5def5", "배포·공개"),
+    ("phase-5", "c5def5", "차별화"),
     ("필수", "d93f0b", "MVP 출시 조건"),
     ("권장", "fbca04", "MVP 안에서 가능하면 구현"),
     ("선택", "cccccc", "MVP 이후"),
