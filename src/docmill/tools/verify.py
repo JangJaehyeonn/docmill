@@ -94,7 +94,7 @@ def _verify(document: str, source: str, group_by: str, value: str) -> dict[str, 
         series = read_chart_points(doc)
     except (zipfile.BadZipFile, ET.ParseError) as exc:
         raise ReportError("document", f"문서를 읽지 못했다: {exc}") from exc
-    if not any(ser["values"] for ser in series):
+    if not any(ser["values"] or ser["categories"] for ser in series):
         raise ReportError("extract", "문서에서 대조할 그래프 숫자를 찾지 못했다")
     return compare(series, groups)
 

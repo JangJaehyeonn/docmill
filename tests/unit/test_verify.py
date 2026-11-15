@@ -6,6 +6,9 @@ import json
 import zipfile
 from pathlib import Path
 
+import pytest
+
+from docmill.tools import verify
 from docmill.tools.report import Group
 from docmill.tools.verify import compare, read_chart_points, verify_numbers
 
@@ -61,6 +64,26 @@ def test_category_without_value_is_mismatch(tmp_path: Path) -> None:
     result = compare(read_chart_points(pptx), GROUPS)
     assert result["checked"] == 2 and result["matched"] == 0
     assert [m["actual"] for m in result["mismatches"]] == [None, None]
+
+
+def test_categories_only_chart_reaches_compare(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(verify, "_read_sheet", lambda *_: [])
+    monkeypatch.setattr(verify, "aggregate", lambda *_: GROUPS)
+    xlsx = tmp_path / "s.xlsx"
+    xlsx.write_bytes(b"")
+    pptx = tmp_path / "a.pptx"
+    with zipfile.ZipFile(pptx, "w") as z:
+        z.writestr(
+            "ppt/charts/chart1.xml",
+            CHART.replace('<c:pt idx="0"><c:v>FIRST</c:v></c:pt>', "").replace(
+                '<c:pt idx="1"><c:v>20</c:v></c:pt>', ""
+            ),
+        )
+    out = json.loads(verify_numbers(str(pptx), str(xlsx), "g", "v"))
+    assert "error" not in out
+    assert out["checked"] == 2 and out["matched"] == 0
 
 
 def test_invalid_inputs_report_step(tmp_path: Path) -> None:
