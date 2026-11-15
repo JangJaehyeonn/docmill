@@ -29,10 +29,13 @@ _FIELD = re.compile(r"^\s*(할 일|담당|마감)\s*[:：]\s*(.*?)\s*$")
 class TaskError(Exception):
     """작업 단계 하나가 실패했을 때 발생한다. `step`은 실패한 단계 이름이다."""
 
-    def __init__(self, step: str, message: str) -> None:
+    def __init__(
+        self, step: str, message: str, excluded: list[dict[str, str]] | None = None
+    ) -> None:
         super().__init__(message)
         self.step = step
         self.message = message
+        self.excluded = excluded
 
 
 @dataclass(frozen=True)
@@ -143,7 +146,7 @@ def _generate(input: str, out_dir: str | None, run_id: str) -> dict[str, Any]:
             raise TaskError("extract", "문서에서 '할 일: … / 담당: … / 마감: …' 항목을 찾지 못했다")
         kept, excluded = split_tasks(tasks)
         if not kept:
-            raise TaskError("extract", "담당자와 마감일이 모두 있는 항목이 없다")
+            raise TaskError("extract", "담당자와 마감일이 모두 있는 항목이 없다", excluded)
         built = workdir / "tasks.xlsx"
         _write_table(kept, built, workdir)
         target_dir = Path(out_dir) if out_dir else get_home() / "outputs"
@@ -172,6 +175,8 @@ def doc_to_task_table(input: str, out_dir: str | None = None) -> str:
         result = _generate(input, out_dir, run_id)
     except TaskError as exc:
         result = {"error": exc.message, "step": exc.step, "run_id": run_id}
+        if exc.excluded is not None:
+            result["excluded"] = exc.excluded
     except Exception as exc:  # engine or file failures must not kill the server
         result = {"error": f"{type(exc).__name__}: {exc}", "step": "unexpected", "run_id": run_id}
     return json.dumps(result, ensure_ascii=False)
