@@ -56,3 +56,21 @@ def test_distinct_paths_get_numbered_variables() -> None:
         ]
     )
     assert [s["args"]["input"] for s in steps] == ["$input", "$input2", "$input"]
+
+
+def test_same_file_under_different_arg_names_shares_one_variable() -> None:
+    steps = build_steps(
+        [("verify_numbers", {"document": "/a.xlsx", "source": "/a.xlsx"})],
+    )
+    assert steps[0]["args"] == {"document": "$input", "source": "$input"}
+
+
+def test_step_output_becomes_step_variable() -> None:
+    steps = build_steps(
+        [
+            ("excel_to_report_ppt", {"input": "/a.xlsx"}),
+            ("verify_numbers", {"document": "/o.pptx", "source": "/a.xlsx"}),
+        ],
+        ["/o.pptx", None],
+    )
+    assert steps[1]["args"] == {"document": "$step1", "source": "$input"}

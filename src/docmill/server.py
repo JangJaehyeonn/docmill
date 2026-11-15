@@ -14,12 +14,15 @@ from mcp.server.mcpserver import MCPServer
 from docmill import __version__
 from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
+from docmill.runner import run_recipe
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
 from docmill.tools.verify import verify_numbers
 
 SERVER_NAME = "docmill"
+# 레시피 실행은 AI를 호출하지 않으므로 로그의 AI 사용 여부를 False로 남긴다 (FR-10).
+AI_FREE_TOOL = "run_recipe"
 
 ToolRegistrar = Callable[[MCPServer], None]
 
@@ -68,7 +71,8 @@ def _log_every_tool(server: MCPServer, recorder: SessionRecorder) -> None:
     add_tool = server.add_tool
 
     def add_logged_tool(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        return add_tool(logged(recording(fn, recorder)), *args, **kwargs)
+        wrapped = logged(recording(fn, recorder), ai_used=fn.__name__ != AI_FREE_TOOL)
+        return add_tool(wrapped, *args, **kwargs)
 
     server.add_tool = add_logged_tool  # type: ignore[method-assign]
 
@@ -81,4 +85,5 @@ def build_server() -> MCPServer:
     for register in TOOL_REGISTRARS:
         register(server)
     server.tool()(make_save_recipe(recorder))
+    server.tool()(run_recipe)
     return server

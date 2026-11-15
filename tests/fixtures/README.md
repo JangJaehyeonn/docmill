@@ -9,7 +9,6 @@
 | `meeting_1111.docx` | 회의록. "할 일" 아래 `할 일: … / 담당: … / 마감: YYYY-MM-DD` 6개 (완전 4, 담당 또는 마감 빠짐 2) | FR-02·03, FR-06 |
 | `company_intro.pptx` | 3장. 제목 32pt·`333333`·왼쪽·Arial, 본문 목록 | FR-02·03, FR-07·18 |
 | `template_default.pptx` | 양식. 제목 40pt·`1F4E79`·가운데·Pretendard | FR-07·18 |
-
 | `sales_week1.xlsx` | `sales_q3.xlsx`와 같은 내용(머리글 `부서·월·매출`) | FR-09 레시피 저장 |
 
-예정: `sales_week2.xlsx` (레시피 재실행: 같은 형식, 다른 숫자)
+| `sales_week2.xlsx` | `sales_week1.xlsx`와 같은 형식, 다른 매출 숫자 | FR-10 레시피 실행 |
