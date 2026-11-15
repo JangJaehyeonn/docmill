@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -131,3 +132,24 @@ def test_collect_titles_descends_into_groups() -> None:
         {"id": 5, "placeholder": "title"},
     ]
     assert _collect_titles(shapes) == [3, 5]
+
+
+def _props(xml: str) -> dict[str, object]:
+    ns = 'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+    rpr = ElementTree.fromstring(f"<a:rPr {ns} sz='2000'>{xml}</a:rPr>")
+    return templates._read_props(None, rpr, None, None)
+
+
+def test_srgb_luminance_transforms_applied() -> None:
+    white = (
+        "<a:solidFill><a:srgbClr val='000000'><a:lumOff val='100000'/></a:srgbClr></a:solidFill>"
+    )
+    assert _props(white)["title_color"] == "FFFFFF"
+    plain = "<a:solidFill><a:srgbClr val='ff0000'/></a:solidFill>"
+    assert _props(plain)["title_color"] == "FF0000"
+
+
+def test_east_asian_font_extracted_separately() -> None:
+    rules = _props("<a:latin typeface='Arial'/><a:ea typeface='맑은 고딕'/>")
+    assert rules["font"] == "Arial"
+    assert rules["font_ea"] == "맑은 고딕"

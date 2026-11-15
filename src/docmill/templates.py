@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import json
 import posixpath
 import re
@@ -90,12 +91,29 @@ def _theme_color(
     return str(sysc.get("lastClr", "")).upper() if sysc is not None else None
 
 
-def _theme_font(theme: ElementTree.Element | None, face: str) -> str | None:
+def _theme_font(theme: ElementTree.Element | None, face: str, slot: str = "latin") -> str | None:
     kind = "majorFont" if face.startswith("+mj") else "minorFont"
     node = (
-        None if theme is None else theme.find(f"a:themeElements/a:fontScheme/a:{kind}/a:latin", _NS)
+        None
+        if theme is None
+        else theme.find(f"a:themeElements/a:fontScheme/a:{kind}/a:{slot}", _NS)
     )
     return None if node is None else node.get("typeface")
+
+
+def _apply_transforms(rgb: str, color: ElementTree.Element) -> str:
+    """색 요소의 자식 `lumMod`·`lumOff`를 문서 순서대로 HSL 밝기에 적용한다."""
+    ops = [c for c in color if c.tag.rsplit("}", 1)[-1] in ("lumMod", "lumOff")]
+    if not ops or not re.fullmatch(r"[0-9A-F]{6}", rgb):
+        return rgb
+    r, g, b = (int(rgb[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    h, lum, sat = colorsys.rgb_to_hls(r, g, b)
+    for op in ops:
+        val = int(op.get("val", "0")) / 100000
+        lum = lum * val if op.tag.endswith("lumMod") else lum + val
+        lum = min(1.0, max(0.0, lum))
+    out = colorsys.hls_to_rgb(h, lum, sat)
+    return "".join(f"{round(x * 255):02X}" for x in out)
 
 
 def _read_props(
@@ -118,15 +136,21 @@ def _read_props(
         srgb = fill.find("a:srgbClr", _NS)
         scheme = fill.find("a:schemeClr", _NS)
         if srgb is not None:
-            rules["title_color"] = str(srgb.get("val", "")).upper()
+            rules["title_color"] = _apply_transforms(str(srgb.get("val", "")).upper(), srgb)
         elif scheme is not None and (c := _theme_color(theme, master, scheme.get("val", ""))):
-            rules["title_color"] = c
+            rules["title_color"] = _apply_transforms(c, scheme)
     latin = run_src.find("a:latin", _NS)
     if latin is not None and latin.get("typeface"):
         face = str(latin.get("typeface"))
         font = _theme_font(theme, face) if face.startswith("+") else face
         if font:
             rules["font"] = font
+    ea = run_src.find("a:ea", _NS)
+    if ea is not None and ea.get("typeface"):
+        face = str(ea.get("typeface"))
+        east = _theme_font(theme, face, "ea") if face.startswith("+") else face
+        if east:
+            rules["font_ea"] = east
     return rules
 
 
