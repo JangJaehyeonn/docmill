@@ -10,6 +10,7 @@ import base64
 import contextlib
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -29,7 +30,11 @@ from docmill.engines.paths import PathOutsideWorkdirError, resolve_inside
 logger = logging.getLogger(__name__)
 
 
-_PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save")
+_PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save", "original")
+
+
+# The engine may resolve `file:` URLs to absolute paths, so reject any URL-style value.
+_URL_SCHEME = re.compile(r"^(file:|[a-z][a-z0-9+.-]*://)", re.IGNORECASE)
 
 
 def _path_like_values(value: Any, key: str = "") -> list[str]:
@@ -197,7 +202,22 @@ class McpEngineTool:
             )
         return EngineResult(ok=True, output=output, duration_ms=elapsed, details=details)
 
+    def call_tool(self, tool: str, arguments: dict[str, Any]) -> EngineResult:
+        """엔진이 직접 제공하는 MCP 도구 하나를 호출한다.
+
+        경로로 보이는 인자는 호출 전에 작업 폴더 안인지 검사한다.
+        실패는 `EngineResult`로 돌려준다.
+        """
+        checked = self._check(*_path_like_values(arguments))
+        if isinstance(checked, EngineResult):
+            return checked
+        return self._run(tool, arguments)
+
     def _check(self, *paths: Path | str) -> list[Path] | EngineResult:
+        for raw in paths:
+            if isinstance(raw, str) and _URL_SCHEME.match(raw):
+                message = f"URL 형태의 경로는 쓸 수 없다: {raw}"
+                return EngineResult(ok=False, message=message, details={"step": "path-check"})
         try:
             return [resolve_inside(self.workdir, p) for p in paths]
         except PathOutsideWorkdirError as exc:

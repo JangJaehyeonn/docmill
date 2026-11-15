@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
@@ -45,4 +45,17 @@ class DocumentTool(Protocol):
 
     def render(self, path: Path, out_dir: Path) -> EngineResult:
         """문서를 미리보기 이미지(PNG)로 만든다."""
+        ...
+
+
+@runtime_checkable
+class DirectToolCaller(Protocol):
+    """엔진이 직접 제공하는 MCP 도구를 이름으로 호출하는 확장 규약.
+
+    `DocumentTool`의 명령 ID 경로(`execute`)로 표현할 수 없는 도구 호출에 쓴다.
+    구현체는 경로로 보이는 인자를 호출 전에 작업 폴더 안인지 검사해야 한다.
+    """
+
+    def call_tool(self, tool: str, arguments: dict[str, Any]) -> EngineResult:
+        """엔진 MCP 도구 하나를 호출한다. 실패는 `EngineResult`로 돌려준다."""
         ...
