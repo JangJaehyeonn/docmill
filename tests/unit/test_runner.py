@@ -125,3 +125,38 @@ def test_deliver_leaves_no_partial_files_and_is_repeatable(tmp_path: Path) -> No
     for _ in range(3):
         runner._deliver(str(source), str(out_dir), "r")
     assert [p.name for p in out_dir.iterdir()] == ["r.pptx"]
+
+
+def test_required_columns_only_from_input_report_steps() -> None:
+    steps = [
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": "$input", "group_by": "부서", "value": "매출"},
+        },
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": "/fixed.xlsx", "group_by": "x", "value": "y"},
+        },
+        {"tool": "verify_numbers", "args": {"source": "$input"}},
+    ]
+    assert runner.required_columns(steps) == ["부서", "매출"]
+
+
+def test_preflight_reports_missing_columns_before_any_step(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "_read_sheet", lambda source, workdir: [["부서", "금액"]])
+    called: list[str] = []
+
+    def fake(**kwargs: str) -> str:
+        called.append("x")
+        return json.dumps({"path": "p"})
+
+    monkeypatch.setitem(runner.RUNNERS, "excel_to_report_ppt", fake)
+    src = tmp_path / "in.xlsx"
+    src.write_bytes(b"x")
+    args = {"input": "$input", "group_by": "부서", "value": "매출"}
+    _save(tmp_path, "r", [{"tool": "excel_to_report_ppt", "args": args}])
+    out = json.loads(run_recipe("r", str(src), str(tmp_path / "out")))
+    assert out["step"] == "preflight" and "'매출'" in out["error"] and "'부서'" not in out["error"]
+    assert called == [] and not (tmp_path / "out").exists()
