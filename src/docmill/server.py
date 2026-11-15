@@ -12,6 +12,7 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from docmill import __version__
+from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
@@ -62,12 +63,12 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
 )
 
 
-def _log_every_tool(server: MCPServer) -> None:
-    """서버에 등록되는 모든 도구를 실행 로그(FR-16)로 감싼다."""
+def _log_every_tool(server: MCPServer, recorder: SessionRecorder) -> None:
+    """등록되는 모든 도구를 실행 로그(FR-16)로 감싸고, 성공한 호출은 세션에 기록한다(FR-09)."""
     add_tool = server.add_tool
 
     def add_logged_tool(fn: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
-        return add_tool(logged(fn), *args, **kwargs)
+        return add_tool(logged(recording(fn, recorder)), *args, **kwargs)
 
     server.add_tool = add_logged_tool  # type: ignore[method-assign]
 
@@ -75,7 +76,9 @@ def _log_every_tool(server: MCPServer) -> None:
 def build_server() -> MCPServer:
     """도구가 등록된 MCP 서버를 만든다."""
     server = MCPServer(SERVER_NAME)
-    _log_every_tool(server)
+    recorder = SessionRecorder()
+    _log_every_tool(server, recorder)
     for register in TOOL_REGISTRARS:
         register(server)
+    server.tool()(make_save_recipe(recorder))
     return server

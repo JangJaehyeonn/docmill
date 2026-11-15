@@ -10,4 +10,6 @@
 | `company_intro.pptx` | 3장. 제목 32pt·`333333`·왼쪽·Arial, 본문 목록 | FR-02·03, FR-07·18 |
 | `template_default.pptx` | 양식. 제목 40pt·`1F4E79`·가운데·Pretendard | FR-07·18 |
 
-예정: `sales_week1.xlsx`, `sales_week2.xlsx` (레시피 재실행: 같은 형식, 다른 숫자)
+| `sales_week1.xlsx` | `sales_q3.xlsx`와 같은 내용(머리글 `부서·월·매출`) | FR-09 레시피 저장 |
+
+예정: `sales_week2.xlsx` (레시피 재실행: 같은 형식, 다른 숫자)
