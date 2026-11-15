@@ -33,9 +33,12 @@ jobs:
         if: steps.rp.outputs.prs_created == 'true'
       - name: 릴리스 PR의 uv.lock 갱신
         if: steps.rp.outputs.prs_created == 'true'
+        # 단계의 env는 if가 false여도 평가되므로 fromJSON을 쓰지 않고 셸에서 파싱한다.
+        # (릴리스 PR이 그대로면 pr 출력이 비어 fromJSON('')이 잡을 실패시켰다.)
         env:
-          HEAD: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
         run: |
+          HEAD=$(jq -r .headBranchName <<<"$PR_JSON")
           uv lock
           if git diff --quiet uv.lock; then
             exit 0
@@ -49,9 +52,11 @@ jobs:
         if: steps.rp.outputs.prs_created == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-          HEAD: ${{ fromJSON(steps.rp.outputs.pr).headBranchName }}
+          PR_JSON: ${{ steps.rp.outputs.pr }}
           REPO: ${{ github.repository }}
-        run: gh workflow run CI --repo "$REPO" --ref "$HEAD"
+        run: |
+          HEAD=$(jq -r .headBranchName <<<"$PR_JSON")
+          gh workflow run CI --repo "$REPO" --ref "$HEAD"
 
   pypi:
     needs: release-please
