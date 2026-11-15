@@ -15,7 +15,7 @@ from typing import Any
 
 from docmill import templates
 from docmill.engines import get_tool
-from docmill.engines.base import DirectToolCaller
+from docmill.engines.mcp_tool import McpEngineTool
 from docmill.runlog import current_run_id, get_home, new_run_id
 from docmill.templates import TITLE_TYPES, TemplateError
 
@@ -29,8 +29,8 @@ class ApplyError(Exception):
         self.message = message
 
 
-def _command(engine: DirectToolCaller, command: str, params: dict[str, Any]) -> Any:
-    result = engine.call_tool("run_command", {"command": command, "params": params})
+def _command(engine: McpEngineTool, command: str, params: dict[str, Any]) -> Any:
+    result = engine.execute(command, params)
     if not result.ok:
         raise ApplyError(command, result.message)
     out = result.output
@@ -66,7 +66,7 @@ def _font_params(rules: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
-def _format_title(engine: DirectToolCaller, shape_id: int, rules: dict[str, Any]) -> None:
+def _format_title(engine: McpEngineTool, shape_id: int, rules: dict[str, Any]) -> None:
     _command(engine, "edit.select", {"ids": [shape_id]})
     if params := _font_params(rules):
         _command(engine, "format.fontDialog", params)
@@ -74,13 +74,23 @@ def _format_title(engine: DirectToolCaller, shape_id: int, rules: dict[str, Any]
         _command(engine, "format.align", {"align": rules["title_align"]})
 
 
-def _title_ids(engine: DirectToolCaller, index: int) -> list[int]:
+def _title_ids(engine: McpEngineTool, index: int) -> list[int]:
     data = _command(engine, "slide.inspect", {"index": index})
     shapes = data.get("shapes", []) if isinstance(data, dict) else []
-    return [int(s["id"]) for s in shapes if s.get("placeholder") in TITLE_TYPES]
+    return _collect_titles(shapes)
 
 
-def _apply(engine: DirectToolCaller, rules: dict[str, Any]) -> int:
+def _collect_titles(shapes: list[Any]) -> list[int]:
+    """그룹 안(`children`)까지 내려가며 제목 도형의 ID만 모은다."""
+    ids: list[int] = []
+    for shape in shapes:
+        if shape.get("placeholder") in TITLE_TYPES:
+            ids.append(int(shape["id"]))
+        ids.extend(_collect_titles(shape.get("children") or []))
+    return ids
+
+
+def _apply(engine: McpEngineTool, rules: dict[str, Any]) -> int:
     info = _command(engine, "file.info", {})
     slides = int(info.get("slides", 0)) if isinstance(info, dict) else 0
     modified = 0

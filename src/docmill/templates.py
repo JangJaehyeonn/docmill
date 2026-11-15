@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import zipfile
 from pathlib import Path
@@ -45,23 +46,130 @@ def _is_title(sp: ElementTree.Element) -> bool:
     return ph is not None and ph.get("type") in TITLE_TYPES
 
 
-def _title_rules(sp: ElementTree.Element) -> dict[str, Any]:
+_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+_CLR_MAP = {"tx1": "dk1", "bg1": "lt1", "tx2": "dk2", "bg2": "lt2"}
+
+
+def _read_xml(z: zipfile.ZipFile, name: str) -> ElementTree.Element | None:
+    try:
+        return ElementTree.fromstring(z.read(name))
+    except KeyError:
+        return None
+
+
+def _related(z: zipfile.ZipFile, part: str, kind: str) -> str | None:
+    """`part`가 `kind`(관계 유형 끝 이름)로 가리키는 파트 경로를 돌려준다."""
+    folder, _, base = part.rpartition("/")
+    rels = _read_xml(z, f"{folder}/_rels/{base}.rels")
+    if rels is None:
+        return None
+    for rel in rels.iter(_REL):
+        if str(rel.get("Type", "")).endswith(f"/{kind}"):
+            joined = posixpath.normpath(posixpath.join(folder, str(rel.get("Target", ""))))
+            return joined.lstrip("/")
+    return None
+
+
+def _theme_color(
+    theme: ElementTree.Element | None, master: ElementTree.Element | None, name: str
+) -> str | None:
+    if theme is None:
+        return None
+    if master is not None:
+        cmap = master.find("p:clrMap", _NS)
+        if cmap is not None and cmap.get(name):
+            name = str(cmap.get(name))
+    name = _CLR_MAP.get(name, name)
+    slot = theme.find(f"a:themeElements/a:clrScheme/a:{name}", _NS)
+    if slot is None:
+        return None
+    srgb = slot.find("a:srgbClr", _NS)
+    if srgb is not None:
+        return str(srgb.get("val", "")).upper()
+    sysc = slot.find("a:sysClr", _NS)
+    return str(sysc.get("lastClr", "")).upper() if sysc is not None else None
+
+
+def _theme_font(theme: ElementTree.Element | None, face: str) -> str | None:
+    kind = "majorFont" if face.startswith("+mj") else "minorFont"
+    node = (
+        None if theme is None else theme.find(f"a:themeElements/a:fontScheme/a:{kind}/a:latin", _NS)
+    )
+    return None if node is None else node.get("typeface")
+
+
+def _read_props(
+    algn_src: ElementTree.Element | None,
+    run_src: ElementTree.Element | None,
+    theme: ElementTree.Element | None,
+    master: ElementTree.Element | None,
+) -> dict[str, Any]:
+    """문단 속성(`algn_src`)과 글자 속성(`run_src`) 한 쌍에서 규칙을 읽는다."""
     rules: dict[str, Any] = {}
-    ppr = sp.find(".//a:pPr[@algn]", _NS)
-    if ppr is not None:
-        algn = ppr.get("algn", "")
+    if algn_src is not None and algn_src.get("algn"):
+        algn = algn_src.get("algn", "")
         rules["title_align"] = _ALIGN.get(algn, algn)
-    rpr = sp.find(".//a:rPr", _NS)
-    if rpr is not None:
-        if rpr.get("sz"):
-            rules["title_size"] = int(rpr.get("sz", "0")) / 100
-        color = rpr.find("a:solidFill/a:srgbClr", _NS)
-        if color is not None:
-            rules["title_color"] = str(color.get("val", "")).upper()
-        latin = rpr.find("a:latin", _NS)
-        if latin is not None:
-            rules["font"] = latin.get("typeface")
+    if run_src is None:
+        return rules
+    if run_src.get("sz"):
+        rules["title_size"] = int(run_src.get("sz", "0")) / 100
+    fill = run_src.find("a:solidFill", _NS)
+    if fill is not None:
+        srgb = fill.find("a:srgbClr", _NS)
+        scheme = fill.find("a:schemeClr", _NS)
+        if srgb is not None:
+            rules["title_color"] = str(srgb.get("val", "")).upper()
+        elif scheme is not None and (c := _theme_color(theme, master, scheme.get("val", ""))):
+            rules["title_color"] = c
+    latin = run_src.find("a:latin", _NS)
+    if latin is not None and latin.get("typeface"):
+        face = str(latin.get("typeface"))
+        font = _theme_font(theme, face) if face.startswith("+") else face
+        if font:
+            rules["font"] = font
     return rules
+
+
+def _direct(sp: ElementTree.Element, theme: Any, master: Any) -> dict[str, Any]:
+    ppr = sp.find(".//a:pPr[@algn]", _NS)
+    return _read_props(ppr, sp.find(".//a:rPr", _NS), theme, master)
+
+
+def _lvl1(parent: ElementTree.Element | None, theme: Any, master: Any) -> dict[str, Any]:
+    lvl = None if parent is None else parent.find("a:lvl1pPr", _NS)
+    run = None if lvl is None else lvl.find("a:defRPr", _NS)
+    return _read_props(lvl, run, theme, master)
+
+
+def _layout_title(layout: ElementTree.Element | None) -> ElementTree.Element | None:
+    if layout is None:
+        return None
+    for sp in layout.iterfind(".//p:sp", _NS):
+        if _is_title(sp):
+            return sp.find("p:txBody/a:lstStyle", _NS)
+    return None
+
+
+def _title_rules(z: zipfile.ZipFile, slide_part: str, sp: ElementTree.Element) -> dict[str, Any]:
+    """제목 규칙을 슬라이드 직접 서식 → 레이아웃 → 마스터 순으로 합친다 (앞이 우선)."""
+    layout_part = _related(z, slide_part, "slideLayout")
+    master_part = _related(z, layout_part, "slideMaster") if layout_part else None
+    theme_part = _related(z, master_part, "theme") if master_part else None
+    master = _read_xml(z, master_part) if master_part else None
+    theme = _read_xml(z, theme_part) if theme_part else None
+    layout = _read_xml(z, layout_part) if layout_part else None
+    merged: dict[str, Any] = {}
+    layers = (
+        _direct(sp, theme, master),
+        _lvl1(_layout_title(layout), theme, master),
+        _lvl1(
+            None if master is None else master.find("p:txStyles/p:titleStyle", _NS), theme, master
+        ),
+    )
+    for layer in layers:
+        for key, value in layer.items():
+            merged.setdefault(key, value)
+    return merged
 
 
 def extract_rules(source: Path) -> dict[str, Any]:
@@ -76,7 +184,7 @@ def extract_rules(source: Path) -> dict[str, Any]:
             for _, member in slides:
                 root = ElementTree.fromstring(z.read(member))
                 for sp in root.iterfind(".//p:sp", _NS):
-                    if _is_title(sp) and (rules := _title_rules(sp)):
+                    if _is_title(sp) and (rules := _title_rules(z, member, sp)):
                         return rules
     except (zipfile.BadZipFile, ElementTree.ParseError) as exc:
         raise TemplateError(f"양식 파일을 읽지 못했다: {exc}") from exc

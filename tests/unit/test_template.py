@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from pathlib import Path
 
 import pytest
 
 from docmill import templates
 from docmill.templates import TemplateError
-from docmill.tools.template import apply_template, describe_rules
+from docmill.tools.template import _collect_titles, apply_template, describe_rules
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -63,3 +64,70 @@ def test_apply_reports_input_errors(tmp_path: Path, monkeypatch: pytest.MonkeyPa
     unknown = json.loads(apply_template(str(source), "nope"))
     assert unknown["step"] == "template"
     assert unknown["run_id"]
+
+
+def _inherited_pptx(path: Path) -> Path:
+    """제목 직접 서식 없이 마스터 titleStyle(테마 색·글꼴)만 가진 최소 pptx를 만든다."""
+    ns = (
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:p="http://schemas.openxmlformats.org/presentationml/2006/main"'
+    )
+    rel = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+
+    def rels(kind: str, target: str) -> str:
+        return (
+            '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+            f'<Relationship Id="r1" Type="{rel}/{kind}" Target="{target}"/></Relationships>'
+        )
+
+    slide = (
+        f"<p:sld {ns}><p:cSld><p:spTree><p:sp><p:nvSpPr><p:cNvPr id='2' name='t'/><p:cNvSpPr/>"
+        "<p:nvPr><p:ph type='title'/></p:nvPr></p:nvSpPr><p:txBody><a:p><a:r><a:t>x</a:t></a:r>"
+        "</a:p></p:txBody></p:sp></p:spTree></p:cSld></p:sld>"
+    )
+    master = (
+        f"<p:sldMaster {ns}><p:cSld><p:spTree/></p:cSld>"
+        '<p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2"/><p:txStyles><p:titleStyle>'
+        '<a:lvl1pPr algn="r"><a:defRPr sz="3200"><a:solidFill><a:schemeClr val="accent1"/>'
+        '</a:solidFill><a:latin typeface="+mj-lt"/></a:defRPr></a:lvl1pPr>'
+        "</p:titleStyle></p:txStyles></p:sldMaster>"
+    )
+    layout = f"<p:sldLayout {ns}><p:cSld><p:spTree/></p:cSld></p:sldLayout>"
+    theme = (
+        f"<a:theme {ns}><a:themeElements><a:clrScheme name='c'>"
+        "<a:accent1><a:srgbClr val='aabbcc'/></a:accent1></a:clrScheme>"
+        "<a:fontScheme name='f'><a:majorFont><a:latin typeface='Major'/></a:majorFont>"
+        "</a:fontScheme></a:themeElements></a:theme>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ppt/slides/slide1.xml", slide)
+        z.writestr(
+            "ppt/slides/_rels/slide1.xml.rels", rels("slideLayout", "../slideLayouts/l1.xml")
+        )
+        z.writestr("ppt/slideLayouts/l1.xml", layout)
+        z.writestr(
+            "ppt/slideLayouts/_rels/l1.xml.rels", rels("slideMaster", "../slideMasters/m1.xml")
+        )
+        z.writestr("ppt/slideMasters/m1.xml", master)
+        z.writestr("ppt/slideMasters/_rels/m1.xml.rels", rels("theme", "../theme/t1.xml"))
+        z.writestr("ppt/theme/t1.xml", theme)
+    return path
+
+
+def test_extract_inherits_master_style_and_theme_color(tmp_path: Path) -> None:
+    rules = templates.extract_rules(_inherited_pptx(tmp_path / "inh.pptx"))
+    assert rules == {
+        "title_align": "right",
+        "title_size": 32.0,
+        "title_color": "AABBCC",
+        "font": "Major",
+    }
+
+
+def test_collect_titles_descends_into_groups() -> None:
+    shapes = [
+        {"id": 1, "placeholder": "body"},
+        {"id": 2, "children": [{"id": 3, "placeholder": "ctrTitle"}, {"id": 4}]},
+        {"id": 5, "placeholder": "title"},
+    ]
+    assert _collect_titles(shapes) == [3, 5]
