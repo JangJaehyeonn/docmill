@@ -49,6 +49,20 @@ def test_unknown_category_is_mismatch(tmp_path: Path) -> None:
     assert result["mismatches"][0]["expected"] is None
 
 
+def test_category_without_value_is_mismatch(tmp_path: Path) -> None:
+    pptx = tmp_path / "a.pptx"
+    with zipfile.ZipFile(pptx, "w") as z:
+        z.writestr(
+            "ppt/charts/chart1.xml",
+            CHART.replace("<c:v>FIRST</c:v>", "<c:v/>").replace(
+                '<c:pt idx="1"><c:v>20</c:v></c:pt>', ""
+            ),
+        )
+    result = compare(read_chart_points(pptx), GROUPS)
+    assert result["checked"] == 2 and result["matched"] == 0
+    assert [m["actual"] for m in result["mismatches"]] == [None, None]
+
+
 def test_invalid_inputs_report_step(tmp_path: Path) -> None:
     out = json.loads(verify_numbers(str(tmp_path / "x.pptx"), str(tmp_path / "y.xlsx"), "g", "v"))
     assert out["step"] == "document" and out["run_id"]

@@ -63,8 +63,8 @@ def compare(series: list[dict[str, Any]], groups: list[Group]) -> dict[str, Any]
     checked = matched = 0
     mismatches: list[dict[str, Any]] = []
     for ser in series:
-        for idx in sorted(ser["values"]):
-            raw = ser["values"][idx]
+        for idx in sorted(ser["values"].keys() | ser["categories"].keys()):
+            raw = ser["values"].get(idx)
             category = ser["categories"].get(idx)
             if category is None and idx < len(groups):
                 category = groups[idx].name
@@ -72,7 +72,7 @@ def compare(series: list[dict[str, Any]], groups: list[Group]) -> dict[str, Any]
             checked += 1
             expected = totals.get(category) if category is not None else None
             try:
-                actual: float | None = float(raw)
+                actual: float | None = float(raw) if raw is not None else None
             except ValueError:
                 actual = None
             if expected is not None and actual is not None and _close(actual, expected):
