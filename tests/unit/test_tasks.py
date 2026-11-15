@@ -78,4 +78,5 @@ def test_no_complete_items_fails_without_output(
     monkeypatch.setattr(tasks, "_read_text", lambda *_a: "할 일: D / 담당: 다")
     result = json.loads(doc_to_task_table(str(source)))
     assert result["step"] == "extract"
+    assert result["excluded"] == [{"item": "D", "reason": "마감일이 없음"}]
     assert not (tmp_path / "outputs").exists()
