@@ -17,7 +17,7 @@ from typing import Any
 
 from docmill.recipes import RECIPE_TOOLS, RecipeError, recipes_dir
 from docmill.runlog import current_run_id, new_run_id
-from docmill.tools.report import excel_to_report_ppt
+from docmill.tools.report import _read_sheet, excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
 from docmill.tools.verify import verify_numbers
@@ -79,6 +79,45 @@ def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> di
     return data
 
 
+# Tools that read the Excel source, and the argument that names it.
+SOURCE_ARG = {"excel_to_report_ppt": "input", "verify_numbers": "source"}
+
+
+def required_columns(steps: list[dict[str, Any]]) -> list[str]:
+    """`$input`을 엑셀 원본으로 쓰는 보고서·검증 단계가 요구하는 열 이름을 순서대로 모은다."""
+    needed: list[str] = []
+    for step in steps:
+        args = step.get("args", {})
+        source_key = SOURCE_ARG.get(str(step.get("tool")))
+        if source_key is None or args.get(source_key) != "$input":
+            continue
+        for key in ("group_by", "value"):
+            name = args.get(key)
+            if isinstance(name, str) and name not in needed:
+                needed.append(name)
+    return needed
+
+
+def preflight(steps: list[dict[str, Any]], input: str) -> None:
+    """실행 전에 입력 엑셀에 레시피가 쓰는 열이 모두 있는지 확인한다.
+
+    빠진 열이 있으면 아무 단계도 실행하지 않고 `RecipeError("preflight", ...)`를 낸다.
+    """
+    needed = required_columns(steps)
+    source = Path(input)
+    if not needed or source.suffix.lower() != ".xlsx" or not source.is_file():
+        return  # nothing to check; the step itself reports unreadable input
+    with tempfile.TemporaryDirectory(prefix="docmill-preflight-") as tmp:
+        rows = _read_sheet(source, Path(tmp).resolve())
+    header = [str(c).strip() if c is not None else "" for c in (rows[0] if rows else [])]
+    missing = [name for name in needed if name not in header]
+    if missing:
+        names = ", ".join(f"'{name}'" for name in missing)
+        raise RecipeError(
+            "preflight", f"입력 파일에 없는 열: {names} (있는 열: {', '.join(header)})"
+        )
+
+
 def _deliver(path: str, out_dir: str, recipe: str) -> str:
     """산출물을 out_dir에 `<레시피>.<확장자>`로 원자적으로 복사한다."""
     source = Path(path)
@@ -100,6 +139,7 @@ def _deliver(path: str, out_dir: str, recipe: str) -> str:
 def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, Any]:
     """레시피 단계를 순서대로 실행하고 마지막 산출물 path와 단계별 결과를 돌려준다."""
     steps = load_recipe(recipe)
+    preflight(steps, input)
     variables = {"$input": input}
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps, start=1):
