@@ -15,6 +15,7 @@ from docmill import __version__
 from docmill.runlog import logged
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
+from docmill.tools.verify import verify_numbers
 
 SERVER_NAME = "docmill"
 
@@ -41,7 +42,17 @@ def _register_tasks(server: MCPServer) -> None:
     server.tool()(doc_to_task_table)
 
 
-TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping, _register_report, _register_tasks)
+def _register_verify(server: MCPServer) -> None:
+    """`verify_numbers` 업무 도구(FR-08)를 등록한다."""
+    server.tool()(verify_numbers)
+
+
+TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
+    _register_ping,
+    _register_report,
+    _register_tasks,
+    _register_verify,
+)
 
 
 def _log_every_tool(server: MCPServer) -> None:
