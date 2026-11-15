@@ -14,6 +14,7 @@ from mcp.server.mcpserver import MCPServer
 from docmill import __version__
 from docmill.runlog import logged
 from docmill.tools.report import excel_to_report_ppt
+from docmill.tools.tasks import doc_to_task_table
 
 SERVER_NAME = "docmill"
 
@@ -35,7 +36,12 @@ def _register_report(server: MCPServer) -> None:
     server.tool()(excel_to_report_ppt)
 
 
-TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping, _register_report)
+def _register_tasks(server: MCPServer) -> None:
+    """`doc_to_task_table` 업무 도구(FR-06)를 등록한다."""
+    server.tool()(doc_to_task_table)
+
+
+TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (_register_ping, _register_report, _register_tasks)
 
 
 def _log_every_tool(server: MCPServer) -> None:
