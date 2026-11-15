@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import tempfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -45,26 +46,36 @@ def load_recipe(recipe: str) -> list[dict[str, Any]]:
     return steps
 
 
-def bind_args(args: dict[str, Any], variables: dict[str, str], step: str) -> dict[str, Any]:
-    """인자 값이 `$변수`이면 입력 값으로 바꾼다. 값이 없는 변수는 `RecipeError`."""
+def bind_args(
+    args: dict[str, Any], variables: dict[str, str], step: str, previous: str | None = None
+) -> dict[str, Any]:
+    """인자 값이 `$변수`이면 입력 값으로 바꾼다.
+
+    `$input` 외의 변수는 앞 단계가 만든 산출물(previous)로 바꾼다. 앞 단계가 없으면 `RecipeError`.
+    """
     bound: dict[str, Any] = {}
     for key in sorted(args):
         value = args[key]
         if isinstance(value, str) and value.startswith("$"):
-            if value not in variables:
+            if value in variables:
+                value = variables[value]
+            elif previous is not None:
+                value = previous
+            else:
                 raise RecipeError(step, f"변수 {value}에 넣을 값이 없다")
-            value = variables[value]
         bound[key] = value
     return bound
 
 
-def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> dict[str, Any]:
+def _run_step(
+    index: int, step: dict[str, Any], variables: dict[str, str], previous: str | None = None
+) -> dict[str, Any]:
     tool = step.get("tool")
     label = f"{index}:{tool}"
     runner = RUNNERS.get(tool) if isinstance(tool, str) else None
     if runner is None:
         raise RecipeError(label, f"실행할 수 없는 도구다: {tool!r}")
-    args = bind_args(step.get("args", {}), variables, label)
+    args = bind_args(step.get("args", {}), variables, label, previous)
     try:
         data = json.loads(runner(**args))
     except TypeError as exc:
@@ -81,7 +92,9 @@ def _deliver(path: str, out_dir: str, recipe: str) -> str:
     folder = Path(out_dir)
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{recipe}{source.suffix}"
-    partial = target.with_name(f".{target.name}.part")
+    fd, name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".part", dir=folder)
+    os.close(fd)
+    partial = Path(name)
     try:
         shutil.copyfile(source, partial)
         os.replace(partial, target)
@@ -97,7 +110,10 @@ def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, An
     variables = {"$input": input}
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps, start=1):
-        results.append(_run_step(index, step, variables))
+        previous = next(
+            (r["path"] for r in reversed(results) if isinstance(r.get("path"), str)), None
+        )
+        results.append(_run_step(index, step, variables, previous))
     produced = [r["path"] for r in results if isinstance(r.get("path"), str)]
     if not produced:
         raise RecipeError("output", "레시피가 산출물을 만들지 않았다")

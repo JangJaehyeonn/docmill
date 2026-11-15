@@ -70,3 +70,42 @@ def test_failed_step_stops_with_step_name(tmp_path: Path, monkeypatch: pytest.Mo
 def test_unknown_tool_in_recipe(tmp_path: Path) -> None:
     _save(tmp_path, "r", [{"tool": "rm_rf", "args": {}}])
     assert json.loads(run_recipe("r", "x"))["step"] == "1:rm_rf"
+
+
+def test_bind_args_uses_previous_output_for_other_variables() -> None:
+    bound = bind_args({"input": "$input2"}, {"$input": "a.xlsx"}, "s", previous="made.pptx")
+    assert bound == {"input": "made.pptx"}
+
+
+def test_chained_steps_pass_previous_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    built = tmp_path / "built.pptx"
+    built.write_bytes(b"x")
+    seen: list[str] = []
+
+    def first(input: str) -> str:
+        return json.dumps({"path": str(built), "summary": "one"})
+
+    def second(input: str, source: str) -> str:
+        seen.append(source)
+        return json.dumps({"path": str(built), "summary": "two"})
+
+    monkeypatch.setitem(runner.RUNNERS, "excel_to_report_ppt", first)
+    monkeypatch.setitem(runner.RUNNERS, "apply_template", second)
+    steps = [
+        {"tool": "excel_to_report_ppt", "args": {"input": "$input"}},
+        {"tool": "apply_template", "args": {"input": "$input", "source": "$source"}},
+    ]
+    _save(tmp_path, "r", steps)
+    out = json.loads(run_recipe("r", "new.xlsx"))
+    assert seen == [str(built)] and out["summary"] == "two"
+
+
+def test_deliver_leaves_no_partial_files_and_is_repeatable(tmp_path: Path) -> None:
+    source = tmp_path / "s.pptx"
+    source.write_bytes(b"abc")
+    out_dir = tmp_path / "out"
+    for _ in range(3):
+        runner._deliver(str(source), str(out_dir), "r")
+    assert [p.name for p in out_dir.iterdir()] == ["r.pptx"]
