@@ -10,6 +10,7 @@ import base64
 import contextlib
 import logging
 import os
+import re
 import shutil
 import time
 from pathlib import Path
@@ -30,6 +31,10 @@ logger = logging.getLogger(__name__)
 
 
 _PATH_KEY_HINTS = ("path", "file", "dir", "out", "dest", "target", "export", "save", "original")
+
+
+# The engine may resolve `file:` URLs to absolute paths, so reject any URL-style value.
+_URL_SCHEME = re.compile(r"^(file:|[a-z][a-z0-9+.-]*://)", re.IGNORECASE)
 
 
 def _path_like_values(value: Any, key: str = "") -> list[str]:
@@ -209,6 +214,10 @@ class McpEngineTool:
         return self._run(tool, arguments)
 
     def _check(self, *paths: Path | str) -> list[Path] | EngineResult:
+        for raw in paths:
+            if isinstance(raw, str) and _URL_SCHEME.match(raw):
+                message = f"URL 형태의 경로는 쓸 수 없다: {raw}"
+                return EngineResult(ok=False, message=message, details={"step": "path-check"})
         try:
             return [resolve_inside(self.workdir, p) for p in paths]
         except PathOutsideWorkdirError as exc:

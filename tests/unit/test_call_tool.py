@@ -86,6 +86,51 @@ def test_call_tool_rejects_original_key_before_engine(
     assert calls == []
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"path": "file:///outside/t.dotx"},
+        {"path": "FILE:/etc/x"},
+        {"path": "file:relative.docx"},
+        {"path": "http://example.com/x.docx"},
+        {"params": {"original": "file:///x.docx"}},
+    ],
+)
+def test_call_tool_rejects_url_paths_before_engine(
+    tmp_path: Path, arguments: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`file:` 등 URL 형태의 경로 값은 `_run` 전에 path-check로 거부한다."""
+    calls: list[str] = []
+
+    def fake_run(self: Any, tool: str, arguments: dict[str, Any]) -> EngineResult:
+        calls.append(tool)
+        return EngineResult(ok=True)
+
+    monkeypatch.setattr(GridCraftTool, "_run", fake_run)
+    with GridCraftTool(tmp_path) as grid:
+        result = grid.call_tool("styles_copy_from", arguments)
+    assert not result.ok
+    assert result.details["step"] == "path-check"
+    assert calls == []
+
+
+def test_call_tool_allows_plain_relative_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """정상 상대 경로는 그대로 엔진에 전달된다."""
+    calls: list[str] = []
+
+    def fake_run(self: Any, tool: str, arguments: dict[str, Any]) -> EngineResult:
+        calls.append(tool)
+        return EngineResult(ok=True)
+
+    monkeypatch.setattr(GridCraftTool, "_run", fake_run)
+    with GridCraftTool(tmp_path) as grid:
+        result = grid.call_tool("export_file", {"path": "out/a.pptx"})
+    assert result.ok
+    assert calls == ["export_file"]
+
+
 def test_report_call_tool_arguments_stay_inside_workdir(tmp_path: Path) -> None:
     """report.py가 넘기는 인자 중 경로 힌트에 걸리는 값은 모두 작업 폴더 안이다.
 
