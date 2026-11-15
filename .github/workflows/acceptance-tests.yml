@@ -36,6 +36,8 @@ jobs:
           enable-cache: true
       - run: uv sync --locked
       - uses: anthropics/claude-code-action@v1
+        # 요구사항이 많은 Phase는 턴 한도를 넘길 수 있다. 초안 파일이 만들어졌는지는 다음 단계가 확인한다.
+        continue-on-error: true
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           # Phase 진행 자동화(phase.yml)가 워크플로 토큰으로 이 워크플로를 실행하므로 Actions 봇을 허용한다.
@@ -48,8 +50,8 @@ jobs:
             - 샘플 파일은 `tests/fixtures/`의 파일 이름을 쓰고, 없는 파일은 테스트 상단 주석에 필요한 샘플을 적으세요.
             - 커밋하지 마세요. 파일만 만드세요.
           claude_args: >-
-            --max-turns 40
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*)"
+            --max-turns 120
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv run pytest:*),Bash(uv run ruff:*),Bash(uv run python:*),Bash(python3:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(mkdir:*)"
       - name: 보호 폴더로 옮기고 PR 열기
         env:
           GH_TOKEN: ${{ github.token }}
