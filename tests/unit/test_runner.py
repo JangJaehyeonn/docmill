@@ -160,3 +160,32 @@ def test_preflight_reports_missing_columns_before_any_step(
     out = json.loads(run_recipe("r", str(src), str(tmp_path / "out")))
     assert out["step"] == "preflight" and "'매출'" in out["error"] and "'부서'" not in out["error"]
     assert called == [] and not (tmp_path / "out").exists()
+
+
+def test_preflight_includes_verify_numbers_columns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(runner, "_read_sheet", lambda source, workdir: [["부서", "매출"]])
+    called: list[str] = []
+
+    def fake(**kwargs: str) -> str:
+        called.append("x")
+        return json.dumps({"path": "p"})
+
+    monkeypatch.setitem(runner.RUNNERS, "excel_to_report_ppt", fake)
+    monkeypatch.setitem(runner.RUNNERS, "verify_numbers", fake)
+    src = tmp_path / "in.xlsx"
+    src.write_bytes(b"x")
+    report = {"input": "$input", "group_by": "부서", "value": "매출"}
+    check = {"document": "$step1", "source": "$input", "group_by": "부서", "value": "이익"}
+    _save(
+        tmp_path,
+        "r",
+        [
+            {"tool": "excel_to_report_ppt", "args": report},
+            {"tool": "verify_numbers", "args": check},
+        ],
+    )
+    out = json.loads(run_recipe("r", str(src), str(tmp_path / "out")))
+    assert out["step"] == "preflight" and "'이익'" in out["error"]
+    assert called == [] and not (tmp_path / "out").exists()

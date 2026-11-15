@@ -79,12 +79,17 @@ def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> di
     return data
 
 
+# Tools that read the Excel source, and the argument that names it.
+SOURCE_ARG = {"excel_to_report_ppt": "input", "verify_numbers": "source"}
+
+
 def required_columns(steps: list[dict[str, Any]]) -> list[str]:
-    """`$input`을 엑셀 원본으로 쓰는 보고서 단계가 요구하는 열 이름을 순서대로 모은다."""
+    """`$input`을 엑셀 원본으로 쓰는 보고서·검증 단계가 요구하는 열 이름을 순서대로 모은다."""
     needed: list[str] = []
     for step in steps:
         args = step.get("args", {})
-        if step.get("tool") != "excel_to_report_ppt" or args.get("input") != "$input":
+        source_key = SOURCE_ARG.get(str(step.get("tool")))
+        if source_key is None or args.get(source_key) != "$input":
             continue
         for key in ("group_by", "value"):
             name = args.get(key)
