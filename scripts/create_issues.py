@@ -82,6 +82,9 @@ def main() -> int:
         if args.dry_run:
             print(f"--- {title}  [{', '.join(labels)}]\n{body_of(req)}")
             continue
+        # 요구사항이 나중에 추가되면 FR 라벨·Phase 라벨이 아직 없을 수 있다 (없으면 이슈 생성이 실패한다).
+        gh("label", "create", req["id"], "--color", "bfd4f2", "--description", req["title"], "--force")
+        gh("label", "create", f"phase-{req['phase']}", "--color", "c5def5", "--force")
         url = gh(
             "issue",
             "create",
