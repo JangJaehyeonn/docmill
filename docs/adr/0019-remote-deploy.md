@@ -17,7 +17,8 @@ ADR 0015의 HTTP 모드에는 인증이 없어 서버에 올려 운영할 수 �
 - `Dockerfile`은 `docmill setup`으로 고정 버전 엔진을 설치하고 PATH에 연결한다. 기본 명령은 `0.0.0.0:8000` HTTP 모드이고,
   데이터(`DOCMILL_HOME`)는 `/data` 볼륨에 둔다.
 - `deploy/deploy.sh`는 `docker pull` → 기존 컨테이너 교체(`docker run`) → `curl`로 `/healthz` 확인을 하고,
-  시간 안에 통과하지 않으면 이전 이미지로 다시 실행한 뒤 1로 끝난다. `deploy/compose.yaml`은 수동 운영용이다.
+  시간 안에 통과하지 않으면 이전 이미지로 다시 실행한 뒤 1로 끝난다.
+  `DOCMILL_HTTP_TOKEN`이 없거나 공백뿐이면 docker를 호출하기 전에 3으로 끝나 기존 컨테이너를 보존한다. `deploy/compose.yaml`은 수동 운영용이다.
 - 개발 의존성에 `httpx`를 추가한다. 인수 테스트의 원격 MCP 클라이언트와 Starlette `TestClient`가 쓴다(런타임 의존성 아님).
 
 ## 검토한 대안

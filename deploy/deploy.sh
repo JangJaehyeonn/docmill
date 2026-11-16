@@ -8,7 +8,8 @@
 #       [--timeout <초>] [--port <호스트 포트>] [--name <컨테이너 이름>] [--volume <데이터 볼륨>]
 #
 # --previous를 주지 않으면 지금 실행 중인 컨테이너의 이미지 ID(태그가 아닌 고정 ID)를 이전 이미지로 쓴다.
-# 종료 코드: 0 배포 성공, 1 헬스 체크 실패(되돌림 시도함), 2 사용법 오류.
+# DOCMILL_HTTP_TOKEN이 없거나 공백뿐이면 docker를 호출하기 전에 끝나 기존 컨테이너를 건드리지 않는다.
+# 종료 코드: 0 배포 성공, 1 헬스 체크 실패(되돌림 시도함), 2 사용법 오류, 3 DOCMILL_HTTP_TOKEN 없음.
 set -euo pipefail
 
 image=""
@@ -44,9 +45,14 @@ done
 case "$timeout" in ''|*[!0-9]*) echo "--timeout은 초 단위 정수여야 합니다" >&2; exit 2 ;; esac
 case "$port" in ''|*[!0-9]*) echo "--port는 정수여야 합니다" >&2; exit 2 ;; esac
 
-if [ -z "${DOCMILL_HTTP_TOKEN:-}" ]; then
-  echo "경고: DOCMILL_HTTP_TOKEN이 없으면 컨테이너가 127.0.0.1에만 바인딩해 외부에서 접속할 수 없습니다" >&2
+# Must run before any docker call so a missing token never touches the current container.
+token_trimmed="${DOCMILL_HTTP_TOKEN:-}"
+token_trimmed="${token_trimmed//[[:space:]]/}"
+if [ -z "$token_trimmed" ]; then
+  echo "DOCMILL_HTTP_TOKEN이 없거나 공백뿐입니다. 토큰이 없으면 컨테이너가 127.0.0.1에만 바인딩해 외부에서 접속할 수 없으므로 배포하지 않습니다" >&2
+  exit 3
 fi
+unset token_trimmed
 
 health_url="http://127.0.0.1:${port}/healthz"
 

@@ -75,6 +75,7 @@ docker run -d -p 8000:8000 -e DOCMILL_HTTP_TOKEN=<토큰> ghcr.io/jangjaehyeonn/
 서버 배포는 `deploy/`를 쓴다. `deploy/compose.yaml`로 띄우거나,
 `bash deploy/deploy.sh --image <새 이미지> [--previous <이전 이미지>] [--timeout 60]`으로 이미지를 바꾼다.
 배포 스크립트는 새 이미지를 받아 실행하고, 헬스 체크가 시간 안에 통과하지 않으면 이전 이미지로 되돌린 뒤 종료 코드 1을 돌려준다.
+`DOCMILL_HTTP_TOKEN`이 없거나 공백뿐이면 docker를 호출하기 전에 종료 코드 3으로 끝나 기존 컨테이너를 건드리지 않는다.
 
 ## 구조
 
