@@ -9,8 +9,11 @@
   `DOCMILL_<이름대문자>_PATH=/nonexistent/engine` (기존 엔진 경로 변수) 로 바꾼다.
 - 저장소 루트의 `Dockerfile`이 이미지를 만들고, 컨테이너는 포트 8000에서 HTTP 모드를 띄운다.
 - `deploy/deploy.sh --image <새 이미지> --previous <이전 이미지> --timeout <초>` 는
-  PATH의 `docker`와 `curl`을 쓴다. 테스트는 가짜 `docker`·`curl` 스크립트를 PATH 앞에 두고
-  호출 기록(`$FAKE_LOG`)을 확인한다. 가짜 curl은 `FAKE_HEALTH=fail`이면 실패한다.
+  PATH의 `docker`와 `curl`을 쓴다. 컨테이너는 `docker run ... <이미지>`로 띄운다
+  (이미지 이름을 인자로 넘긴다). 헬스 체크는 `curl`로 하고,
+  실패하면 `docker run ... <이전 이미지>`로 되돌린다.
+  테스트는 가짜 `docker`·`curl` 스크립트를 PATH 앞에 두고 호출 기록(`$FAKE_LOG`)을 확인한다.
+  가짜 curl은 `FAKE_HEALTH=fail`이면 실패한다.
 """
 
 from __future__ import annotations
@@ -95,7 +98,9 @@ def test_bearer_token_required_when_configured(tmp_path: Path) -> None:
         url = f"http://127.0.0.1:{port}/mcp"
         assert _status(url, None, "POST") == 401
         assert _status(url, "wrong-token", "POST") == 401
-        assert _status(url, TOKEN, "POST") != 401
+        # 올바른 토큰이면 실제 MCP 초기화와 도구 조회까지 된다.
+        names = asyncio.run(asyncio.wait_for(_list_tools(port, TOKEN), 30))
+        assert "excel_to_report_ppt" in names
 
 
 @pytest.mark.fr("FR-24")
@@ -231,17 +236,30 @@ def _deploy(tmp: Path, health: str) -> tuple[subprocess.CompletedProcess[str], l
     return proc, log.read_text().splitlines()
 
 
+def _run_index(calls: list[str], image: str) -> list[int]:
+    """`docker run ... <image>` 호출의 위치 목록."""
+    return [
+        i for i, c in enumerate(calls) if c.startswith("docker run ") and image in c.split()[2:]
+    ]
+
+
 @pytest.mark.fr("FR-24")
 def test_deploy_rolls_back_when_health_check_fails(tmp_path: Path) -> None:
     proc, calls = _deploy(tmp_path, "fail")
     assert proc.returncode != 0
-    assert any("docmill:new" in c for c in calls)
-    image_calls = [c for c in calls if "docmill:old" in c or "docmill:new" in c]
-    assert "docmill:old" in image_calls[-1], "마지막에 이전 이미지가 실행되어야 한다"
+    new_runs = _run_index(calls, "docmill:new")
+    old_runs = _run_index(calls, "docmill:old")
+    assert new_runs, f"새 이미지를 실행하지 않았다: {calls}"
+    checks = [i for i, c in enumerate(calls) if c.startswith("curl ") and i > new_runs[0]]
+    assert checks, f"새 이미지 실행 뒤 헬스 체크가 없다: {calls}"
+    assert old_runs and old_runs[-1] > checks[0], (
+        f"헬스 체크 실패 뒤 이전 이미지를 다시 실행해야 한다: {calls}"
+    )
 
 
 @pytest.mark.fr("FR-24")
 def test_deploy_keeps_new_image_when_healthy(tmp_path: Path) -> None:
     proc, calls = _deploy(tmp_path, "ok")
     assert proc.returncode == 0, proc.stderr
-    assert not any("docmill:old" in c and " run " in c for c in calls)
+    assert _run_index(calls, "docmill:new"), f"새 이미지를 실행하지 않았다: {calls}"
+    assert not _run_index(calls, "docmill:old"), f"정상인데 이전 이미지를 실행했다: {calls}"
