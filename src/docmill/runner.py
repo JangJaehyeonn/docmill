@@ -118,6 +118,38 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
         )
 
 
+FORCE_VERIFY_FAIL_ENV = "DOCMILL_TEST_FORCE_VERIFY_FAIL"
+
+
+def verify_outputs(steps: list[dict[str, Any]], variables: dict[str, str], document: str) -> None:
+    """보고서 단계마다 최종 산출물의 그래프 숫자를 원본 엑셀 합계와 대조한다 (FR-12).
+
+    불일치나 검증 오류가 있으면 `RecipeError("verify", 원인)`을 낸다.
+    환경 변수 `DOCMILL_TEST_FORCE_VERIFY_FAIL=1`이면 테스트용으로 불일치를 강제한다.
+    """
+    if Path(document).suffix.lower() != ".pptx":
+        return
+    for index, step in enumerate(steps, start=1):
+        if step.get("tool") != "excel_to_report_ppt":
+            continue
+        args = bind_args(step.get("args", {}), variables, f"{index}:excel_to_report_ppt")
+        if not all(isinstance(args.get(k), str) for k in ("input", "group_by", "value")):
+            continue  # nothing to compare against
+        data = json.loads(verify_numbers(document, args["input"], args["group_by"], args["value"]))
+        if "error" in data:
+            raise RecipeError("verify", f"검증 실패: {data['error']}")
+        mismatches = data["mismatches"]
+        if os.environ.get(FORCE_VERIFY_FAIL_ENV) == "1":
+            mismatches = [*mismatches, {"location": "forced", "expected": 0, "actual": 1}]
+        if mismatches:
+            first = mismatches[0]
+            raise RecipeError(
+                "verify",
+                f"검증 불일치 {len(mismatches)}건 (예: {first['location']} "
+                f"기대 {first['expected']} / 실제 {first['actual']})",
+            )
+
+
 def _deliver(path: str, out_dir: str, recipe: str) -> str:
     """산출물을 out_dir에 `<레시피>.<확장자>`로 원자적으로 복사한다."""
     source = Path(path)
@@ -150,6 +182,7 @@ def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, An
     produced = [r["path"] for r in results if isinstance(r.get("path"), str)]
     if not produced:
         raise RecipeError("output", "레시피가 산출물을 만들지 않았다")
+    verify_outputs(steps, variables, produced[-1])
     path = _deliver(produced[-1], out_dir, recipe) if out_dir else produced[-1]
     return {
         "recipe": recipe,
