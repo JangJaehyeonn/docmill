@@ -15,7 +15,9 @@ excel_to_report_ppt가 만든 숫자가 AI가 지어낸 값이 아니라는 근�
 그 경로를 담는다. 출처는 `sum`·`sumif`·`count_distinct`·`share` 집계 방식과 열 하나의 연속 범위
 (`range`, 필요하면 `criteria_range`·`criteria`)로 표현한다. 문서 위치는 저장된 pptx를 다시 읽어
 슬라이드 파트 번호·도형 `cNvPr id`·그래프 파트/계열/점 idx로 찾는다. 집계에서 빠진 행(그룹 이름이나
-값이 빈 행)이 있으면 `excluded_rows`에 행 번호를 남긴다.
+값이 빈 행)이 있으면 `excluded_rows`에 행 번호를 남긴다. 그룹 이름은 `strip` 후 집계하므로
+`sumif`·`count_distinct`에 `normalize: "strip"`을, 문서에 반올림해 보이는 합계에는 `digits`(소수
+자릿수)를 남긴다. `share`는 합계가 0이면 0이다.
 
 ## 검토한 대안
 | 대안 | 장점 | 단점 | 버린 이유 |

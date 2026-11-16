@@ -129,6 +129,15 @@ def test_sources_use_sheet_offsets_and_list_excluded_rows() -> None:
     assert sources.group_count()["range"] == "C4:C7"
 
 
+def test_sources_record_normalization_and_display_digits() -> None:
+    sources = Sources(_table(), "부서", "매출")
+    group = sources.group_total("A", 2)
+    assert (group["normalize"], group["digits"]) == ("strip", 2)
+    assert sources.group_count()["normalize"] == "strip"
+    assert sources.total(0)["digits"] == 0
+    assert "digits" not in sources.total()
+
+
 def test_collect_finds_shapes_and_chart_points(tmp_path: Path) -> None:
     pptx = _pptx(tmp_path / "r.pptx", "합계: 60\n부서 수: 2개")
     sources = Sources(_table(), "부서", "매출")

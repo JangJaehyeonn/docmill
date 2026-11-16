@@ -151,7 +151,9 @@ def _shown(number: float, digits: int) -> float:
 def _group_numbers(kind: str, text: str, group: Group, sources: Sources) -> list[TextNumber]:
     digits = 0 if group.total == int(group.total) else 2
     return [
-        TextNumber(kind, text, _shown(group.total, digits), sources.group_total(group.name)),
+        TextNumber(
+            kind, text, _shown(group.total, digits), sources.group_total(group.name, digits)
+        ),
         TextNumber(kind, text, _shown(group.share, 1), sources.group_share(group.name)),
     ]
 
@@ -170,7 +172,7 @@ def text_numbers(
             top = max(groups, key=lambda g: (g.total, g.name))
             digits = 0 if total == int(total) else 2
             found[index] = [
-                TextNumber(kind, body, _shown(total, digits), sources.total()),
+                TextNumber(kind, body, _shown(total, digits), sources.total(digits)),
                 TextNumber(kind, body, float(len(groups)), sources.group_count()),
                 *_group_numbers(kind, body, top, sources),
             ]

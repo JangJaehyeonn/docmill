@@ -9,7 +9,11 @@
 - `sum`: range의 숫자 합
 - `sumif`: criteria_range 값이 criteria와 같은 행의 range 값 합
 - `count_distinct`: range의 서로 다른 값 개수
-- `share`: sumif ÷ sum(range) × 100
+- `share`: sumif ÷ sum(range) × 100 (sum(range)이 0이면 0)
+
+그룹 이름은 집계 전에 `strip`으로 앞뒤 공백을 제거한다(`normalize`: "strip"). criteria와
+criteria_range·count_distinct 범위의 값 모두 이 규칙을 적용해 비교·계산한다.
+합계에 `digits`가 있으면 재계산한 합계를 그 소수 자릿수로 반올림해 문서 숫자와 비교한다.
 """
 
 from __future__ import annotations
@@ -104,22 +108,32 @@ class Sources:
         self._keys = f"{key_col}{first}:{key_col}{last}"
         self._excluded = _excluded_rows(table, header.index(group_by), header.index(value))
 
-    def _make(self, aggregation: str, rng: str, criteria: str | None = None) -> dict[str, Any]:
+    def _make(
+        self,
+        aggregation: str,
+        rng: str,
+        criteria: str | None = None,
+        digits: int | None = None,
+    ) -> dict[str, Any]:
         src: dict[str, Any] = {**self._base, "aggregation": aggregation, "range": rng}
         if criteria is not None:
             src["criteria_range"] = self._keys
             src["criteria"] = criteria
+        if criteria is not None or aggregation == "count_distinct":
+            src["normalize"] = "strip"
+        if digits is not None:
+            src["digits"] = digits
         if self._excluded:
             src["excluded_rows"] = list(self._excluded)
         return src
 
-    def total(self) -> dict[str, Any]:
-        """value 열 전체 합계의 출처."""
-        return self._make("sum", self._values)
+    def total(self, digits: int | None = None) -> dict[str, Any]:
+        """value 열 전체 합계의 출처. digits는 문서에 보이는 소수 자릿수다."""
+        return self._make("sum", self._values, digits=digits)
 
-    def group_total(self, name: str) -> dict[str, Any]:
-        """group_by 값 하나의 합계 출처."""
-        return self._make("sumif", self._values, name)
+    def group_total(self, name: str, digits: int | None = None) -> dict[str, Any]:
+        """group_by 값 하나의 합계 출처. digits는 문서에 보이는 소수 자릿수다."""
+        return self._make("sumif", self._values, name, digits)
 
     def group_share(self, name: str) -> dict[str, Any]:
         """group_by 값 하나의 비중(%) 출처."""
