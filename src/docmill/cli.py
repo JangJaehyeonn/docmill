@@ -43,9 +43,14 @@ def run(
 
     from docmill.runlog import logged
     from docmill.runner import run_recipe
+    from docmill.webhook import send_summary
 
     result = json.loads(logged(run_recipe, ai_used=False)(recipe, input_path, out))
-    if "error" in result:
+    ok = "error" not in result
+    summary = {"recipe": recipe, "status": "success" if ok else "failure"}
+    summary.update({"path": result["path"]} if ok else {"error": str(result["error"])})
+    send_summary(summary)
+    if not ok:
         typer.echo(f"실패({result.get('step', 'unexpected')}): {result['error']}", err=True)
         raise typer.Exit(code=1)
     typer.echo(result["path"])
