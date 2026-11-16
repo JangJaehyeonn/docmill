@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -16,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from docmill.recipes import RECIPE_TOOLS, RecipeError, recipes_dir
-from docmill.runlog import current_run_id, new_run_id
+from docmill.runlog import current_run_id, new_run_id, reset_current_step, set_current_step
 from docmill.tools.report import _read_sheet, excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
@@ -69,10 +70,13 @@ def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> di
     if runner is None:
         raise RecipeError(label, f"실행할 수 없는 도구다: {tool!r}")
     args = bind_args(step.get("args", {}), variables, label)
+    token = set_current_step(index)  # unique output name per step within one run
     try:
         data = json.loads(runner(**args))
     except TypeError as exc:
         raise RecipeError(label, f"인자가 맞지 않는다: {exc}") from exc
+    finally:
+        reset_current_step(token)
     if not isinstance(data, dict) or "error" in data:
         message = data.get("error", "알 수 없는 결과") if isinstance(data, dict) else str(data)
         raise RecipeError(f"{label}({data.get('step', '?')})", str(message))
@@ -118,6 +122,62 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
         )
 
 
+FORCE_VERIFY_FAIL_ENV = "DOCMILL_TEST_FORCE_VERIFY_FAIL"
+
+
+_STEP_REF = re.compile(r"^\$step(\d+)$")
+
+
+def _report_origin(steps: list[dict[str, Any]], index: int) -> tuple[int, dict[str, Any]] | None:
+    """`index`번 단계의 산출물을 만든 보고서 단계를 `input` 참조를 거슬러 올라가 찾는다.
+
+    보고서 단계에 닿지 못하면(입력 체인이 `$stepN`이 아니거나 끊김) None을 돌려 검증을 건너뛴다.
+    """
+    seen: set[int] = set()
+    while 1 <= index <= len(steps) and index not in seen:
+        seen.add(index)
+        step = steps[index - 1]
+        if step.get("tool") == "excel_to_report_ppt":
+            return index, step
+        ref = _STEP_REF.match(str(step.get("args", {}).get("input", "")))
+        if ref is None:
+            return None
+        index = int(ref.group(1))
+    return None
+
+
+def verify_outputs(steps: list[dict[str, Any]], variables: dict[str, str], document: str) -> None:
+    """최종 산출물을 만든 보고서 단계의 원본 엑셀 합계와 그래프 숫자를 대조한다 (FR-12).
+
+    불일치나 검증 오류가 있으면 `RecipeError("verify", 원인)`을 낸다.
+    환경 변수 `DOCMILL_TEST_FORCE_VERIFY_FAIL=1`이면 테스트용으로 불일치를 강제한다.
+    """
+    if Path(document).suffix.lower() != ".pptx":
+        return
+    produced_by = max(
+        (i for i in range(1, len(steps) + 1) if variables.get(f"$step{i}") == document),
+        default=len(steps),
+    )
+    report_step = _report_origin(steps, produced_by)
+    for index, step in [report_step] if report_step else []:
+        args = bind_args(step.get("args", {}), variables, f"{index}:excel_to_report_ppt")
+        if not all(isinstance(args.get(k), str) for k in ("input", "group_by", "value")):
+            continue  # nothing to compare against
+        data = json.loads(verify_numbers(document, args["input"], args["group_by"], args["value"]))
+        if "error" in data:
+            raise RecipeError("verify", f"검증 실패: {data['error']}")
+        mismatches = data["mismatches"]
+        if os.environ.get(FORCE_VERIFY_FAIL_ENV) == "1":
+            mismatches = [*mismatches, {"location": "forced", "expected": 0, "actual": 1}]
+        if mismatches:
+            first = mismatches[0]
+            raise RecipeError(
+                "verify",
+                f"검증 불일치 {len(mismatches)}건 (예: {first['location']} "
+                f"기대 {first['expected']} / 실제 {first['actual']})",
+            )
+
+
 def _deliver(path: str, out_dir: str, recipe: str) -> str:
     """산출물을 out_dir에 `<레시피>.<확장자>`로 원자적으로 복사한다."""
     source = Path(path)
@@ -150,6 +210,7 @@ def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, An
     produced = [r["path"] for r in results if isinstance(r.get("path"), str)]
     if not produced:
         raise RecipeError("output", "레시피가 산출물을 만들지 않았다")
+    verify_outputs(steps, variables, produced[-1])
     path = _deliver(produced[-1], out_dir, recipe) if out_dir else produced[-1]
     return {
         "recipe": recipe,
