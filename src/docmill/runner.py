@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -121,6 +122,27 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
 FORCE_VERIFY_FAIL_ENV = "DOCMILL_TEST_FORCE_VERIFY_FAIL"
 
 
+_STEP_REF = re.compile(r"^\$step(\d+)$")
+
+
+def _report_origin(steps: list[dict[str, Any]], index: int) -> tuple[int, dict[str, Any]] | None:
+    """`index`번 단계의 산출물을 만든 보고서 단계를 `input` 참조를 거슬러 올라가 찾는다.
+
+    보고서 단계에 닿지 못하면(입력 체인이 `$stepN`이 아니거나 끊김) None을 돌려 검증을 건너뛴다.
+    """
+    seen: set[int] = set()
+    while 1 <= index <= len(steps) and index not in seen:
+        seen.add(index)
+        step = steps[index - 1]
+        if step.get("tool") == "excel_to_report_ppt":
+            return index, step
+        ref = _STEP_REF.match(str(step.get("args", {}).get("input", "")))
+        if ref is None:
+            return None
+        index = int(ref.group(1))
+    return None
+
+
 def verify_outputs(steps: list[dict[str, Any]], variables: dict[str, str], document: str) -> None:
     """최종 산출물을 만든 보고서 단계의 원본 엑셀 합계와 그래프 숫자를 대조한다 (FR-12).
 
@@ -133,13 +155,8 @@ def verify_outputs(steps: list[dict[str, Any]], variables: dict[str, str], docum
         (i for i in range(1, len(steps) + 1) if variables.get(f"$step{i}") == document),
         default=len(steps),
     )
-    # Only the last report step up to the one that produced the document applies to it.
-    report_steps = [
-        (index, step)
-        for index, step in enumerate(steps[:produced_by], start=1)
-        if step.get("tool") == "excel_to_report_ppt"
-    ]
-    for index, step in report_steps[-1:]:
+    report_step = _report_origin(steps, produced_by)
+    for index, step in [report_step] if report_step else []:
         args = bind_args(step.get("args", {}), variables, f"{index}:excel_to_report_ppt")
         if not all(isinstance(args.get(k), str) for k in ("input", "group_by", "value")):
             continue  # nothing to compare against
