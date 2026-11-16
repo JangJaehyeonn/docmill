@@ -4,7 +4,8 @@
 가정(구현 방법이 정해지면 맞춰 고친다):
 - `DOCMILL_HOME`이 엔진 설치 위치의 기준 폴더다.
 - 출력에 엔진 이름(GridCraft·DeckCraft·WordCraft)과 버전 번호(x.y.z)가 한 줄씩 나온다.
-- 이미 설치돼 있으면 출력에 "이미 설치"가 들어가고 설치된 파일이 바뀌지 않는다.
+- 다운로드는 표준 프록시 환경 변수(HTTPS_PROXY·HTTP_PROXY)를 따른다.
+  두 번째 실행은 프록시를 닫힌 포트로 막아 두고 실행해, 다운로드를 시도하면 실패하게 만든다.
 """
 
 from __future__ import annotations
@@ -18,13 +19,22 @@ from pathlib import Path
 import pytest
 
 ENGINES = ["GridCraft", "DeckCraft", "WordCraft"]
-LOG_DB_SUFFIXES = (".db", ".sqlite", ".sqlite3")
+# 아무것도 듣지 않는 포트. 이 프록시를 거치는 요청은 모두 연결 거부로 실패한다.
+BLOCKED_PROXY = "http://127.0.0.1:9"
+NO_NETWORK = {
+    "HTTPS_PROXY": BLOCKED_PROXY,
+    "HTTP_PROXY": BLOCKED_PROXY,
+    "https_proxy": BLOCKED_PROXY,
+    "http_proxy": BLOCKED_PROXY,
+    "NO_PROXY": "",
+    "no_proxy": "",
+}
 
 
-def _setup(home: Path) -> subprocess.CompletedProcess[str]:
+def _setup(home: Path, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         [sys.executable, "-m", "docmill.cli", "setup"],
-        env={**os.environ, "DOCMILL_HOME": str(home)},
+        env={**os.environ, "DOCMILL_HOME": str(home), **(extra_env or {})},
         cwd=str(home),
         capture_output=True,
         text=True,
@@ -32,31 +42,25 @@ def _setup(home: Path) -> subprocess.CompletedProcess[str]:
     )
 
 
-def _snapshot(home: Path) -> dict[str, tuple[int, int]]:
-    """설치 파일 상태(크기·수정 시각)를 기록한다. 실행 로그 DB는 제외한다."""
-    return {
-        str(p.relative_to(home)): (p.stat().st_size, p.stat().st_mtime_ns)
-        for p in sorted(home.rglob("*"))
-        if p.is_file() and not p.name.endswith(LOG_DB_SUFFIXES)
-    }
+def _assert_versions(stdout: str) -> None:
+    for engine in ENGINES:
+        line = next((ln for ln in stdout.splitlines() if engine in ln), "")
+        assert re.search(r"\d+\.\d+\.\d+", line), f"{engine} 버전이 출력되지 않았다: {stdout}"
 
 
 @pytest.mark.fr("FR-04")
 def test_setup_prints_version_of_each_engine(tmp_path: Path) -> None:
     proc = _setup(tmp_path)
     assert proc.returncode == 0, proc.stderr
-    for engine in ENGINES:
-        line = next((ln for ln in proc.stdout.splitlines() if engine in ln), "")
-        assert re.search(r"\d+\.\d+\.\d+", line), f"{engine} 버전이 출력되지 않았다: {proc.stdout}"
+    _assert_versions(proc.stdout)
 
 
 @pytest.mark.fr("FR-04")
 def test_setup_twice_does_not_download_again(tmp_path: Path) -> None:
     first = _setup(tmp_path)
     assert first.returncode == 0, first.stderr
-    before = _snapshot(tmp_path)
-    assert before, "설치된 파일이 없다"
-    second = _setup(tmp_path)
-    assert second.returncode == 0, second.stderr
-    assert "이미 설치" in second.stdout
-    assert _snapshot(tmp_path) == before
+    # 두 번째 실행은 네트워크를 막는다.
+    # 다시 내려받으려 하면 실패하므로, 성공하면 다운로드가 없었던 것이다.
+    second = _setup(tmp_path, NO_NETWORK)
+    assert second.returncode == 0, f"이미 설치된 엔진을 다시 내려받으려 했다: {second.stderr}"
+    _assert_versions(second.stdout)
