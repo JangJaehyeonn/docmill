@@ -22,6 +22,25 @@ def test_record_and_get_run(tmp_path: Path) -> None:
     assert runlog.get_run("nope", home=tmp_path) is None
 
 
+def test_list_recipe_runs_filters_by_recipe(tmp_path: Path) -> None:
+    def add(run_id: str, tool: str, summary: str) -> None:
+        runlog.record_run(
+            run_id=run_id,
+            tool=tool,
+            args_summary=summary,
+            result="{}",
+            status="ok",
+            duration_ms=5,
+            ai_used=False,
+            home=tmp_path,
+        )
+
+    add("a", "run_recipe", "input=x.xlsx, recipe=주간")
+    add("b", "run_recipe", "recipe=월간")
+    add("c", "save_recipe", "name=주간")
+    assert [r["run_id"] for r in runlog.list_recipe_runs("주간", tmp_path)] == ["a"]
+
+
 def test_summarize_redacts_and_clips() -> None:
     out = runlog.summarize_args(
         {"api_key": "abc", "note": "token=xyz", "data": "X" * 5000, "rows": [1, 2], "b": b"12"}

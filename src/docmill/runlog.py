@@ -152,6 +152,26 @@ def get_run(run_id: str, home: Path | None = None) -> dict[str, Any] | None:
     return record
 
 
+def list_recipe_runs(recipe: str, home: Path | None = None) -> list[dict[str, Any]]:
+    """레시피 실행(`run_recipe`) 기록을 시작 시각 순서(오래된 것부터)로 돌려준다."""
+    con = _connect(home)
+    try:
+        rows = con.execute(
+            "SELECT * FROM tool_runs WHERE tool = 'run_recipe' ORDER BY started_at, rowid"
+        ).fetchall()
+    finally:
+        con.close()
+    own = f"recipe={recipe}"
+    records = []
+    for row in rows:
+        summary = row["args_summary"]
+        if summary == own or summary.endswith(f", {own}"):
+            record = dict(row)
+            record["ai_used"] = bool(record["ai_used"])
+            records.append(record)
+    return records
+
+
 def _safe_record(**kwargs: Any) -> None:
     try:
         record_run(**kwargs)
