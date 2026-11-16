@@ -16,7 +16,7 @@ from typing import Any
 from docmill import templates
 from docmill.engines import get_tool
 from docmill.engines.mcp_tool import McpEngineTool
-from docmill.runlog import current_run_id, get_home, new_run_id
+from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.templates import TITLE_TYPES, TemplateError
 
 
@@ -142,7 +142,7 @@ def _generate(input: str, template: str, out_dir: str | None, run_id: str) -> di
                 raise ApplyError("save_presentation", saved.message)
         target_dir = Path(out_dir) if out_dir else get_home() / "outputs"
         target_dir.mkdir(parents=True, exist_ok=True)
-        final = target_dir / f"{run_id}.pptx"
+        final = target_dir / f"{output_stem(run_id)}.pptx"
         _publish(built, final)  # publish only after everything else succeeded
     return {
         "path": str(final),

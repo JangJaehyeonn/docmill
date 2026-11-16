@@ -56,6 +56,27 @@ _current_run_id: contextvars.ContextVar[str | None] = contextvars.ContextVar(
 )
 
 
+_current_step: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "docmill_step", default=None
+)
+
+
+def output_stem(run_id: str) -> str:
+    """산출물 파일 이름(확장자 제외). 레시피 단계 안에서는 단계 번호를 붙여 덮어쓰기를 막는다."""
+    step = _current_step.get()
+    return run_id if step is None else f"{run_id}-step{step}"
+
+
+def set_current_step(step: int | None) -> contextvars.Token[int | None]:
+    """레시피 러너가 지금 실행하는 단계 번호를 알린다. 돌려받은 토큰으로 되돌린다."""
+    return _current_step.set(step)
+
+
+def reset_current_step(token: contextvars.Token[int | None]) -> None:
+    """`set_current_step`을 이전 상태로 되돌린다."""
+    _current_step.reset(token)
+
+
 def current_run_id() -> str | None:
     """지금 실행 중인 `logged` 도구 호출의 실행 ID. 로그 밖에서 부르면 `None`."""
     return _current_run_id.get()

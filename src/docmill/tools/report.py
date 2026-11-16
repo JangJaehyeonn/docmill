@@ -21,7 +21,7 @@ from xml.etree import ElementTree as ET
 
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
-from docmill.runlog import current_run_id, get_home, new_run_id
+from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 
 CHART_TYPES = {"bar": "column", "line": "line", "pie": "pie"}
 MAX_SLIDES = 30
@@ -252,7 +252,7 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         _build_deck(groups, args, built, workdir)
         out_dir = get_home() / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
-        final = out_dir / f"{run_id}.pptx"
+        final = out_dir / f"{output_stem(run_id)}.pptx"
         verification = verify_report(built, groups) if args["verify"] else None
         if verification is not None and verification["matched"] != verification["checked"]:
             matched, checked = verification["matched"], verification["checked"]

@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from docmill.recipes import RECIPE_TOOLS, RecipeError, recipes_dir
-from docmill.runlog import current_run_id, new_run_id
+from docmill.runlog import current_run_id, new_run_id, reset_current_step, set_current_step
 from docmill.tools.report import _read_sheet, excel_to_report_ppt
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
@@ -70,10 +70,13 @@ def _run_step(index: int, step: dict[str, Any], variables: dict[str, str]) -> di
     if runner is None:
         raise RecipeError(label, f"실행할 수 없는 도구다: {tool!r}")
     args = bind_args(step.get("args", {}), variables, label)
+    token = set_current_step(index)  # unique output name per step within one run
     try:
         data = json.loads(runner(**args))
     except TypeError as exc:
         raise RecipeError(label, f"인자가 맞지 않는다: {exc}") from exc
+    finally:
+        reset_current_step(token)
     if not isinstance(data, dict) or "error" in data:
         message = data.get("error", "알 수 없는 결과") if isinstance(data, dict) else str(data)
         raise RecipeError(f"{label}({data.get('step', '?')})", str(message))

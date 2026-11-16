@@ -101,3 +101,41 @@ def test_template_on_earlier_report_traces_to_its_source(
     made = json.loads(excel_to_report_ppt(week1, "부서", "매출"))
     variables = {"$input": week2, "$step1": "x.pptx", "$step2": "y.pptx", "$step3": made["path"]}
     verify_outputs(steps, variables, made["path"])
+
+
+def test_steps_in_one_run_keep_separate_outputs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """같은 실행 ID를 공유해도 단계마다 산출물 경로가 달라 서로 덮어쓰지 않는다."""
+    from docmill import runlog, templates
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    monkeypatch.delenv(FORCE_VERIFY_FAIL_ENV, raising=False)
+    templates.register_template("t", FIXTURES / "template_default.pptx")
+    steps: list[dict[str, Any]] = [
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {
+                "input": str(FIXTURES / "sales_week1.xlsx"),
+                "group_by": "부서",
+                "value": "매출",
+            },
+        },
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": "$input", "group_by": "부서", "value": "매출"},
+        },
+        {"tool": "apply_template", "args": {"input": "$step1", "template": "t"}},
+    ]
+    folder = tmp_path / "recipes"
+    folder.mkdir(parents=True)
+    (folder / "r.json").write_text(json.dumps({"steps": steps}), encoding="utf-8")
+    token = runlog._current_run_id.set("shared-run")
+    try:
+        out = tmp_path / "out"
+        result = json.loads(run_recipe("r", str(FIXTURES / "sales_week2.xlsx"), str(out)))
+    finally:
+        runlog._current_run_id.reset(token)
+    assert "error" not in result, result
+    outputs = sorted(p.name for p in (tmp_path / "outputs").glob("*.pptx"))
+    assert outputs == [f"shared-run-step{n}.pptx" for n in (1, 2, 3)]
