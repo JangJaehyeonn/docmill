@@ -13,6 +13,8 @@
   옵션은 `-d`·`--rm` 같은 단독 플래그이거나 `--name=x`·`--publish=...`처럼 `=`로 값을 붙여 쓴다.
   그래서 `run` 뒤 첫 번째 `-`로 시작하지 않는 인자가 이미지다. 헬스 체크는 `curl`로 하고,
   실패하면 `docker run ... <이전 이미지>`로 되돌린다.
+  원격 서버는 토큰이 필요하므로, `DOCMILL_HTTP_TOKEN`이 없거나 공백뿐이면 docker를 호출하기 전에
+  0이 아닌 코드로 끝나 기존 컨테이너를 건드리지 않는다.
   테스트는 가짜 `docker`·`curl` 스크립트를 PATH 앞에 두고 호출 기록(`$FAKE_LOG`)을 확인한다.
   가짜 curl은 `FAKE_HEALTH=fail`이면 실패한다.
 """
@@ -207,16 +209,22 @@ def _fake_bin(directory: Path) -> Path:
     return directory
 
 
-def _deploy(tmp: Path, health: str) -> tuple[subprocess.CompletedProcess[str], list[str]]:
-    bin_dir = _fake_bin(tmp / f"bin_{health}")
-    log = tmp / f"log_{health}.txt"
+def _deploy(
+    tmp: Path, health: str, token: str | None = TOKEN
+) -> tuple[subprocess.CompletedProcess[str], list[str]]:
+    bin_dir = _fake_bin(tmp / f"bin_{health}_{token is not None}")
+    log = tmp / f"log_{health}_{token is not None}.txt"
     log.write_text("")
-    env = {
-        **os.environ,
-        "PATH": f"{bin_dir}:{os.environ['PATH']}",
-        "FAKE_LOG": str(log),
-        "FAKE_HEALTH": health,
-    }
+    env = {k: v for k, v in os.environ.items() if k != "DOCMILL_HTTP_TOKEN"}
+    env.update(
+        {
+            "PATH": f"{bin_dir}:{os.environ['PATH']}",
+            "FAKE_LOG": str(log),
+            "FAKE_HEALTH": health,
+        }
+    )
+    if token is not None:
+        env["DOCMILL_HTTP_TOKEN"] = token
     proc = subprocess.run(
         [
             "bash",
@@ -270,3 +278,13 @@ def test_deploy_keeps_new_image_when_healthy(tmp_path: Path) -> None:
     assert proc.returncode == 0, proc.stderr
     assert _run_index(calls, "docmill:new"), f"새 이미지를 실행하지 않았다: {calls}"
     assert not _run_index(calls, "docmill:old"), f"정상인데 이전 이미지를 실행했다: {calls}"
+
+
+@pytest.mark.fr("FR-24")
+@pytest.mark.parametrize("token", [None, "   "])
+def test_deploy_refuses_without_token_and_keeps_current(tmp_path: Path, token: str | None) -> None:
+    proc, calls = _deploy(tmp_path, "ok", token)
+    assert proc.returncode != 0, "토큰 없이 배포가 진행됐다"
+    assert not [c for c in calls if c.startswith("docker ")], (
+        f"토큰이 없는데 docker를 호출했다 (기존 컨테이너가 바뀔 수 있다): {calls}"
+    )
