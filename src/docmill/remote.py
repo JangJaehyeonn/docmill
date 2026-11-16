@@ -76,7 +76,7 @@ class BearerTokenMiddleware:
 
     def __init__(self, app: ASGIApp, token: str, public_paths: tuple[str, ...] = ()) -> None:
         self.app = app
-        self._expected = f"Bearer {token}".encode()
+        self._expected = token.encode()
         self._public = public_paths
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
@@ -97,7 +97,10 @@ class BearerTokenMiddleware:
         headers: list[tuple[bytes, bytes]] = scope.get("headers", [])
         for key, value in headers:
             if key.lower() == b"authorization":
-                return hmac.compare_digest(value, self._expected)
+                scheme, _, credentials = value.partition(b" ")
+                if scheme.lower() != b"bearer":
+                    return False
+                return hmac.compare_digest(credentials.strip(), self._expected)
         return False
 
 

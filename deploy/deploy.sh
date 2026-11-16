@@ -7,7 +7,7 @@
 #   DOCMILL_HTTP_TOKEN=... bash deploy/deploy.sh --image <새 이미지> [--previous <이전 이미지>] \
 #       [--timeout <초>] [--port <호스트 포트>] [--name <컨테이너 이름>] [--volume <데이터 볼륨>]
 #
-# --previous를 주지 않으면 지금 실행 중인 컨테이너의 이미지를 이전 이미지로 쓴다.
+# --previous를 주지 않으면 지금 실행 중인 컨테이너의 이미지 ID(태그가 아닌 고정 ID)를 이전 이미지로 쓴다.
 # 종료 코드: 0 배포 성공, 1 헬스 체크 실패(되돌림 시도함), 2 사용법 오류.
 set -euo pipefail
 
@@ -51,7 +51,8 @@ fi
 health_url="http://127.0.0.1:${port}/healthz"
 
 if [ -z "$previous" ]; then
-  previous="$(docker inspect --format='{{.Config.Image}}' "$name" 2>/dev/null || true)"
+  # Pin the image ID (not the mutable tag) before `docker pull` can move the tag.
+  previous="$(docker inspect --format='{{.Image}}' "$name" 2>/dev/null || true)"
 fi
 
 # Options use the `--flag=value` form so the image is the first non-option argument.

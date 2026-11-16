@@ -69,6 +69,9 @@ claude mcp add docmill -- uv run --directory /path/to/docmill docmill mcp
 docker run -d -p 8000:8000 -e DOCMILL_HTTP_TOKEN=<토큰> ghcr.io/jangjaehyeonn/docmill:latest
 ```
 
+> 이 서버는 TLS를 직접 처리하지 않는다. 외부에 공개하면 Bearer 토큰이 평문 HTTP로 전달될 수 있으므로,
+> 공개 전에 TLS를 종단하는 역방향 프록시나 암호화 터널을 앞단에 두고 `https://`로 접속한다.
+
 서버 배포는 `deploy/`를 쓴다. `deploy/compose.yaml`로 띄우거나,
 `bash deploy/deploy.sh --image <새 이미지> [--previous <이전 이미지>] [--timeout 60]`으로 이미지를 바꾼다.
 배포 스크립트는 새 이미지를 받아 실행하고, 헬스 체크가 시간 안에 통과하지 않으면 이전 이미지로 되돌린 뒤 종료 코드 1을 돌려준다.

@@ -93,6 +93,13 @@ def test_bearer_middleware_accepts_token_and_public_path() -> None:
     assert client.get("/healthz").status_code == 200
 
 
+def test_bearer_scheme_is_case_insensitive() -> None:
+    client = _guarded()
+    assert client.get("/mcp", headers={"Authorization": "bearer s3cret"}).text == "hi"
+    assert client.get("/mcp", headers={"Authorization": "BEARER s3cret"}).text == "hi"
+    assert client.get("/mcp", headers={"Authorization": "bearer wrong"}).status_code == 401
+
+
 def test_build_http_app_wraps_only_with_token() -> None:
     from docmill.server import build_server
 
