@@ -1,4 +1,4 @@
-"""레시피 저장 (FR-09).
+"""레시피 저장 (FR-09, FR-22).
 
 같은 세션(서버 프로세스)에서 성공한 docmill 도구 호출과 인자를 모아 이름 붙여
 `DOCMILL_HOME/recipes/<이름>.json`에 저장한다. 엔진 명령이 아니라 docmill 도구 호출을
@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TypeVar
 
+from docmill.inputschema import SchemaError, read_input_schema
 from docmill.runlog import current_run_id, get_home, new_run_id
 
 RECIPE_TOOLS = frozenset(
@@ -88,6 +89,13 @@ def build_steps(
     입력 경로가 앞 단계 산출물이면 `$stepN`(N은 1부터 센 그 단계 번호)으로, 그 외에는 경로마다
     변수 하나(`$input`, `$input2`, ...)로 바꾼다. 같은 파일이면 인자 이름이 달라도 같은 변수다.
     """
+    return _build(calls, outputs)[0]
+
+
+def _build(
+    calls: list[tuple[str, dict[str, Any]]], outputs: list[str | None] | None
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    """build_steps 본체. 단계 목록과 (원래 경로 -> 변수) 표를 함께 돌려준다."""
     produced: dict[str, int] = {}  # output path -> step number that made it
     variables: dict[str, str] = {}  # path -> variable
     steps: list[dict[str, Any]] = []
@@ -110,7 +118,7 @@ def build_steps(
         output = outputs[number - 1] if outputs and number <= len(outputs) else None
         if output is not None:
             produced[output] = number
-    return steps
+    return steps, variables
 
 
 def recipes_dir(home: Path | None = None) -> Path:
@@ -128,21 +136,36 @@ def _validate_name(name: str) -> str:
 def save_session_recipe(recorder: SessionRecorder, name: str) -> dict[str, Any]:
     """세션의 성공한 호출을 `name` 레시피로 저장하고 name·steps·path를 돌려준다."""
     clean = _validate_name(name)
-    steps = build_steps(recorder.calls, recorder.outputs)
+    steps, variables = _build(recorder.calls, recorder.outputs)
     if not steps:
         raise RecipeError("steps", "저장할 성공한 도구 호출이 이 세션에 없다")
+    document: dict[str, Any] = {"name": clean, "steps": steps}
+    source = next((path for path, var in variables.items() if var == "$input"), None)
+    schema = _input_schema(source)
+    if schema is not None:
+        document["input_schema"] = schema
     folder = recipes_dir()
     folder.mkdir(parents=True, exist_ok=True)
     target = folder / f"{clean}.json"
     partial = target.with_name(f".{target.name}.part")
     try:
-        text = json.dumps({"name": clean, "steps": steps}, ensure_ascii=False, indent=2)
+        text = json.dumps(document, ensure_ascii=False, indent=2)
         partial.write_text(text, encoding="utf-8")
         os.replace(partial, target)
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
-    return {"name": clean, "steps": steps, "path": str(target)}
+    return {**document, "path": str(target)}
+
+
+def _input_schema(source: str | None) -> dict[str, Any] | None:
+    """`$input`이 엑셀 파일이면 그 시트·열 이름·열 형식을 읽는다 (FR-22). 아니면 None."""
+    if source is None or Path(source).suffix.lower() != ".xlsx" or not Path(source).is_file():
+        return None
+    try:
+        return read_input_schema(Path(source))
+    except (SchemaError, OSError) as exc:
+        raise RecipeError("input_schema", f"입력 파일 구조를 읽지 못했다: {exc}") from exc
 
 
 def make_save_recipe(recorder: SessionRecorder) -> Callable[[str], str]:
@@ -151,8 +174,9 @@ def make_save_recipe(recorder: SessionRecorder) -> Callable[[str], str]:
     def save_recipe(name: str) -> str:
         """이 세션에서 성공한 도구 호출과 인자를 이름 붙여 레시피로 저장한다.
 
-        입력 파일 경로는 `$input` 같은 변수로 바뀌고 실패한 호출은 빠진다. 결과는 JSON 문자열
-        (name·steps·path·run_id)이며, 실패하면 error와 실패한 단계(step)를 담는다.
+        입력 파일 경로는 `$input` 같은 변수로 바뀌고 실패한 호출은 빠진다. `$input`이 엑셀이면
+        시트 이름·열 이름·열 형식(input_schema)도 함께 저장한다. 결과는 JSON 문자열
+        (name·steps·input_schema·path·run_id)이며, 실패하면 error와 실패한 단계(step)를 담는다.
         """
         run_id = current_run_id() or new_run_id()
         result: dict[str, Any]
@@ -201,6 +225,18 @@ def rename_recipe(old: str, new: str) -> str:
         raise
     source.unlink()
     return clean
+
+
+def show_recipe(name: str) -> dict[str, Any]:
+    """저장된 레시피 `name`의 내용(name·steps·input_schema 등)을 돌려준다. 없으면 RecipeError."""
+    path = _existing_path(name)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except ValueError as exc:
+        raise RecipeError("recipe", f"레시피 파일을 읽을 수 없다: {name!r} ({exc})") from exc
+    if not isinstance(data, dict):
+        raise RecipeError("recipe", f"레시피 파일 형식이 잘못되었다: {name!r}")
+    return data
 
 
 def delete_recipe(name: str) -> None:

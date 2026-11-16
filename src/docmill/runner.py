@@ -16,6 +16,13 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from docmill.inputschema import (
+    SchemaError,
+    active_column_map,
+    apply_map_to_columns,
+    read_input_schema,
+    suggest_mapping,
+)
 from docmill.recipes import RECIPE_TOOLS, RecipeError, recipes_dir
 from docmill.runlog import current_run_id, new_run_id, reset_current_step, set_current_step
 from docmill.tools.report import _read_sheet, excel_to_report_ppt
@@ -35,16 +42,23 @@ assert set(RUNNERS) == RECIPE_TOOLS
 
 def load_recipe(recipe: str) -> list[dict[str, Any]]:
     """저장된 레시피의 단계 목록을 읽는다. 없거나 깨졌으면 `RecipeError`."""
+    steps: list[dict[str, Any]] = load_recipe_document(recipe)["steps"]
+    return steps
+
+
+def load_recipe_document(recipe: str) -> dict[str, Any]:
+    """저장된 레시피 파일 전체(steps·input_schema 등)를 읽는다. 없거나 깨졌으면 `RecipeError`."""
     path = recipes_dir() / f"{recipe}.json"
     if not recipe.strip() or path.parent != recipes_dir() or not path.is_file():
         raise RecipeError("recipe", f"저장된 레시피가 없다: {recipe!r}")
     try:
-        steps = json.loads(path.read_text(encoding="utf-8"))["steps"]
+        data = json.loads(path.read_text(encoding="utf-8"))
+        steps = data["steps"]
     except (ValueError, KeyError, TypeError) as exc:
         raise RecipeError("recipe", f"레시피 파일을 읽을 수 없다: {recipe!r} ({exc})") from exc
     if not isinstance(steps, list) or not steps:
         raise RecipeError("recipe", f"레시피에 실행할 단계가 없다: {recipe!r}")
-    return steps
+    return dict(data)
 
 
 def bind_args(args: dict[str, Any], variables: dict[str, str], step: str) -> dict[str, Any]:
@@ -120,6 +134,45 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
         raise RecipeError(
             "preflight", f"입력 파일에 없는 열: {names} (있는 열: {', '.join(header)})"
         )
+
+
+class InputChangedError(RecipeError):
+    """입력 파일 열 구조가 레시피와 달라 실행하지 않았을 때 발생한다 (FR-22).
+
+    `missing`은 레시피가 쓰는데 입력에 없는 열, `suggestions`는 규칙 기반 열 매핑 제안이다.
+    """
+
+    def __init__(self, message: str, missing: list[str], suggestions: list[dict[str, str]]) -> None:
+        super().__init__("input_schema", message)
+        self.missing = missing
+        self.suggestions = suggestions
+
+
+def check_input_schema(steps: list[dict[str, Any]], schema: Any, input: str) -> bool:
+    """저장된 input_schema와 입력 엑셀의 열 구조를 비교한다 (FR-22).
+
+    적용 중인 열 매핑(`새 열=원래 열`)을 반영한 뒤 레시피가 쓰는 열이 빠졌으면 매핑 제안과 함께
+    `InputChangedError`를 낸다. 비교했으면 True, 비교할 수 없으면(구조 기록 없음, 엑셀 아님) False.
+    """
+    source = Path(input)
+    if not isinstance(schema, dict) or source.suffix.lower() != ".xlsx" or not source.is_file():
+        return False
+    try:
+        actual = read_input_schema(source)
+        mapped = apply_map_to_columns(actual["columns"], active_column_map())
+    except SchemaError as exc:
+        raise RecipeError("input_schema", str(exc)) from exc
+    needed = required_columns(steps)
+    missing = [name for name in needed if name not in mapped]
+    if not missing:
+        return True
+    names = ", ".join(f"'{name}'" for name in missing)
+    raise InputChangedError(
+        f"입력 파일에 레시피가 쓰는 열이 없다: {names} (있는 열: {', '.join(actual['columns'])})."
+        " 제안된 매핑을 --map 새 열=원래 열 로 주고 다시 실행하세요",
+        missing,
+        suggest_mapping(schema, actual),
+    )
 
 
 FORCE_VERIFY_FAIL_ENV = "DOCMILL_TEST_FORCE_VERIFY_FAIL"
@@ -198,8 +251,10 @@ def _deliver(path: str, out_dir: str, recipe: str) -> str:
 
 def execute_recipe(recipe: str, input: str, out_dir: str | None) -> dict[str, Any]:
     """레시피 단계를 순서대로 실행하고 마지막 산출물 path와 단계별 결과를 돌려준다."""
-    steps = load_recipe(recipe)
-    preflight(steps, input)
+    document = load_recipe_document(recipe)
+    steps: list[dict[str, Any]] = document["steps"]
+    if not check_input_schema(steps, document.get("input_schema"), input):
+        preflight(steps, input)
     variables = {"$input": input}
     results: list[dict[str, Any]] = []
     for index, step in enumerate(steps, start=1):
@@ -226,12 +281,20 @@ def run_recipe(recipe: str, input: str, out_dir: str | None = None) -> str:
 
     recipe는 save_recipe로 저장한 이름, input은 레시피의 `$input`에 넣을 파일 경로, out_dir은
     결과를 복사할 폴더(선택)다. 결과는 JSON 문자열(path·steps·summary·run_id)이며, 실패하면
-    error와 실패한 단계(step)를 담는다.
+    error와 실패한 단계(step)를 담는다. 입력 엑셀의 열 이름이 레시피 저장 때와 달라 실행하지
+    않았으면 빠진 열(missing)과 열 매핑 제안(suggestions: changed·original·reason)도 담는다.
     """
     run_id = current_run_id() or new_run_id()
     result: dict[str, Any]
     try:
         result = execute_recipe(recipe, input, out_dir)
+    except InputChangedError as exc:
+        result = {
+            "error": exc.message,
+            "step": exc.step,
+            "missing": exc.missing,
+            "suggestions": exc.suggestions,
+        }
     except RecipeError as exc:
         result = {"error": exc.message, "step": exc.step}
     except Exception as exc:  # engine or file failures must not kill the server
