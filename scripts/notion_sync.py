@@ -124,13 +124,20 @@ def to_blocks(markdown: str) -> list[dict[str, Any]]:
 
 
 def replace_page(page_id: str, token: str, blocks: list[dict[str, Any]]) -> None:
-    """페이지의 기존 블록을 지우고 새 블록으로 채운다."""
+    """페이지의 기존 블록을 지우고 새 블록으로 채운다.
+
+    하위 페이지·데이터베이스 블록은 지우지 않는다 (지우면 그 페이지가 휴지통으로 간다).
+    """
     cursor: str | None = None
     old: list[str] = []
     while True:
         query = f"?page_size=100&start_cursor={cursor}" if cursor else "?page_size=100"
         res = call("GET", f"/blocks/{page_id}/children{query}", token)
-        old += [b["id"] for b in res.get("results", [])]
+        old += [
+            b["id"]
+            for b in res.get("results", [])
+            if b.get("type") not in ("child_page", "child_database")
+        ]
         if not res.get("has_more"):
             break
         cursor = res["next_cursor"]
