@@ -24,7 +24,7 @@ from _gh import FR_LABEL, gh, label_names
 BOARD_TITLE = "📊 docmill 진행 현황"
 BOARD_LABEL = "status-board"
 KST = timedelta(hours=9)
-PHASE_NAMES = {1: "기반", 2: "업무 도구", 3: "레시피", 4: "배포·운영", 5: "차별화"}
+PHASE_NAMES = {1: "기반", 2: "업무 도구", 3: "레시피", 4: "배포·운영", 5: "차별화", 6: "studio 기본", 7: "studio 차별화", 8: "studio 편의", 9: "studio 자동화"}
 ROOT = Path(__file__).resolve().parent.parent
 
 

@@ -29,6 +29,13 @@ jobs:
       - uses: ./.github/actions/setup-engines
       - name: 의존성 설치
         run: uv sync --locked
+      - uses: ./.github/actions/setup-studio
+      - name: studio 린트·타입·단위 테스트
+        run: |
+          if [ ! -f studio/package.json ]; then echo "studio/가 아직 없습니다."; exit 0; fi
+          npm --prefix studio run lint
+          npm --prefix studio run typecheck
+          npm --prefix studio test
       - name: 린트
         run: uv run ruff check .
       - name: 포맷
