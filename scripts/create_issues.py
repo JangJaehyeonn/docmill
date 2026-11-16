@@ -76,6 +76,8 @@ def main() -> int:
             print(f"건너뜀 (이미 있음): {req['id']}")
             continue
         labels = [req["id"], f"phase-{req['phase']}", req["priority"]]
+        if req.get("model") == "opus":
+            labels.append("opus")
         if args.ready:
             labels.append("ready")
         title = f"{req['id']} {req['title']}"
@@ -94,6 +96,17 @@ def main() -> int:
             "--force",
         )
         gh("label", "create", f"phase-{req['phase']}", "--color", "c5def5", "--force")
+        if "opus" in labels:
+            gh(
+                "label",
+                "create",
+                "opus",
+                "--color",
+                "5319e7",
+                "--description",
+                "Opus로 구현",
+                "--force",
+            )
         url = gh(
             "issue",
             "create",

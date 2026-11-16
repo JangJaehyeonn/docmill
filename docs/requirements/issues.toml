@@ -1,5 +1,6 @@
 # docmill 요구사항 (요구사항 정의서 v2 기준)
 # scripts/create_issues.py가 이 파일로 GitHub 이슈를 만든다.
+# model = "opus"를 넣은 요구사항은 이슈에 opus 라벨이 붙고 Opus로 구현한다 (기본은 Sonnet).
 # 이 파일은 보호 경로다. 수정은 사람 승인 PR로만 한다.
 
 [[requirement]]
@@ -294,6 +295,7 @@ title = "숫자 출처 추적"
 area = "검증"
 priority = "필수"
 phase = 5
+model = "opus"
 detail = "excel_to_report_ppt가 만든 문서의 숫자마다 원본 출처(파일·시트·셀 범위·집계 방식)를 기록한다. 출처는 결과 파일 옆 `<결과 파일 이름>.provenance.json`에 저장하고 도구 결과로도 돌려준다. verify_numbers는 불일치 항목에 이 출처를 함께 보여준다. AI가 숫자를 지어내지 않았다는 근거를 사용자가 직접 확인할 수 있게 하는 것이 목적이다."
 depends = ["FR-05", "FR-08"]
 acceptance = [
@@ -309,6 +311,7 @@ title = "레시피 입력 변화 감지"
 area = "레시피"
 priority = "필수"
 phase = 5
+model = "opus"
 detail = "save_recipe가 입력 파일 구조(시트 이름, 열 이름, 열 형식)를 레시피에 함께 저장한다. 실행할 때 구조가 다르면 바로 실패하지 않고, 규칙 기반 열 매핑 제안(바뀐 열 → 원래 열과 근거)을 돌려준다. 사용자가 `docmill run ... --map 금액=매출`처럼 매핑을 주면 그대로 실행한다. AI·네트워크 호출 없이 동작한다."
 depends = ["FR-09", "FR-11", "FR-14"]
 acceptance = [
@@ -324,6 +327,7 @@ title = "도구 선택 평가 세트"
 area = "평가"
 priority = "필수"
 phase = 5
+model = "opus"
 detail = "`evals/scenarios/`에 사용자 요청 문장과 기대 결과(호출할 도구와 핵심 인자, 또는 도구 없음)를 담은 시나리오를 둔다. `docmill eval --model claude-code --date YYYY-MM-DD`가 docmill MCP 서버를 연결한 모델에 시나리오를 보내고, 도구 선택·인자 정확도를 채점해 `evals/reports/<날짜>.md`와 `.json`으로 남긴다. 모델 호출은 Claude Code CLI(구독 인증)로만 하고 Anthropic API 키는 쓰지 않는다. 테스트와 CI는 가짜 모델로 채점 로직만 검증한다. 도구 설명을 바꿨을 때 정확도가 어떻게 달라지는지 비교하는 것이 목적이다."
 depends = ["FR-05", "FR-06", "FR-07", "FR-08", "FR-09", "FR-10"]
 acceptance = [
@@ -340,6 +344,7 @@ title = "원격 모드 배포 자동화"
 area = "배포"
 priority = "필수"
 phase = 5
+model = "opus"
 detail = "HTTP 모드(FR-19)를 서버에 올려 운영할 수 있게 한다. 토큰 인증, 헬스 체크, 엔진이 포함된 Docker 이미지, `deploy/`의 compose 파일과 배포 스크립트(새 이미지 받기 → 헬스 체크 → 실패 시 이전 이미지로 되돌리기)를 만든다. 릴리스 승인 후 이 스크립트를 실행하는 워크플로 연결은 보호 경로라 사람 승인 PR로 따로 한다."
 depends = ["FR-19", "FR-04"]
 acceptance = [
