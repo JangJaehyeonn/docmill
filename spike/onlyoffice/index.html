@@ -4,9 +4,9 @@
 <body><div id="ph"></div><script>
 window.events = [];
 window.editor = new DocsAPI.DocEditor("ph", {
-  document: { fileType: "xlsx", key: "spike-1", title: "sales_q3.xlsx", url: "http://localhost:8000/sales_q3.xlsx" },
+  document: { fileType: "xlsx", key: "spike-1", title: "sales_q3.xlsx", url: "http://localhost:8090/sales_q3.xlsx" },
   documentType: "cell",
-  editorConfig: { callbackUrl: "http://localhost:8000/callback", lang: "ko", mode: "edit" },
+  editorConfig: { callbackUrl: "http://localhost:8090/callback", lang: "ko", mode: "edit" },
   events: { onAppReady: () => window.events.push("appReady"), onDocumentReady: () => window.events.push("documentReady"), onError: (e) => window.events.push("error " + JSON.stringify(e.data)) },
   width: "100%", height: "100%"
 });
