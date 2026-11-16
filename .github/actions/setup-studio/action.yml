@@ -62,7 +62,9 @@ runs:
       shell: bash
       run: |
         if uv run python -c "import playwright" 2>/dev/null; then
-          uv run playwright install --with-deps chromium >/dev/null
+          # 새 러너 이미지(ubuntu 26.04)는 Playwright의 의존성 설치 목록에 없을 수 있다.
+          # 러너에는 Chromium 실행 라이브러리가 이미 있으므로 실패하면 브라우저만 받는다.
+          uv run playwright install --with-deps chromium >/dev/null 2>&1 || uv run playwright install chromium
         fi
 
     - name: studio 의존성 설치와 빌드
