@@ -62,6 +62,8 @@ jobs:
         run: uv sync --locked
       - uses: ./.pipeline/.github/actions/setup-studio
         if: steps.attempt.outputs.proceed == 'true'
+        with:
+          build: "false"
       - name: 설치 액션 사본 정리 (커밋에 섞이지 않게)
         if: steps.attempt.outputs.proceed == 'true'
         run: rm -rf .pipeline

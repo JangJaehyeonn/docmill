@@ -60,7 +60,7 @@ Phase 6부터는 같은 저장소의 `studio/`에서 문서 화면 옆에 AI 채
 - 환경 변수: `DOCMILL_STUDIO_WORKSPACE`(작업 폴더), `RHWP_STUDIO_DIST`, `DOCMILL_ONLYOFFICE_URL`(문서 서버, CI는 `http://localhost`),
   `DOCMILL_STUDIO_AGENT_CMD`(채팅 에이전트 명령, 기본 `claude`). 문서 서버가 파일을 받을 주소는 `DOCMILL_STUDIO_PUBLIC_HOST`(기본 `127.0.0.1`, Windows Docker Desktop은 `host.docker.internal`).
 - ONLYOFFICE가 80·8000 포트를 쓰므로 studio 서버는 그 포트를 쓰지 않는다.
-- 채팅 에이전트는 Claude Code CLI(`claude -p --output-format stream-json`, 구독 인증)이며 Anthropic API 키를 쓰지 않는다. 테스트는 같은 stream-json 형식을 내는 가짜 명령을 `DOCMILL_STUDIO_AGENT_CMD`로 넣는다.
+- 채팅 에이전트는 Claude Code CLI(`claude -p --output-format stream-json --verbose`, 구독 인증)이며 Anthropic API 키를 쓰지 않는다. 테스트는 같은 stream-json 형식을 내는 가짜 명령을 `DOCMILL_STUDIO_AGENT_CMD`로 넣는다.
 - 문서를 바꾸는 기능은 docmill 도구(Python)로 만들고 pytest로 검증한다. studio에는 화면·연결 코드만 둔다.
 - 화면 문구는 한국어, 버튼·입력은 실제 `<button>`·`<input>`·`<label>`로 만든다 (인수 테스트가 역할과 이름으로 찾는다).
 

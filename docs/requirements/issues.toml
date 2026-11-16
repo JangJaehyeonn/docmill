@@ -408,7 +408,7 @@ title = "채팅 패널과 에이전트 연결"
 area = "studio"
 priority = "필수"
 phase = 6
-detail = "오른쪽 채팅 패널에서 보낸 메시지를 에이전트 명령(DOCMILL_STUDIO_AGENT_CMD, 기본 `claude -p --output-format stream-json`)에 넘긴다. 열린 탭 목록과 활성 파일 경로를 함께 넘기고, 에이전트에는 docmill MCP 서버를 연결한다. stream-json의 도구 호출·결과를 채팅에 카드로 보여주고, 결과로 바뀌거나 생긴 파일은 탭을 새로 고치거나 새 탭으로 연다. Anthropic API 키는 쓰지 않는다."
+detail = "오른쪽 채팅 패널에서 보낸 메시지를 에이전트 명령(DOCMILL_STUDIO_AGENT_CMD, 기본 `claude -p --output-format stream-json --verbose`)에 넘긴다. 열린 탭 목록과 활성 파일 경로를 함께 넘기고, 에이전트에는 docmill MCP 서버를 연결한다. stream-json의 도구 호출·결과를 채팅에 카드로 보여주고, 결과로 바뀌거나 생긴 파일은 탭을 새로 고치거나 새 탭으로 연다. Anthropic API 키는 쓰지 않는다."
 depends = ["FR-26"]
 acceptance = [
   "가짜 에이전트(stream-json으로 도구 호출 1개와 결과, 마지막 메시지를 내는 명령)를 넣고 메시지를 보내면 채팅에 사용자 말풍선, 도구 카드(도구 이름 표시), 마지막 메시지가 순서대로 보인다",

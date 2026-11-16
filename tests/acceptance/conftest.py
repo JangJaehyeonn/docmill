@@ -10,9 +10,11 @@
 from __future__ import annotations
 
 import os
+import queue
 import socket
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -70,6 +72,14 @@ def _free_port() -> int:
         return int(s.getsockname()[1])
 
 
+def _pump(proc: subprocess.Popen[str], out: queue.Queue[str]) -> None:
+    # 서버 stdout을 줄 단위로 큐에 넣는다. 끝나면 빈 문자열을 넣는다.
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        out.put(line)
+    out.put("")
+
+
 @pytest.fixture
 def start_studio(tmp_path: Path) -> Iterator[Callable[..., str]]:
     """studio 서버를 띄우고 URL을 돌려주는 함수를 준다. 테스트가 끝나면 서버를 끈다.
@@ -94,13 +104,18 @@ def start_studio(tmp_path: Path) -> Iterator[Callable[..., str]]:
             encoding="utf-8",
         )
         procs.append(proc)
+        # readline()은 서버가 아무것도 안 쓰면 막히므로 읽기 스레드와 큐로 60초 제한을 지킨다.
+        lines: queue.Queue[str] = queue.Queue()
+        threading.Thread(target=_pump, args=(proc, lines), daemon=True).start()
         deadline = time.monotonic() + 60
-        assert proc.stdout is not None
-        while time.monotonic() < deadline:
-            line = proc.stdout.readline()
+        while (left := deadline - time.monotonic()) > 0:
+            try:
+                line = lines.get(timeout=left)
+            except queue.Empty:
+                break
             if line.startswith("READY "):
                 return line.split(" ", 1)[1].strip()
-            if not line and proc.poll() is not None:
+            if not line:  # 서버가 stdout을 닫음 (종료)
                 break
         pytest.fail("studio 서버가 60초 안에 READY를 출력하지 않았습니다.")
 
