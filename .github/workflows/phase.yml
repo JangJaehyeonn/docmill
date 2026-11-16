@@ -71,7 +71,7 @@ jobs:
             exit 0
           fi
           next=$((phase + 1))
-          if [ "$next" -gt 5 ]; then
+          if [ "$next" -gt 9 ]; then
             echo "마지막 Phase까지 끝났습니다."
             exit 0
           fi

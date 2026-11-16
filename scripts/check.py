@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -26,6 +27,16 @@ CHECKS: list[tuple[str, list[str]]] = [
     ("mypy", ["uv", "run", "mypy"]),
     ("pytest", ["uv", "run", "pytest", "-q", "-x"]),
 ]
+# studio(앱)가 생기면 Node 쪽 검사도 함께 돌린다. 인수 테스트가 빌드된 studio를 쓰므로 빌드가 pytest보다 먼저다.
+if os.path.exists(os.path.join("studio", "package.json")):
+    # Windows에서는 npm이 npm.cmd라서 경로를 찾아 넘긴다.
+    _NPM = shutil.which("npm") or "npm"
+    CHECKS[3:3] = [
+        ("studio lint", [_NPM, "--prefix", "studio", "run", "lint"]),
+        ("studio typecheck", [_NPM, "--prefix", "studio", "run", "typecheck"]),
+        ("studio test", [_NPM, "--prefix", "studio", "test"]),
+        ("studio build", [_NPM, "--prefix", "studio", "run", "build"]),
+    ]
 
 
 def infer_active_frs() -> str | None:

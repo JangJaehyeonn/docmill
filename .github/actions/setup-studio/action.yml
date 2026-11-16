@@ -1,0 +1,94 @@
+name: Setup docmill studio
+description: >-
+  studio(앱) 개발·테스트 환경을 준비한다. Node 22, rhwp 편집기(셀프 빌드), ONLYOFFICE Document Server(Docker),
+  Python Playwright 브라우저, studio 의존성 설치와 빌드. uv sync 다음에 실행한다.
+inputs:
+  onlyoffice:
+    description: ONLYOFFICE Document Server를 띄울지 (true/false)
+    required: false
+    default: "true"
+  build:
+    description: studio 의존성 설치 뒤 빌드까지 할지 (true/false). 자동 수정 잡은 깨진 빌드를 고쳐야 하므로 false로 부른다.
+    required: false
+    default: "true"
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+
+    - name: rhwp 편집기 빌드 (셀프 호스팅용)
+      shell: bash
+      env:
+        # studio 서버가 이 빌드를 /rhwp/ 아래로 내보내므로 base를 /rhwp/로 빌드한다. 외부 웹폰트는 끈다 (오프라인 동작).
+        # rhwp 저장소 태그와 npm @rhwp/core 버전을 같이 올린다. 버전을 올리면 Phase 0처럼 열기·저장을 다시 확인한다.
+        RHWP_VERSION: "0.9.0"
+      run: |
+        set -euo pipefail
+        dist="$RUNNER_TOOL_CACHE/rhwp-studio-$RHWP_VERSION-base-rhwp"
+        if [ ! -f "$dist/index.html" ]; then
+          tmp=$(mktemp -d)
+          git clone -q --depth 1 --branch "v$RHWP_VERSION" https://github.com/edwardkim/rhwp "$tmp/rhwp"
+          # WASM은 Rust로 빌드하지 않고 같은 버전의 npm 배포본을 쓴다.
+          (cd "$tmp" && npm pack -s "@rhwp/core@$RHWP_VERSION" && tar -xzf rhwp-core-*.tgz)
+          mkdir -p "$tmp/rhwp/pkg"
+          cp "$tmp"/package/rhwp* "$tmp/rhwp/pkg/"
+          (cd "$tmp/rhwp/rhwp-studio" && npm ci --no-audit --no-fund \
+            && RHWP_DISABLE_EXTERNAL_WEBFONTS=1 npx vite build --base /rhwp/)
+          mkdir -p "$dist"
+          cp -r "$tmp/rhwp/rhwp-studio/dist/." "$dist/"
+          rm -rf "$tmp"
+        fi
+        echo "RHWP_STUDIO_DIST=$dist" >> "$GITHUB_ENV"
+
+    - name: ONLYOFFICE Document Server
+      if: inputs.onlyoffice == 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        # host 네트워크: 문서 서버가 127.0.0.1의 studio 서버에서 파일을 받고 저장 콜백을 보낸다.
+        # 문서 서버가 80과 8000 포트를 쓰므로 studio 서버는 다른 포트를 써야 한다.
+        docker run -d --name onlyoffice --network host \
+          -e JWT_ENABLED=false -e ALLOW_PRIVATE_IP_ADDRESS=true -e ALLOW_META_IP_ADDRESS=true \
+          onlyoffice/documentserver:8.3 >/dev/null
+        for _ in $(seq 120); do
+          if curl -sf http://localhost/healthcheck >/dev/null; then
+            echo "DOCMILL_ONLYOFFICE_URL=http://localhost" >> "$GITHUB_ENV"
+            echo "ONLYOFFICE 준비됨"
+            exit 0
+          fi
+          sleep 5
+        done
+        echo "::error::ONLYOFFICE Document Server가 10분 안에 준비되지 않았습니다."
+        docker logs onlyoffice 2>&1 | tail -30
+        exit 1
+
+    - name: Python Playwright 브라우저
+      shell: bash
+      run: |
+        set -euo pipefail
+        if uv run python -c "import playwright" 2>/dev/null; then
+          if ! uv run playwright install --with-deps chromium; then
+            # 고정한 Playwright 버전이 새 러너 이미지(ubuntu 26.04)를 모르면 24.04용 빌드를 쓴다.
+            # 러너에는 Chrome 실행 라이브러리가 이미 있어 의존성 설치는 건너뛴다.
+            echo "PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64" >> "$GITHUB_ENV"
+            export PLAYWRIGHT_HOST_PLATFORM_OVERRIDE=ubuntu24.04-x64
+            uv run playwright install chromium
+          fi
+          # 공유 라이브러리가 빠졌으면 테스트가 아니라 여기서 바로 실패하게 한 번 띄워 본다.
+          uv run python -c "from playwright.sync_api import sync_playwright as s; p=s().start(); p.chromium.launch().close(); p.stop(); print('Chromium 실행 확인')"
+        fi
+
+    - name: studio 의존성 설치와 빌드
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -f studio/package.json ]; then
+          npm --prefix studio ci --no-audit --no-fund
+          if [ "${{ inputs.build }}" = "true" ]; then
+            npm --prefix studio run build
+          fi
+        else
+          echo "studio/가 아직 없습니다 (FR-26 전)."
+        fi

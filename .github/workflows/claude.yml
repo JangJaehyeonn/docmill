@@ -36,6 +36,7 @@ jobs:
           enable-cache: true
       - uses: ./.github/actions/setup-engines
       - run: uv sync --locked
+      - uses: ./.github/actions/setup-studio
       - uses: anthropics/claude-code-action@v1
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -51,7 +52,7 @@ jobs:
           claude_args: >-
             --max-turns 60
             --model ${{ contains(github.event.issue.labels.*.name, 'opus') && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git checkout -q -b claude/*),Bash(git push -u origin claude/*),Bash(git push -q -u origin claude/*),Bash(git push -u -q origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git checkout -q -b claude/*),Bash(git push -u origin claude/*),Bash(git push -q -u origin claude/*),Bash(git push -u -q origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*),Bash(npm --prefix studio:*),Bash(npm ci:*),Bash(npm install:*),Bash(npm run:*),Bash(npx:*),Bash(node:*),Bash(uv run playwright:*)"
 
   mention:
     if: >-
@@ -78,6 +79,7 @@ jobs:
           enable-cache: true
       - uses: ./.github/actions/setup-engines
       - run: uv sync --locked
+      - uses: ./.github/actions/setup-studio
       - name: PR 출처 확인
         id: origin
         env:
@@ -101,4 +103,4 @@ jobs:
           claude_args: >-
             --max-turns 40
             --model claude-opus-5-5
-            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*)"
+            --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*),Bash(npm --prefix studio:*),Bash(npm ci:*),Bash(npm install:*),Bash(npm run:*),Bash(npx:*),Bash(node:*),Bash(uv run playwright:*)"

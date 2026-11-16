@@ -14,3 +14,9 @@
 | `sales_week1.xlsx` | `sales_q3.xlsx`와 같은 내용(머리글 `부서·월·매출`) | FR-09 레시피 저장 |
 
 | `sales_week2.xlsx` | `sales_week1.xlsx`와 같은 형식, 다른 매출 숫자 | FR-10 레시피 실행 |
+
+## meeting_1111.hwp
+
+`meeting_1111.docx`와 같은 문단 11개를 한글(HWP 5.0) 형식으로 담은 파일이다 (FR-35, Phase 6 이후 studio 테스트).
+rhwp-studio 0.9.0에서 새 문서를 만들어 같은 문장을 입력하고 `exportBytes('hwp')`로 저장했다.
+`@rhwp/core` 0.9.0의 `HwpDocument.getTextFileText()`로 읽으면 docx의 문단 텍스트와 같다.

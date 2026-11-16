@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "인수 테스트를 만들 Phase 번호 (1~5)"
+        description: "인수 테스트를 만들 Phase 번호 (1~9)"
         required: true
         type: choice
-        options: ["1", "2", "3", "4", "5"]
+        options: ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
 
 permissions: {}
 
@@ -48,6 +48,12 @@ jobs:
             - 모든 테스트 함수에 `@pytest.mark.fr("FR-xx")`를 붙이세요. 표시가 없으면 테스트 수집이 실패합니다.
             - 아직 구현이 없으므로 테스트는 실패해도 됩니다. 구현 방법이 아니라 사용자가 보는 결과(도구 출력, 생성 파일 내용)를 검증하세요.
             - 샘플 파일은 `tests/fixtures/`의 파일 이름을 쓰고, 없는 파일은 테스트 상단 주석에 필요한 샘플을 적으세요.
+            - area = "studio"인 요구사항(앱 화면)은 `tests/acceptance/conftest.py`의 `start_studio`·`page` 픽스처로 `node studio/out/server.js`를 띄우고 Playwright(동기 API)로 화면을 확인하세요.
+              버튼·입력은 역할과 한국어 이름(`page.get_by_role("button", name="파일 열기")`)으로 찾으세요. CLAUDE.md의 "studio (앱) 규칙" 절이 계약입니다.
+              채팅 에이전트는 테스트 안에서 stream-json(Claude Code `--output-format stream-json`)을 내는 가짜 명령을 만들어 `DOCMILL_STUDIO_AGENT_CMD`로 넘기세요. 실제 Claude를 부르지 마세요.
+              ONLYOFFICE가 필요한 테스트는 `DOCMILL_ONLYOFFICE_URL`이 없으면 실패하도록 두세요 (CI는 항상 띄웁니다).
+            - 문서를 바꾸는 도구 요구사항은 지금처럼 MCP 도구 호출 결과와 생성 파일 내용을 pytest로 확인하세요.
+            - 샘플이 없으면 `tests/acceptance_draft/phase${{ inputs.phase }}/FIXTURES.md`에 필요한 샘플(파일 이름, 내용, 만드는 방법)을 적으세요.
             - 커밋하지 마세요. 파일만 만드세요.
           claude_args: >-
             --max-turns 120

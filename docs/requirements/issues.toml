@@ -353,3 +353,379 @@ acceptance = [
   "Docker 이미지 하나로 엔진이 포함된 HTTP 모드가 실행되고, 컨테이너 안에서 원격 MCP 클라이언트가 도구 목록을 조회할 수 있다",
   "배포 스크립트는 새 이미지의 헬스 체크가 시간 안에 통과하지 않으면 이전 이미지로 되돌리고 0이 아닌 종료 코드를 돌려준다 (가짜 이미지로 테스트)",
 ]
+
+# ── Phase 6: studio 기본 (문서 화면 + 채팅 + 대표 기능 1차) ──
+# 앱 화면 요구사항의 인수 테스트는 tests/acceptance/conftest.py의 start_studio·page 픽스처로
+# `node studio/out/server.js`를 띄우고 Playwright로 확인한다. 문서를 바꾸는 기능은 docmill 도구로 만들고 pytest로 확인한다.
+
+[[requirement]]
+id = "FR-26"
+title = "studio 앱 골격과 파일 열기"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "`studio/`에 Electron + React + Vite 앱을 만든다. `node studio/out/server.js --port <포트>`가 화면을 HTTP로 내보내고 `READY <url>`을 출력한다 (CLAUDE.md studio 규칙). 작업 폴더(DOCMILL_STUDIO_WORKSPACE)의 파일을 목록에서 열거나 끌어다 놓아 열고, 연 파일은 위쪽 탭으로 보인다. 최근 파일 목록을 시작 화면에 보여준다."
+depends = ["FR-01"]
+acceptance = [
+  "서버가 60초 안에 READY를 출력하고, 그 주소를 열면 시작 화면에 '파일 열기' 버튼과 작업 폴더의 xlsx·pptx·docx·hwp 파일 목록이 보인다",
+  "목록에서 파일 두 개를 열면 탭 두 개가 생기고, 탭을 누르면 그 파일이 활성 탭이 된다",
+  "앱을 다시 띄워도 방금 연 파일이 최근 파일 목록 맨 위에 있다",
+  "작업 폴더 밖의 경로(../ 포함)를 열려고 하면 거부하고 이유를 보여준다",
+  "`npm --prefix studio run lint`, `typecheck`, `test`, `build`가 모두 통과한다",
+]
+
+[[requirement]]
+id = "FR-27"
+title = "엑셀·PPT·워드 편집 화면 (ONLYOFFICE)"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "xlsx·pptx·docx 탭은 ONLYOFFICE Docs 편집기(DOCMILL_ONLYOFFICE_URL)로 연다. studio 서버가 문서 서버에 파일을 내주고(`DOCMILL_STUDIO_PUBLIC_HOST`), 저장 콜백을 받아 작업 폴더의 원본 파일을 갱신한다. 문서 서버가 없으면 탭에 연결 안내를 보여주고 앱은 계속 동작한다."
+depends = ["FR-26"]
+acceptance = [
+  "sales_q3.xlsx·company_intro.pptx·meeting_1111.docx를 열면 각 탭에서 ONLYOFFICE 편집기가 문서 준비 완료 상태가 된다",
+  "편집기 API로 셀 하나를 바꾸고 저장하면 60초 안에 작업 폴더의 원본 xlsx에서 그 셀 값이 바뀐다",
+  "DOCMILL_ONLYOFFICE_URL이 없으면 xlsx 탭에 '문서 서버에 연결되지 않았어요' 안내가 보이고 다른 탭은 정상 동작한다",
+]
+
+[[requirement]]
+id = "FR-28"
+title = "한글 편집 화면 (rhwp)"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "hwp·hwpx 탭은 `@rhwp/editor`로 셀프 호스팅한 rhwp 편집기(RHWP_STUDIO_DIST를 /rhwp/로 제공)를 연다. 저장하면 작업 폴더의 원본 파일을 갱신한다. 외부 사이트(edwardkim.github.io)는 쓰지 않는다."
+depends = ["FR-26"]
+acceptance = [
+  "샘플 hwp를 열면 rhwp 편집기에 첫 쪽이 그려지고 쪽 수가 표시된다",
+  "편집기 API로 글자를 넣고 저장하면 작업 폴더의 hwp 파일이 바뀌고, 다시 열면 넣은 글자가 보인다",
+  "화면이 불러오는 rhwp 자원은 모두 studio 서버 주소에서 온다 (네트워크 요청 검사)",
+]
+
+[[requirement]]
+id = "FR-29"
+title = "채팅 패널과 에이전트 연결"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "오른쪽 채팅 패널에서 보낸 메시지를 에이전트 명령(DOCMILL_STUDIO_AGENT_CMD, 기본 `claude -p --output-format stream-json --verbose`)에 넘긴다. 열린 탭 목록과 활성 파일 경로를 함께 넘기고, 에이전트에는 docmill MCP 서버를 연결한다. stream-json의 도구 호출·결과를 채팅에 카드로 보여주고, 결과로 바뀌거나 생긴 파일은 탭을 새로 고치거나 새 탭으로 연다. Anthropic API 키는 쓰지 않는다."
+depends = ["FR-26"]
+acceptance = [
+  "가짜 에이전트(stream-json으로 도구 호출 1개와 결과, 마지막 메시지를 내는 명령)를 넣고 메시지를 보내면 채팅에 사용자 말풍선, 도구 카드(도구 이름 표시), 마지막 메시지가 순서대로 보인다",
+  "도구 결과에 새 파일 경로가 있으면 그 파일이 새 탭으로 열리고, 기존 파일 경로면 그 탭이 다시 불러와진다",
+  "에이전트에 넘긴 입력에 활성 파일 경로와 열린 탭 목록이 들어 있다 (가짜 에이전트가 받은 입력을 파일로 남겨 확인)",
+  "에이전트 명령이 실패하거나 120초 안에 끝나지 않으면 채팅에 실패 이유가 보이고 앱은 계속 동작한다",
+  "ANTHROPIC_API_KEY가 설정돼 있어도 에이전트 실행 환경에 넘기지 않는다",
+]
+
+[[requirement]]
+id = "FR-30"
+title = "열면 먼저 제안"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "파일을 열면 docmill 도구 `suggest_actions`가 파일 종류와 내용으로 할 수 있는 작업 최대 3개를 고른다 (규칙 기반, AI 없음). 채팅 패널 맨 위에 버튼으로 보이고, 누르면 그 작업이 메시지로 실행된다."
+depends = ["FR-26", "FR-29", "FR-05", "FR-06"]
+acceptance = [
+  "suggest_actions에 meeting_1111.docx를 주면 '할 일 표 만들기'(doc_to_task_table)를 포함한 1~3개 제안을 돌려준다",
+  "suggest_actions에 sales_q3.xlsx를 주면 '보고서 PPT 만들기'(excel_to_report_ppt)를 포함한 제안을 돌려준다",
+  "같은 파일이면 같은 제안을 같은 순서로 돌려준다",
+  "studio에서 회의록을 열면 채팅 패널에 제안 버튼이 보이고, 버튼을 누르면 그 작업 문구가 사용자 메시지로 보내진다",
+]
+
+[[requirement]]
+id = "FR-31"
+title = "AI 편집 범위 지키기"
+area = "검증"
+priority = "필수"
+phase = 6
+model = "opus"
+detail = "docmill 도구 `guarded_edit`: 문서와 편집 범위(슬라이드·도형 id, 시트·셀 범위, 문단 번호)와 편집 내용을 받는다. 편집 전 범위 밖 요소의 지문(정규화한 XML 해시)을 남기고, 편집 후 범위 밖이 바뀌었으면 그 부분을 원래대로 되돌린 뒤 무엇을 되돌렸는지 돌려준다. Microsoft Research DELEGATE-52가 보고한 '긴 편집 중 문서 손상'을 막는 장치다."
+depends = ["FR-03", "FR-07"]
+acceptance = [
+  "company_intro.pptx에서 슬라이드 2 제목만 바꾸는 편집을 하면 결과의 다른 슬라이드·도형 XML은 원본과 같고, 결과에 '범위 밖 변경 0곳'이 나온다",
+  "편집 내용이 범위 밖 도형까지 바꾸도록 만든 경우(테스트용 편집 함수), 범위 밖 변경을 되돌리고 되돌린 위치 목록을 돌려준다",
+  "xlsx 셀 범위와 docx 문단 범위에도 같은 동작을 한다",
+  "같은 입력이면 결과 파일이 바이트 단위로 같다",
+]
+
+[[requirement]]
+id = "FR-32"
+title = "미리 보고 적용"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "에이전트가 파일을 바꾸면 원본을 바로 덮지 않고 사본에 적용한다. 채팅에 바뀌는 내용 요약(바뀐 슬라이드·셀·문단 수, guarded_edit 결과)과 [적용]·[취소] 버튼을 보여준다. 적용하면 원본을 바꾸고 탭을 새로 고치며, 취소하면 사본을 지운다."
+depends = ["FR-29", "FR-31"]
+acceptance = [
+  "가짜 에이전트가 파일을 바꾸는 도구 결과를 내면 원본은 그대로이고 채팅에 미리보기 카드와 적용·취소 버튼이 보인다",
+  "적용을 누르면 원본이 사본 내용으로 바뀌고 탭이 다시 불러와진다",
+  "취소를 누르면 원본은 그대로이고 사본 파일이 작업 폴더에 남지 않는다",
+]
+
+[[requirement]]
+id = "FR-33"
+title = "검토할 곳만 짚어 주기"
+area = "검증"
+priority = "필수"
+phase = 6
+model = "opus"
+detail = "docmill 도구 `review_map`: 문서에서 사람이 확인해야 할 곳만 골라 위치와 이유로 돌려준다. 이유는 (1) 출처(provenance)가 없는 숫자, (2) 근거 없는 예측·평가 문장(규칙 기반: '예상', '전망', '증가할', '최고' 등 표현 + 출처 없음), (3) 기준 버전과 비교해 바뀐 부분. AI 문서 검토에 주당 약 4시간이 든다는 조사(Templafy)에 대응한다."
+depends = ["FR-21", "FR-08"]
+acceptance = [
+  "excel_to_report_ppt 결과에 출처 없는 숫자를 하나 넣은 문서를 주면 그 숫자의 위치가 '출처 없음'으로 나오고, 출처가 있는 숫자는 나오지 않는다",
+  "'다음 달도 증가가 예상된다' 같은 문장이 있으면 '근거 없는 예측'으로 나온다",
+  "기준 버전을 주면 바뀐 숫자·문장이 '이번에 바뀜'으로 나오고, 바뀌지 않은 부분은 나오지 않는다",
+  "같은 입력이면 같은 목록을 같은 순서로 돌려준다",
+]
+
+[[requirement]]
+id = "FR-34"
+title = "보내기 전 안전 점검"
+area = "검증"
+priority = "필수"
+phase = 6
+detail = "docmill 도구 `preflight`: 숫자 검증(원본이 있으면), 날짜와 요일 일치, 개인정보 노출(주민등록번호·전화번호·계좌번호·이메일), 남은 자리표시자(TBD, [작성], ○○○), 빈 제목을 한 번에 점검해 항목별 통과·주의·실패와 위치를 돌려준다. studio에는 [보내기 전 점검] 버튼으로 붙인다."
+depends = ["FR-08"]
+acceptance = [
+  "'2026. 11. 16.(화)'처럼 날짜와 요일이 안 맞는 문장이 있으면 실패와 위치가 나온다 (2026-11-16은 월요일)",
+  "주민등록번호 형식 문자열이 있으면 개인정보 실패가 나오고, 결과에는 원래 번호를 그대로 쓰지 않는다",
+  "TBD·○○○ 같은 자리표시자가 남아 있으면 주의가 나온다",
+  "문제가 없는 고정 샘플은 모든 항목이 통과다",
+  "studio에서 [보내기 전 점검]을 누르면 채팅에 항목별 결과가 보인다",
+]
+
+[[requirement]]
+id = "FR-35"
+title = "한글 파일도 업무 도구에서 쓰기"
+area = "업무 도구"
+priority = "필수"
+phase = 6
+detail = "doc_to_task_table·verify_numbers·review_map·preflight가 hwp·hwpx 입력도 받는다. 한글 파일은 rhwp로 텍스트·표를 읽는다 (rhwp CLI 또는 @rhwp/core). 결과 형식은 docx 입력과 같다."
+depends = ["FR-06", "FR-33", "FR-34"]
+acceptance = [
+  "meeting_1111.docx와 같은 내용의 meeting_1111.hwp를 doc_to_task_table에 주면 docx와 같은 할 일 표와 제외 목록이 나온다",
+  "hwp 문서에도 preflight와 review_map이 같은 규칙으로 동작한다",
+  "읽을 수 없는 hwp를 주면 실패 단계와 이유를 도구 결과로 돌려준다 (서버는 계속 동작)",
+]
+
+[[requirement]]
+id = "FR-36"
+title = "여러 파일 넘나들기"
+area = "studio"
+priority = "필수"
+phase = 6
+detail = "채팅에서 다른 탭의 파일을 이름으로 가리킬 수 있고(예: '할일 표로 주간 보고 만들어줘'), 결과 파일은 새 탭으로 열린다. 한 대화에서 hwp → xlsx → pptx로 이어지는 작업을 할 수 있다."
+depends = ["FR-29", "FR-30"]
+acceptance = [
+  "열린 탭이 여러 개일 때 에이전트 입력에 모든 탭의 이름과 경로가 들어 있다",
+  "가짜 에이전트가 도구 두 개를 이어서 호출하는 대화(회의록 → 할 일 xlsx → 보고 pptx)를 재생하면 탭이 두 개 더 생기고, 마지막 탭이 활성 탭이 된다",
+]
+
+# ── Phase 7: 차별화 (살아 있는 문서, 한국 문서 규칙, 신뢰) ──
+
+[[requirement]]
+id = "FR-37"
+title = "살아 있는 문서 (원본이 바뀌면 같이 바뀜)"
+area = "검증"
+priority = "필수"
+phase = 7
+model = "opus"
+detail = "docmill 도구 `refresh_links`: 문서의 provenance(FR-21)를 연결로 보고, 원본 엑셀을 다시 집계해 바뀐 숫자와 그 숫자로 만든 문장(비중·합계 문장)을 문서에서 고친다. 바뀐 위치 목록(이전 값 → 새 값)을 돌려준다. studio는 원본 파일이 저장되면 연결된 열린 문서에 [새 숫자로 고치기]를 제안한다. AI는 부르지 않는다."
+depends = ["FR-21", "FR-32"]
+acceptance = [
+  "excel_to_report_ppt 결과를 만든 뒤 원본 sales_q3.xlsx의 영업1팀 값 하나를 바꾸고 refresh_links를 실행하면 그래프 값·합계·비중이 새 원본으로 다시 집계한 값과 같아진다",
+  "바뀐 위치 목록에 이전 값과 새 값이 나오고, 바뀌지 않은 숫자는 나오지 않는다",
+  "원본이 바뀌지 않았으면 파일이 바이트 단위로 그대로이고 목록은 비어 있다",
+  "studio에서 원본 xlsx를 저장하면 연결된 열린 pptx 탭에 '원본이 바뀌었어요' 제안이 보인다",
+]
+
+[[requirement]]
+id = "FR-38"
+title = "공문서 작성 규칙 검사·교정"
+area = "양식"
+priority = "필수"
+phase = 7
+detail = "docmill 도구 `check_official_style`: 한글·워드 공문을 행정업무운영편람 규칙으로 검사하고, 고칠 수 있는 것은 고친다. 규칙: 날짜 표기(2026. 11. 16.), 시간 표기(14:30), 항목 기호 순서(1. → 가. → 1) → 가) → (1) → (가)), 금액 표기(금10,150원(금일만백오십원)), 본문 끝 '끝.' 표시. 결과는 위반 위치·규칙·고친 값."
+depends = ["FR-35"]
+acceptance = [
+  "'2026-11-16', '2026년 11월 16일' 표기를 '2026. 11. 16.'로 고치고 위치를 돌려준다",
+  "항목 기호 순서가 어긋난 문단(1. 아래 바로 1))을 위반으로 알려준다",
+  "금액 '10,150원'을 '금10,150원(금일만백오십원)'으로 고친다",
+  "본문 끝에 '끝.'이 없으면 위반으로 알려주고, 고치기를 켜면 붙인다",
+  "hwp와 docx 입력 모두 같은 결과를 낸다",
+]
+
+[[requirement]]
+id = "FR-39"
+title = "개인정보 자동 가림"
+area = "보안"
+priority = "필수"
+phase = 7
+detail = "studio가 에이전트에 문서 내용을 넘기기 전에 개인정보(주민등록번호·전화번호·계좌번호·이메일·사람이 등록한 이름 목록)를 `[주민번호1]` 같은 자리표로 바꾸고, 에이전트 결과를 문서에 쓸 때 원래 값으로 되돌린다. 대응표는 작업 폴더 밖 메모리에만 두고 로그에 쓰지 않는다. docmill 도구 `mask_text`/`unmask_text`로 만든다."
+depends = ["FR-29", "FR-34"]
+acceptance = [
+  "주민등록번호·전화번호·이메일이 든 문장을 mask_text에 주면 원래 값이 하나도 남지 않은 문장과 자리표 목록이 나온다",
+  "unmask_text로 되돌리면 원래 문장과 같다",
+  "가짜 에이전트가 받은 입력에 원래 개인정보가 들어 있지 않다",
+  "실행 로그(SQLite)와 studio 로그에 원래 값이 남지 않는다",
+]
+
+[[requirement]]
+id = "FR-40"
+title = "문서 안 숫자 모순 찾기"
+area = "검증"
+priority = "필수"
+phase = 7
+detail = "docmill 도구 `find_contradictions`: 원본 없이 문서 안에서 숫자끼리 맞지 않는 곳을 찾는다. (1) 표의 항목 합과 합계 행·열이 다름, (2) 본문의 비율·증감(예: '30% 증가')이 같은 문서의 표에서 계산한 값과 다름, (3) 같은 항목의 숫자가 쪽·슬라이드마다 다름."
+depends = ["FR-08"]
+acceptance = [
+  "합계 행이 항목 합과 다른 표가 있는 docx를 주면 그 합계 셀 위치와 계산한 값이 나온다",
+  "본문에 '30% 증가'라고 했지만 표에서 계산하면 25%인 경우를 찾는다",
+  "같은 항목이 두 슬라이드에서 다른 숫자로 나오면 두 위치를 함께 돌려준다",
+  "모순이 없는 고정 샘플은 빈 목록을 돌려준다",
+]
+
+[[requirement]]
+id = "FR-41"
+title = "버전 비교 요약"
+area = "검증"
+priority = "권장"
+phase = 7
+detail = "docmill 도구 `compare_versions`: 같은 문서의 두 버전에서 바뀐 숫자·문장·표 셀을 위치와 함께 돌려준다. studio는 이 결과를 표로 보여주고 에이전트에게 한 줄 요약을 요청할 수 있다 (요약은 선택)."
+depends = ["FR-33"]
+acceptance = [
+  "숫자 2개와 문장 1개를 바꾼 두 버전을 주면 정확히 그 3곳이 이전 값·새 값과 함께 나온다",
+  "같은 파일 두 개를 주면 빈 목록이다",
+  "pptx·xlsx·docx·hwp 모두 동작한다",
+]
+
+[[requirement]]
+id = "FR-42"
+title = "이미지 생성·삽입"
+area = "studio"
+priority = "권장"
+phase = 7
+detail = "docmill 도구 `insert_image`: 설명 문장으로 이미지를 만들어(제공자 교체 가능: OpenAI·Gemini 등, 키는 환경 변수) 지정한 슬라이드·문단에 넣는다. 키가 없으면 기능이 꺼지고 이유를 돌려준다. 테스트는 가짜 제공자로 한다."
+depends = ["FR-31"]
+acceptance = [
+  "가짜 제공자(고정 PNG를 돌려줌)로 pptx 슬라이드 3에 이미지를 넣으면 그 슬라이드에 이미지가 하나 생기고 다른 슬라이드는 그대로다 (guarded_edit 경유)",
+  "docx·hwp 문단 뒤에도 넣을 수 있다",
+  "제공자 키가 없으면 실패하지 않고 '이미지 생성이 꺼져 있어요'와 필요한 환경 변수 이름을 돌려준다",
+]
+
+[[requirement]]
+id = "FR-43"
+title = "결재 전 리허설 (사람별 기준)"
+area = "검증"
+priority = "필수"
+phase = 7
+detail = "docmill 도구 `register_reviewer`·`rehearse_review`: 예전 결재 코멘트(docx 메모, 텍스트 목록)에서 사람별 기준을 규칙으로 기록한다 (예: 1쪽·N장 초과 '길다', 출처 없는 숫자 '근거 없다', 결론이 뒤에 있음). 올리기 전에 그 사람 기준으로 문서를 검사해 걸리는 곳을 돌려준다."
+depends = ["FR-33"]
+acceptance = [
+  "'너무 길다', '한 장으로 줄여'가 든 코멘트 목록으로 등록하면 그 사람의 길이 기준이 저장된다",
+  "기준보다 긴 문서를 rehearse_review에 주면 '길이 초과'와 현재 분량이 나온다",
+  "'근거가 뭐야'가 든 코멘트로 등록한 사람에게는 출처 없는 숫자가 걸린다 (review_map 결과 사용)",
+  "등록하지 않은 사람 이름이면 실패 대신 '기준이 없어요'를 돌려준다",
+]
+
+# ── Phase 8: 편의 (손을 더 줄이기) ──
+
+[[requirement]]
+id = "FR-44"
+title = "끌어다 놓기로 문서에 넣기"
+area = "studio"
+priority = "권장"
+phase = 8
+detail = "엑셀 탭의 셀 범위를 PPT·워드·한글 탭으로 끌어다 놓으면 docmill 도구로 표나 그래프를 만들어 넣고, provenance로 원본과 연결한다 (FR-37 대상이 된다)."
+depends = ["FR-37"]
+acceptance = [
+  "sales_q3.xlsx의 A1:C16 범위를 pptx 탭에 놓으면 그 슬라이드에 표 또는 그래프가 생기고, 숫자마다 provenance가 기록된다",
+  "놓은 뒤 원본을 바꾸면 FR-37 제안이 그 문서에도 뜬다",
+]
+
+[[requirement]]
+id = "FR-45"
+title = "나를 기억 (부서·결재 라인·양식)"
+area = "studio"
+priority = "권장"
+phase = 8
+detail = "부서명, 이름·직함, 결재 라인, 기본 양식, 문체를 설정 화면에서 한 번 입력하면 작업 폴더의 설정 파일에 저장하고, 에이전트 입력과 preflight·check_official_style에 쓴다."
+depends = ["FR-29", "FR-38"]
+acceptance = [
+  "설정에 부서·이름을 저장하고 앱을 다시 띄우면 값이 그대로 있다",
+  "에이전트 입력에 저장한 부서·결재 라인이 들어 있다",
+  "preflight가 문서의 직함이 설정과 다르면 주의를 낸다",
+]
+
+[[requirement]]
+id = "FR-46"
+title = "끝까지 보내기 (PDF·폴더·메일 초안)"
+area = "studio"
+priority = "권장"
+phase = 8
+detail = "[내보내기]로 PDF 변환(ONLYOFFICE 또는 rhwp), 지정 폴더 저장, 메일 초안(.eml 파일 생성, 직접 보내지 않음)을 한 번에 한다. 보내기 전에 preflight를 자동으로 돌리고, 실패가 있으면 확인을 받는다."
+depends = ["FR-34", "FR-27", "FR-28"]
+acceptance = [
+  "pptx를 PDF로 내보내면 작업 폴더에 PDF가 생기고 쪽 수가 슬라이드 수와 같다",
+  "메일 초안을 고르면 첨부가 든 .eml 파일이 생기고 실제로 메일을 보내지 않는다",
+  "preflight에 실패가 있으면 내보내기 전에 확인 창이 보인다",
+]
+
+[[requirement]]
+id = "FR-47"
+title = "근거 있는 문서 (문장 출처)"
+area = "검증"
+priority = "권장"
+phase = 8
+model = "opus"
+detail = "docmill 도구가 만든 문장(요약·할 일·보고 문장)마다 근거가 된 원본 위치(회의록 문단, 엑셀 셀)를 provenance에 문장 단위로 기록한다. studio에서 문장을 누르면 근거 위치가 원본 탭에서 강조된다. 출처 없는 문장은 review_map에 걸린다."
+depends = ["FR-21", "FR-33", "FR-36"]
+acceptance = [
+  "doc_to_task_table 결과의 각 행에 원본 회의록의 문단 위치가 기록된다",
+  "excel_to_report_ppt 요약 문장에 근거 셀 범위가 기록된다",
+  "studio에서 결과 문장을 누르면 원본 탭이 활성화되고 근거 위치가 강조된다",
+]
+
+[[requirement]]
+id = "FR-48"
+title = "비슷한 문서 찾기"
+area = "studio"
+priority = "선택"
+phase = 8
+detail = "새 문서를 만들거나 작업을 시작할 때 작업 폴더에서 비슷한 예전 문서(제목·구조·양식)를 찾아 '이걸로 시작할까요?'를 제안한다. 직장인 83%가 기존 문서를 다시 만든다는 조사(M-Files)에 대응한다. 규칙·텍스트 유사도 기반, AI 없음."
+depends = ["FR-26"]
+acceptance = [
+  "작업 폴더에 주간 보고 3개가 있을 때 '주간 보고' 작업을 시작하면 가장 최근 것이 첫 제안이다",
+  "같은 폴더면 같은 순서로 제안한다",
+]
+
+# ── Phase 9: 자동화 ──
+
+[[requirement]]
+id = "FR-49"
+title = "보고 배우는 자동화"
+area = "레시피"
+priority = "선택"
+phase = 9
+model = "opus"
+detail = "studio에서 일어난 도구 호출과 편집을 실행 로그에 남기고, 같은 순서의 작업이 3번 이상 반복되면 '매번 하시네요, 레시피로 저장할까요?'를 제안한다. 저장하면 save_recipe와 같은 형식의 레시피가 된다."
+depends = ["FR-09", "FR-29"]
+acceptance = [
+  "같은 도구 호출 순서(입력 파일만 다름)를 3번 실행하면 제안이 뜨고, 2번이면 뜨지 않는다",
+  "제안을 수락하면 입력 파일이 $변수로 바뀐 레시피가 저장되고 run_recipe로 다시 실행된다",
+]
+
+[[requirement]]
+id = "FR-50"
+title = "폴더 감시 자동 실행"
+area = "레시피"
+priority = "선택"
+phase = 9
+detail = "레시피에 감시 폴더를 지정하면 그 폴더에 맞는 형식의 새 파일이 들어올 때 레시피를 자동으로 실행하고 결과를 결과 폴더에 저장한다. 실행 전 점검(FR-11)에 실패하면 실행하지 않고 기록만 남긴다."
+depends = ["FR-10", "FR-11", "FR-14"]
+acceptance = [
+  "감시 폴더에 sales_week47.xlsx를 넣으면 60초 안에 결과 폴더에 보고서가 생기고 실행 기록에 남는다",
+  "열이 빠진 파일을 넣으면 결과를 만들지 않고 점검 실패 기록만 남는다",
+  "같은 파일을 두 번 처리하지 않는다",
+]
