@@ -97,7 +97,13 @@ async function serveStatic(
 /** studio HTTP 서버를 만든다 (listen 은 호출자가 한다). */
 export function createApp(opts: AppOptions): http.Server {
   return http.createServer((req, res) => {
-    const pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    let pathname: string;
+    try {
+      pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+    } catch {
+      sendJson(res, 400, { error: "잘못된 요청 주소입니다." });
+      return;
+    }
     const task = pathname.startsWith("/api/")
       ? handleApi(opts, req, res, pathname)
       : serveStatic(opts, res, pathname);

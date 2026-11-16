@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { matchByName } from "./pick";
 import { closeTab, openTab, type TabState } from "./tabs";
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
+  if (!res.ok) throw new Error(`${url} 요청 실패 (${res.status})`);
   return (await res.json()) as T;
 }
 
-function baseName(p: string): string {
-  return p.slice(p.lastIndexOf("/") + 1);
-}
+const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
 
 /** studio 화면: 위쪽 탭, 왼쪽 작업 폴더 파일 목록, 가운데 시작 화면(최근 파일). */
 export function App() {
@@ -16,6 +16,8 @@ export function App() {
   const [recent, setRecent] = useState<string[]>([]);
   const [tabState, setTabState] = useState<TabState>({ tabs: [], active: null });
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [choices, setChoices] = useState<string[]>([]);
   const picker = useRef<HTMLInputElement>(null);
 
   const refresh = useCallback(async () => {
@@ -25,8 +27,20 @@ export function App() {
     ]);
     setFiles(f.files);
     setRecent(r.recent);
+    setLoadFailed(false);
     return f.files;
   }, []);
+
+  const refreshOrReport = useCallback(async (): Promise<boolean> => {
+    try {
+      await refresh();
+      return true;
+    } catch {
+      setLoadFailed(true);
+      setError(LOAD_ERROR);
+      return false;
+    }
+  }, [refresh]);
 
   const openPath = useCallback(
     async (path: string) => {
@@ -41,25 +55,39 @@ export function App() {
         return;
       }
       setError(null);
+      setChoices([]);
       const file = { path: body.path, name: body.name };
       setTabState((s) => openTab(s, file));
-      await refresh();
+      await refreshOrReport();
     },
-    [refresh],
+    [refreshOrReport],
   );
 
-  useEffect(() => {
+  const load = useCallback(async () => {
     const target = new URLSearchParams(window.location.search).get("open");
-    void refresh().then(() => {
-      if (target) void openPath(target);
-    });
-  }, [refresh, openPath]);
+    if (!(await refreshOrReport())) return;
+    setError(null);
+    if (target) await openPath(target);
+  }, [refreshOrReport, openPath]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
 
   // 브라우저는 파일의 전체 경로를 알려 주지 않으므로 이름으로 작업 폴더의 파일을 찾는다.
+  // 같은 이름이 여러 개면 다른 파일을 잘못 열지 않도록 사용자가 상대 경로로 고르게 한다.
   const openByName = (name: string): void => {
-    const match = files.find((f) => baseName(f) === name);
-    if (match) void openPath(match);
-    else setError(`'${name}' 파일은 작업 폴더에 없습니다. 작업 폴더 안의 파일만 열 수 있습니다.`);
+    const matches = matchByName(files, name);
+    if (matches.length === 1 && matches[0] !== undefined) {
+      setChoices([]);
+      void openPath(matches[0]);
+    } else if (matches.length > 1) {
+      setError(null);
+      setChoices(matches);
+    } else {
+      setChoices([]);
+      setError(`'${name}' 파일은 작업 폴더에 없습니다. 작업 폴더 안의 파일만 열 수 있습니다.`);
+    }
   };
 
   const onDrop = (e: React.DragEvent): void => {
@@ -99,7 +127,30 @@ export function App() {
       {error && (
         <div role="alert" className="alert">
           {error}
+          {loadFailed && (
+            <button type="button" onClick={() => void load()}>
+              다시 시도
+            </button>
+          )}
         </div>
+      )}
+
+      {choices.length > 0 && (
+        <section role="region" aria-label="열 파일 고르기" className="alert">
+          <p>같은 이름의 파일이 여러 개 있습니다. 열 파일을 고르세요.</p>
+          <ul>
+            {choices.map((f) => (
+              <li key={f}>
+                <button type="button" className="file" onClick={() => void openPath(f)}>
+                  {f}
+                </button>
+              </li>
+            ))}
+          </ul>
+          <button type="button" onClick={() => setChoices([])}>
+            취소
+          </button>
+        </section>
       )}
 
       <div className="body">
