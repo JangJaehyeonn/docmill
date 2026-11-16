@@ -22,6 +22,7 @@ from docmill.inputschema import (
     apply_map_to_columns,
     read_input_schema,
     suggest_mapping,
+    using_column_map,
 )
 from docmill.recipes import RECIPE_TOOLS, RecipeError, recipes_dir
 from docmill.runlog import current_run_id, new_run_id, reset_current_step, set_current_step
@@ -125,11 +126,13 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
     source = Path(input)
     if not needed or source.suffix.lower() != ".xlsx" or not source.is_file():
         return  # nothing to check; the step itself reports unreadable input
-    with tempfile.TemporaryDirectory(prefix="docmill-preflight-") as tmp:
+    mapping = active_column_map()
+    # Read the raw header; the map is applied exactly once below.
+    with tempfile.TemporaryDirectory(prefix="docmill-preflight-") as tmp, using_column_map(None):
         rows = _read_sheet(source, Path(tmp).resolve())
     header = [str(c).strip() if c is not None else "" for c in (rows[0] if rows else [])]
     try:
-        mapped = apply_map_to_columns(header, active_column_map())
+        mapped = apply_map_to_columns(header, mapping)
     except SchemaError as exc:
         raise RecipeError("preflight", str(exc)) from exc
     missing = [name for name in needed if name not in mapped]

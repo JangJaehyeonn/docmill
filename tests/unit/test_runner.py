@@ -162,6 +162,25 @@ def test_preflight_reports_missing_columns_before_any_step(
     assert called == [] and not (tmp_path / "out").exists()
 
 
+def test_preflight_applies_column_map_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from docmill.inputschema import map_header, using_column_map
+
+    # Like the real _read_sheet: the active map is already applied to the header it returns.
+    monkeypatch.setattr(
+        runner, "_read_sheet", lambda source, workdir: map_header([["부서", "금액"], ["영업", 1]])
+    )
+    src = tmp_path / "in.xlsx"
+    src.write_bytes(b"x")
+    steps = [
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": "$input", "group_by": "부서", "value": "매출"},
+        }
+    ]
+    with using_column_map({"금액": "매출"}):
+        runner.preflight(steps, str(src))  # a valid map must not be rejected
+
+
 def test_preflight_includes_verify_numbers_columns(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
