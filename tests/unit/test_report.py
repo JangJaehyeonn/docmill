@@ -133,6 +133,79 @@ def test_copy_failure_leaves_no_partial_output(
     assert not [p for p in (tmp_path / "outputs").iterdir()]
 
 
+def test_preview_png_is_published_next_to_pptx(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+
+    def fake_preview(_built: Path, workdir: Path) -> Path:
+        png = workdir / "first.png"
+        png.write_bytes(b"\x89PNG")
+        return png
+
+    monkeypatch.setattr(report, "_render_preview", fake_preview)
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    preview = Path(out["preview"])
+    assert preview.suffix == ".png" and preview.read_bytes() == b"\x89PNG"
+    assert preview.with_suffix(".pptx") == Path(out["path"])
+
+
+def test_preview_failure_does_not_fail_report(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    monkeypatch.setattr(report, "_render_preview", lambda *_a: "렌더 실패")
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    assert "error" not in out
+    assert out["preview_error"] == "렌더 실패"
+    assert "preview" not in out
+    assert Path(out["path"]).exists()
+
+
+def test_preview_publish_failure_keeps_report_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+
+    def fake_preview(_built: Path, workdir: Path) -> Path:
+        png = workdir / "first.png"
+        png.write_bytes(b"\x89PNG")
+        return png
+
+    monkeypatch.setattr(report, "_render_preview", fake_preview)
+    real_publish = report._publish
+
+    def flaky_publish(src: Path, dst: Path) -> None:
+        if dst.suffix == ".png":
+            raise OSError("disk full")
+        real_publish(src, dst)
+
+    monkeypatch.setattr(report, "_publish", flaky_publish)
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    assert "error" not in out
+    assert "disk full" in out["preview_error"]
+    assert "preview" not in out
+    assert Path(out["path"]).exists()
+
+
 @pytest.mark.parametrize(
     ("overrides", "step"),
     [
