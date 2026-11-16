@@ -37,6 +37,7 @@ def test_history_table(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
             status="ok",
             duration_ms=1500,
             ai_used=False,
+            recipe="R",
             home=tmp_path,
         )
     out = runner.invoke(app, ["history", "R"]).output
