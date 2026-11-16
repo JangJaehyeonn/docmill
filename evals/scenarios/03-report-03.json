@@ -1,0 +1,13 @@
+{
+  "id": "report-03",
+  "request": "sales_q3.xlsx 담당자별 매출로 슬라이드 3장짜리 보고서를 만들어 주세요.",
+  "expected": {
+    "tool": "excel_to_report_ppt",
+    "args": {
+      "input": "sales_q3.xlsx",
+      "group_by": "담당자",
+      "value": "매출",
+      "slides": 3
+    }
+  }
+}

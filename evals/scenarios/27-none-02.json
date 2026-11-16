@@ -1,0 +1,8 @@
+{
+  "id": "none-02",
+  "request": "엑셀에서 VLOOKUP 함수는 어떻게 쓰는 거야?",
+  "expected": {
+    "tool": null,
+    "args": {}
+  }
+}

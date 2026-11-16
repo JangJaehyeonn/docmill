@@ -1,0 +1,11 @@
+{
+  "id": "run-04",
+  "request": "지난달에 저장한 monthly_sales 레시피를 sales_q3.xlsx 입력으로 그대로 반복해줘.",
+  "expected": {
+    "tool": "run_recipe",
+    "args": {
+      "recipe": "monthly_sales",
+      "input": "sales_q3.xlsx"
+    }
+  }
+}

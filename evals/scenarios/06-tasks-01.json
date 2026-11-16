@@ -1,0 +1,10 @@
+{
+  "id": "tasks-01",
+  "request": "meeting_1111.docx 회의록에서 할 일이랑 담당자, 마감일을 표로 뽑아줘.",
+  "expected": {
+    "tool": "doc_to_task_table",
+    "args": {
+      "input": "meeting_1111.docx"
+    }
+  }
+}

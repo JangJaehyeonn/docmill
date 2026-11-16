@@ -208,5 +208,55 @@ def history(recipe: str = typer.Argument(..., help="기록을 볼 레시피 이�
         typer.echo(" | ".join(row))
 
 
+_EVAL_MODELS = ("claude-code", "fake")
+_COMPARE_OPTION = typer.Option(
+    None, "--compare", help="두 JSON 보고서(이전, 새)의 도구별 정확도 변화를 출력합니다"
+)
+
+
+@app.command("eval")
+def eval_tools(
+    model: str = typer.Option("claude-code", "--model", help="평가할 모델 (claude-code 또는 fake)"),
+    date: str | None = typer.Option(None, "--date", help="보고서 날짜 (YYYY-MM-DD)"),
+    scenarios: str = typer.Option("evals/scenarios", "--scenarios", help="시나리오 폴더"),
+    out_dir: str = typer.Option("evals/reports", "--out-dir", help="보고서를 저장할 폴더"),
+    responses: str | None = typer.Option(
+        None, "--responses", help="fake 모델의 시나리오별 응답 JSON"
+    ),
+    compare: tuple[str, str] | None = _COMPARE_OPTION,
+) -> None:
+    """도구 선택·인자 정확도를 평가해 보고서를 남기거나, 두 보고서를 비교합니다. FR-23.
+
+    실제 모델은 Claude Code CLI(구독 인증)로만 호출하며 Anthropic API 키는 쓰지 않습니다.
+    """
+    from pathlib import Path
+
+    from docmill import evals
+
+    try:
+        if compare is not None:
+            before, after = (evals.load_report(Path(p)) for p in compare)
+            for line in evals.compare_lines(before, after):
+                typer.echo(line)
+            return
+        if date is None:
+            raise evals.EvalError("date", "--date YYYY-MM-DD 로 보고서 날짜를 주세요")
+        evals.check_date(date)
+        if model not in _EVAL_MODELS:
+            raise evals.EvalError("model", f"지원하지 않는 모델입니다: {model}")
+        if model == "fake":
+            if responses is None:
+                raise evals.EvalError("responses", "fake 모델은 --responses 가 필요합니다")
+            chosen = evals.fake_model(Path(responses))
+        else:
+            chosen = evals.claude_code_model()
+        report = evals.evaluate(evals.load_scenarios(Path(scenarios)), chosen, model, date)
+        for path in evals.write_report(report, Path(out_dir)):
+            typer.echo(str(path))
+    except evals.EvalError as exc:
+        typer.echo(f"실패({exc.step}): {exc.message}", err=True)
+        raise typer.Exit(code=1) from exc
+
+
 if __name__ == "__main__":
     app()

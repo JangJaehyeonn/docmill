@@ -1,0 +1,13 @@
+{
+  "id": "verify-03",
+  "request": "이미 만든 weekly.pptx의 담당자별 매출 숫자가 sales_week2.xlsx랑 틀린 데가 없는지 대조해 줘.",
+  "expected": {
+    "tool": "verify_numbers",
+    "args": {
+      "document": "weekly.pptx",
+      "source": "sales_week2.xlsx",
+      "group_by": "담당자",
+      "value": "매출"
+    }
+  }
+}

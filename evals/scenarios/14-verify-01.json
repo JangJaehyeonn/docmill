@@ -1,0 +1,13 @@
+{
+  "id": "verify-01",
+  "request": "report.pptx 그래프 숫자가 sales_q3.xlsx 지역별 매출 합계랑 맞는지 확인해줘.",
+  "expected": {
+    "tool": "verify_numbers",
+    "args": {
+      "document": "report.pptx",
+      "source": "sales_q3.xlsx",
+      "group_by": "지역",
+      "value": "매출"
+    }
+  }
+}

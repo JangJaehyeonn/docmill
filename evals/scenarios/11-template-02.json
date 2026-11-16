@@ -1,0 +1,11 @@
+{
+  "id": "template-02",
+  "request": "report_headings.docx의 제목 스타일을 등록해 둔 word_basic 양식으로 통일해 주세요.",
+  "expected": {
+    "tool": "apply_template",
+    "args": {
+      "input": "report_headings.docx",
+      "template": "word_basic"
+    }
+  }
+}

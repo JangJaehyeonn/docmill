@@ -1,0 +1,13 @@
+{
+  "id": "verify-02",
+  "request": "q3_report.pptx에 들어간 제품별 수량이 원본 sales_week1.xlsx와 일치하는지 검증해 주세요.",
+  "expected": {
+    "tool": "verify_numbers",
+    "args": {
+      "document": "q3_report.pptx",
+      "source": "sales_week1.xlsx",
+      "group_by": "제품",
+      "value": "수량"
+    }
+  }
+}

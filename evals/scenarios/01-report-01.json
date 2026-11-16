@@ -1,0 +1,12 @@
+{
+  "id": "report-01",
+  "request": "sales_q3.xlsx를 지역별 매출 합계로 보고서 PPT 만들어줘.",
+  "expected": {
+    "tool": "excel_to_report_ppt",
+    "args": {
+      "input": "sales_q3.xlsx",
+      "group_by": "지역",
+      "value": "매출"
+    }
+  }
+}

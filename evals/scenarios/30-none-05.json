@@ -1,0 +1,8 @@
+{
+  "id": "none-05",
+  "request": "회의록 잘 쓰는 요령을 알려줘.",
+  "expected": {
+    "tool": null,
+    "args": {}
+  }
+}

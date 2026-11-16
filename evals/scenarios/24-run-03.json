@@ -1,0 +1,11 @@
+{
+  "id": "run-03",
+  "request": "'회의록 정리' 레시피로 meeting_1111.docx 처리해 줘.",
+  "expected": {
+    "tool": "run_recipe",
+    "args": {
+      "recipe": "회의록 정리",
+      "input": "meeting_1111.docx"
+    }
+  }
+}

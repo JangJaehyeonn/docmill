@@ -1,0 +1,10 @@
+{
+  "id": "save-04",
+  "request": "이번 작업 순서를 monthly_sales 라는 이름으로 기억해 둬. 다음 달에도 똑같이 돌릴 거야.",
+  "expected": {
+    "tool": "save_recipe",
+    "args": {
+      "name": "monthly_sales"
+    }
+  }
+}
