@@ -38,9 +38,17 @@ def run(
     input_path: str = typer.Option(..., "--input", help="레시피에 넣을 입력 파일 경로"),
     out: str | None = typer.Option(None, "--out", help="결과를 저장할 폴더"),
 ) -> None:
-    """레시피를 AI 없이 실행합니다. FR-10, FR-14 (구현 예정)."""
-    typer.echo("아직 구현되지 않았습니다: FR-10 / FR-14 이슈에서 구현합니다.", err=True)
-    raise typer.Exit(code=2)
+    """레시피를 AI 없이 실행합니다. 성공하면 결과 파일 경로를 출력하고 종료 코드 0을 돌려줍니다."""
+    import json
+
+    from docmill.runlog import logged
+    from docmill.runner import run_recipe
+
+    result = json.loads(logged(run_recipe, ai_used=False)(recipe, input_path, out))
+    if "error" in result:
+        typer.echo(f"실패({result.get('step', 'unexpected')}): {result['error']}", err=True)
+        raise typer.Exit(code=1)
+    typer.echo(result["path"])
 
 
 recipes_app = typer.Typer(help="저장된 레시피를 관리합니다.", invoke_without_command=True)
