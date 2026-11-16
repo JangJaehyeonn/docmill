@@ -3,7 +3,7 @@
 필요한 샘플: 없음 (네트워크로 엔진을 내려받는다).
 가정(구현 방법이 정해지면 맞춰 고친다):
 - `DOCMILL_HOME`이 엔진 설치 위치의 기준 폴더다.
-- 출력에 엔진 이름(GridCraft·DeckCraft·WordCraft)과 버전 번호(x.y.z)가 한 줄씩 나온다.
+- 출력에 엔진 이름(GridCraft·DeckCraft·WordCraft)과 그 엔진의 고정 버전이 같은 줄에 나온다.
 - 다운로드는 표준 프록시 환경 변수(HTTPS_PROXY·HTTP_PROXY)를 따른다.
   두 번째 실행은 프록시를 닫힌 포트로 막아 두고 실행해, 다운로드를 시도하면 실패하게 만든다.
 """
@@ -18,7 +18,8 @@ from pathlib import Path
 
 import pytest
 
-ENGINES = ["GridCraft", "DeckCraft", "WordCraft"]
+# 고정 엔진 버전 (docs/phase0.md, .github/actions/setup-engines와 같다). 엔진을 올리면 함께 바꾼다.
+ENGINES = {"GridCraft": "0.9.0", "DeckCraft": "0.9.0", "WordCraft": "0.8.0"}
 # 아무것도 듣지 않는 포트. 이 프록시를 거치는 요청은 모두 연결 거부로 실패한다.
 BLOCKED_PROXY = "http://127.0.0.1:9"
 NO_NETWORK = {
@@ -44,9 +45,10 @@ def _setup(home: Path, extra_env: dict[str, str] | None = None) -> subprocess.Co
 
 def _assert_versions(stdout: str) -> None:
     lines = stdout.splitlines()
-    for engine in ENGINES:
-        found = any(engine in ln and re.search(r"\d+\.\d+\.\d+", ln) for ln in lines)
-        assert found, f"{engine} 버전이 출력되지 않았다: {stdout}"
+    for engine, version in ENGINES.items():
+        pattern = rf"(?<![\d.]){re.escape(version)}(?![\d.])"
+        found = any(engine in ln and re.search(pattern, ln) for ln in lines)
+        assert found, f"{engine} {version}이 출력되지 않았다: {stdout}"
 
 
 @pytest.mark.fr("FR-04")
