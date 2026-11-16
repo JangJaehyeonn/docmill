@@ -34,7 +34,12 @@ export function documentKey(rel: string, mtimeMs: number, size: number): string 
 export interface EditorConfig {
   documentType: "cell" | "slide" | "word";
   document: { fileType: string; key: string; title: string; url: string };
-  editorConfig: { callbackUrl: string; lang: string; mode: "edit" };
+  editorConfig: {
+    callbackUrl: string;
+    lang: string;
+    mode: "edit";
+    customization: { forcesave: boolean };
+  };
 }
 
 /** 편집기에 넘길 설정을 만든다. `origin` 은 문서 서버가 접근할 studio 서버 주소. */
@@ -51,7 +56,13 @@ export function buildEditorConfig(rel: string, key: string, origin: string): Edi
       title: path.posix.basename(rel),
       url: `${origin}/onlyoffice/file?${q}`,
     },
-    editorConfig: { callbackUrl: `${origin}/onlyoffice/callback?${q}`, lang: "ko", mode: "edit" },
+    editorConfig: {
+      callbackUrl: `${origin}/onlyoffice/callback?${q}`,
+      lang: "ko",
+      mode: "edit",
+      // 편집기 안의 저장(Ctrl+S)도 강제 저장 콜백으로 원본에 반영한다.
+      customization: { forcesave: true },
+    },
   };
 }
 

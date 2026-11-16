@@ -153,6 +153,7 @@ async function saveCallback(
   query: URLSearchParams,
 ): Promise<void> {
   const body = (await readBody(req)) as { status?: unknown; url?: unknown; key?: unknown };
+  console.error("저장 콜백 수신: status=%s", String(body.status));
   const server = normalizeUrl(opts.onlyofficeUrl);
   if (body.status === 4 && typeof body.key === "string") {
     // 상태 4 = 변경 없이 닫힘: 일치하는 세션이면 키를 폐기해 다음에 열 때 새 키를 발급한다.
