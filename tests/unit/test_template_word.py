@@ -156,8 +156,8 @@ def test_empty_theme_ea_uses_theme_font_lang_script(
 
 
 def test_empty_theme_ea_without_settings_stays_unresolved(tmp_path: Path) -> None:
-    headings = templates.extract_docx_rules(_make_docx(tmp_path / "n.docx", _EA_THEME_STYLES, ""))
-    assert "2" not in headings
+    rules = templates.extract_docx_rules(_make_docx(tmp_path / "n.docx", _EA_THEME_STYLES, ""))
+    assert "2" not in rules["headings"]
 
 
 def test_theme_color_aliases_map_to_drawingml_slots() -> None:
