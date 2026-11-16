@@ -189,7 +189,7 @@ async function forceSave(
   try {
     // error 4 = 아직 반영할 변경이 없음. 편집 내용이 문서 서버에 닿을 시간을 주고 몇 번 다시 요청한다.
     let code = await commandForceSave(server, key);
-    for (let i = 0; i < 5 && code === 4; i++) {
+    for (let i = 0; i < 30 && code === 4; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       code = await commandForceSave(server, key);
     }
