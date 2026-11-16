@@ -53,6 +53,23 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
     return dict(json.loads(text))
 
 
+async def _call_many(home: Path, calls: list[tuple[str, dict[str, Any]]]) -> list[dict[str, Any]]:
+    # 한 MCP 세션(서버 프로세스 하나)에서 차례로 부른다.
+    params = StdioServerParameters(
+        command=sys.executable,
+        args=["-m", "docmill.cli", "mcp"],
+        env={**os.environ, "DOCMILL_HOME": str(home)},
+        cwd=str(home),
+    )
+    outs: list[dict[str, Any]] = []
+    async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+        await session.initialize()
+        for name, args in calls:
+            result = await session.call_tool(name, args)
+            outs.append(dict(json.loads("".join(getattr(c, "text", "") for c in result.content))))
+    return outs
+
+
 def _sync(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
     return asyncio.run(asyncio.wait_for(_call(home, name, args), 120))
 
@@ -116,14 +133,15 @@ def test_preflight_and_review_map_work_on_hwp_with_same_rules(tmp_path: Path) ->
 def test_unreadable_hwp_returns_failed_step_and_reason_and_server_survives(tmp_path: Path) -> None:
     broken = tmp_path / "broken.hwp"
     broken.write_bytes(b"this is not a hwp file")
-    for tool, args in (
+    bad: list[tuple[str, dict[str, Any]]] = [
         ("doc_to_task_table", {"input": str(broken)}),
         ("preflight", {"document": str(broken)}),
         ("review_map", {"document": str(broken)}),
-    ):
-        out = _sync(tmp_path, tool, args)
+    ]
+    # 실패한 호출 뒤에도 같은 세션(같은 서버)이 정상 파일을 처리해야 한다.
+    calls = [*bad, ("doc_to_task_table", {"input": str(DOCX)})]
+    outs = asyncio.run(asyncio.wait_for(_call_many(tmp_path, calls), 180))
+    for (tool, _), out in zip(bad, outs, strict=False):
         assert out.get("error"), f"{tool}: 실패 이유가 있어야 한다"
         assert out.get("step"), f"{tool}: 실패 단계가 있어야 한다"
-    # 서버는 계속 동작: 정상 파일은 여전히 처리된다.
-    ok = _sync(tmp_path, "doc_to_task_table", {"input": str(DOCX)})
-    assert "error" not in ok
+    assert "error" not in outs[-1], outs[-1]

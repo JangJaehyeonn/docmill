@@ -94,20 +94,23 @@ def _inject_text(src: Path, dst: Path, text: str) -> None:
     shutil.copy(_prov(src), _prov(dst))
 
 
-def _bump_chart_value(src: Path, dst: Path) -> None:
+def _bump_chart_value(src: Path, dst: Path) -> float:
     with zipfile.ZipFile(src) as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
         done = False
+        bumped = 0.0
         for item in zin.infolist():
             data = zin.read(item.filename)
             if not done and re.fullmatch(r"ppt/charts/chart\d+\.xml", item.filename):
                 text = data.decode("utf-8")
                 m = re.search(r"<c:val>.*?<c:v>([^<]+)</c:v>", text, re.S)
                 assert m
-                text = text[: m.start(1)] + str(float(m.group(1)) + 1) + text[m.end(1) :]
+                bumped = float(m.group(1)) + 1
+                text = text[: m.start(1)] + str(bumped) + text[m.end(1) :]
                 data = text.encode("utf-8")
                 done = True
             zout.writestr(item, data)
     shutil.copy(_prov(src), _prov(dst))
+    return bumped
 
 
 def _review(home: Path, doc: Path, baseline: Path | None = None) -> list[dict[str, Any]]:
@@ -148,9 +151,12 @@ def test_baseline_marks_only_changed_parts(tmp_path: Path) -> None:
 
     changed = tmp_path / "changed" / "doc.pptx"
     changed.parent.mkdir()
-    _bump_chart_value(base, changed)
+    bumped = _bump_chart_value(base, changed)
     items = [i for i in _review(tmp_path, changed, baseline=base) if i["reason"] == "이번에 바뀜"]
     assert len(items) == 1, items
+    # 표시 형식(쉼표·소수점)과 상관없이 바꾼 숫자를 가리켜야 한다.
+    assert str(int(bumped)) in re.sub(r"[^0-9]", "", str(items[0]["text"])), items
+    assert items[0]["location"], items
 
     with_sentence = tmp_path / "sentence" / "doc.pptx"
     with_sentence.parent.mkdir()

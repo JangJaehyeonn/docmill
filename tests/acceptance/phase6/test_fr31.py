@@ -77,6 +77,16 @@ def _sp(xml: bytes, shape_id: str) -> str:
     raise AssertionError(f"도형 {shape_id}가 없다")
 
 
+def _paragraphs(doc_xml: bytes) -> list[str]:
+    # 본문 문단(w:body 바로 아래 w:p)의 글자만 순서대로 모은다.
+    import xml.etree.ElementTree as ET
+
+    w = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+    body = ET.fromstring(doc_xml).find(f"{w}body")
+    assert body is not None
+    return ["".join(t.text or "" for t in p.iter(f"{w}t")) for p in body.findall(f"{w}p")]
+
+
 PPT_SCOPE = {"slides": [2], "shapes": [2]}
 PPT_EDIT = {"set_text": [{"slide": 2, "shape": 2, "text": "새 제목"}]}
 PPT_LEAK = {
@@ -130,7 +140,8 @@ def test_xlsx_cell_range_is_guarded(tmp_path: Path) -> None:
     c10 = re.search(r'<c r="C10".*?</c>', sheet, re.S)
     c10_before = re.search(r'<c r="C10".*?</c>', original, re.S)
     assert c10 and c10_before and c10.group(0) == c10_before.group(0)
-    assert "999" in sheet
+    c2 = re.search(r'<c r="C2"[^>]*>.*?<v>([^<]+)</v>', sheet, re.S)
+    assert c2 and float(c2.group(1)) == 999, "범위 안 셀 C2는 요청한 값이어야 한다"
 
 
 @pytest.mark.fr("FR-31")
@@ -144,9 +155,11 @@ def test_docx_paragraph_range_is_guarded(tmp_path: Path) -> None:
         {"set_paragraphs": {"3": "새 문장입니다", "5": "몰래 바꾼 문단"}},
     )
     assert leak["out_of_scope_changes"] >= 1 and leak["reverted"]
-    doc = _parts(Path(leak["path"]))["word/document.xml"].decode("utf-8")
-    assert "새 문장입니다" in doc
-    assert "몰래 바꾼 문단" not in doc
+    after = _paragraphs(_parts(Path(leak["path"]))["word/document.xml"])
+    before = _paragraphs(_parts(DOCX)["word/document.xml"])
+    assert after[3] == "새 문장입니다", "범위 안 문단 3은 요청한 문장이어야 한다"
+    assert after[5] == before[5], "범위 밖 문단 5는 원문으로 돌아와야 한다"
+    assert len(after) == len(before)
 
 
 @pytest.mark.fr("FR-31")

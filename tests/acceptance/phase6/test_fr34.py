@@ -137,7 +137,8 @@ def test_studio_preflight_button_shows_results_in_chat(
     page.get_by_role("button", name="보내기 전 점검").click()
     chat = page.locator('[data-role="tool-card"], [data-role="assistant"]')
     chat.first.wait_for(timeout=60_000)
-    text = page.locator("body").inner_text()
+    # 버튼 이름 등 화면 다른 곳의 글자와 섞이지 않게 채팅 카드 안의 글자만 본다.
+    text = "\n".join(chat.nth(i).inner_text() for i in range(chat.count()))
     for name in CHECKS:
         assert name in text, name
     assert "주의" in text
