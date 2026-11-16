@@ -166,3 +166,43 @@ def make_save_recipe(recorder: SessionRecorder) -> Callable[[str], str]:
         return json.dumps(result, ensure_ascii=False)
 
     return save_recipe
+
+
+def list_recipes() -> list[str]:
+    """저장된 레시피 이름을 이름순으로 돌려준다."""
+    folder = recipes_dir()
+    if not folder.is_dir():
+        return []
+    return sorted(p.stem for p in folder.glob("*.json"))
+
+
+def _existing_path(name: str) -> Path:
+    path = recipes_dir() / f"{_validate_name(name)}.json"
+    if not path.is_file():
+        raise RecipeError("name", f"레시피를 찾을 수 없다: {name!r}")
+    return path
+
+
+def rename_recipe(old: str, new: str) -> str:
+    """레시피 `old`의 이름을 `new`로 바꾸고 새 이름을 돌려준다. 같은 이름이 있으면 실패한다."""
+    source = _existing_path(old)
+    clean = _validate_name(new)
+    target = source.with_name(f"{clean}.json")
+    if target.exists():
+        raise RecipeError("name", f"같은 이름의 레시피가 이미 있다: {clean!r}")
+    data = json.loads(source.read_text(encoding="utf-8"))
+    data["name"] = clean
+    partial = target.with_name(f".{target.name}.part")
+    try:
+        partial.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        os.replace(partial, target)
+    except BaseException:
+        partial.unlink(missing_ok=True)
+        raise
+    source.unlink()
+    return clean
+
+
+def delete_recipe(name: str) -> None:
+    """레시피 `name`을 삭제한다. 없으면 RecipeError."""
+    _existing_path(name).unlink()

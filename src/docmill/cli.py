@@ -8,6 +8,7 @@ from __future__ import annotations
 import typer
 
 from docmill import __version__
+from docmill.recipes import RecipeError, delete_recipe, list_recipes, rename_recipe
 
 app = typer.Typer(
     name="docmill",
@@ -40,6 +41,45 @@ def run(
     """레시피를 AI 없이 실행합니다. FR-10, FR-14 (구현 예정)."""
     typer.echo("아직 구현되지 않았습니다: FR-10 / FR-14 이슈에서 구현합니다.", err=True)
     raise typer.Exit(code=2)
+
+
+recipes_app = typer.Typer(help="저장된 레시피를 관리합니다.", invoke_without_command=True)
+app.add_typer(recipes_app, name="recipes")
+
+
+@recipes_app.callback()
+def recipes(ctx: typer.Context) -> None:
+    """저장된 레시피 목록을 보여줍니다. FR-13."""
+    if ctx.invoked_subcommand is None:
+        for name in list_recipes():
+            typer.echo(name)
+
+
+def _fail(exc: RecipeError) -> typer.Exit:
+    typer.echo(f"실패({exc.step}): {exc.message}", err=True)
+    return typer.Exit(code=1)
+
+
+@recipes_app.command("rename")
+def recipes_rename(
+    old: str = typer.Argument(..., help="기존 레시피 이름"),
+    new: str = typer.Argument(..., help="새 이름"),
+) -> None:
+    """레시피 이름을 바꿉니다."""
+    try:
+        typer.echo(f"이름 변경: {old} -> {rename_recipe(old, new)}")
+    except RecipeError as exc:
+        raise _fail(exc) from exc
+
+
+@recipes_app.command("delete")
+def recipes_delete(name: str = typer.Argument(..., help="삭제할 레시피 이름")) -> None:
+    """레시피를 삭제합니다."""
+    try:
+        delete_recipe(name)
+    except RecipeError as exc:
+        raise _fail(exc) from exc
+    typer.echo(f"삭제: {name}")
 
 
 @app.command()
