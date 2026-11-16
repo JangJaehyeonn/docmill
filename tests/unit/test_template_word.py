@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import zipfile
 from pathlib import Path
+from xml.etree import ElementTree
 
 import pytest
 
@@ -122,6 +123,21 @@ def test_theme_color_and_fonts_are_resolved(tmp_path: Path) -> None:
     assert h1 == {"font": "Major Sans", "font_ea": "Major Ko", "title_color": "A5A5A5"}
     assert h2["title_color"] == "404040"  # shade present: stored literal wins
     assert h2["font"] == "Minor Sans" and h2["font_ea"] == "Gulim"  # empty theme ea falls back
+
+
+def test_theme_color_aliases_map_to_drawingml_slots() -> None:
+    ns = "http://schemas.openxmlformats.org/drawingml/2006/main"
+    theme = ElementTree.fromstring(
+        f'<a:theme xmlns:a="{ns}"><a:themeElements><a:clrScheme name="t">'
+        '<a:dk1><a:srgbClr val="111111"/></a:dk1><a:lt1><a:srgbClr val="EEEEEE"/></a:lt1>'
+        '<a:hlink><a:srgbClr val="0000FF"/></a:hlink>'
+        '<a:folHlink><a:srgbClr val="800080"/></a:folHlink>'
+        "</a:clrScheme></a:themeElements></a:theme>"
+    )
+    assert templates._theme_color_hex(theme, "dark1") == "111111"
+    assert templates._theme_color_hex(theme, "light1") == "EEEEEE"
+    assert templates._theme_color_hex(theme, "hyperlink") == "0000FF"
+    assert templates._theme_color_hex(theme, "followedHyperlink") == "800080"
 
 
 def test_style_name_maps_to_level(tmp_path: Path) -> None:

@@ -258,7 +258,18 @@ def _w_val(node: ElementTree.Element | None, tag: str, attr: str = "val") -> str
 
 
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
-_THEME_COLORS = {"text1": "dk1", "background1": "lt1", "text2": "dk2", "background2": "lt2"}
+_THEME_COLORS = {
+    "text1": "dk1",
+    "background1": "lt1",
+    "text2": "dk2",
+    "background2": "lt2",
+    "dark1": "dk1",
+    "light1": "lt1",
+    "dark2": "dk2",
+    "light2": "lt2",
+    "hyperlink": "hlink",
+    "followedHyperlink": "folHlink",
+}
 _HEX6 = re.compile(r"[0-9A-Fa-f]{6}")
 
 
