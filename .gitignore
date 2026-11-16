@@ -18,5 +18,8 @@ out/
 .DS_Store
 Thumbs.db
 
+# studio 의존성
+studio/node_modules/
+
 # 에이전트 임시 탐색 파일
 .scratch/
