@@ -5,31 +5,107 @@
 - `DOCMILL_HOME`이 엔진 설치 위치의 기준 폴더다.
 - 출력에 엔진 이름(GridCraft·DeckCraft·WordCraft)과 그 엔진의 고정 버전이 같은 줄에 나온다.
 - 다운로드는 표준 프록시 환경 변수(HTTPS_PROXY·HTTP_PROXY)를 따른다.
-  두 번째 실행은 프록시를 닫힌 포트로 막아 두고 실행해, 다운로드를 시도하면 실패하게 만든다.
+  테스트는 요청을 기록하는 로컬 프록시를 띄워 두 실행 모두 그 프록시를 거치게 한다.
+  첫 실행은 프록시를 거쳐 실제로 내려받아야 하고(프록시 준수 확인),
+  두 번째 실행은 프록시에 요청이 하나도 없어야 한다(재다운로드 없음 확인).
 """
 
 from __future__ import annotations
 
 import os
 import re
+import select
+import socket
+import socketserver
 import subprocess
 import sys
+import threading
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 # 고정 엔진 버전 (docs/phase0.md, .github/actions/setup-engines와 같다). 엔진을 올리면 함께 바꾼다.
 ENGINES = {"GridCraft": "0.9.0", "DeckCraft": "0.9.0", "WordCraft": "0.8.0"}
-# 아무것도 듣지 않는 포트. 이 프록시를 거치는 요청은 모두 연결 거부로 실패한다.
-BLOCKED_PROXY = "http://127.0.0.1:9"
-NO_NETWORK = {
-    "HTTPS_PROXY": BLOCKED_PROXY,
-    "HTTP_PROXY": BLOCKED_PROXY,
-    "https_proxy": BLOCKED_PROXY,
-    "http_proxy": BLOCKED_PROXY,
-    "NO_PROXY": "",
-    "no_proxy": "",
-}
+
+
+class _RecordingProxy(socketserver.ThreadingTCPServer):
+    """요청 줄을 기록하고 CONNECT·평문 요청을 그대로 중계하는 최소 HTTP 프록시."""
+
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self) -> None:
+        super().__init__(("127.0.0.1", 0), _ProxyHandler)
+        self.requests: list[str] = []
+        self.lock = threading.Lock()
+
+    @property
+    def url(self) -> str:
+        return f"http://127.0.0.1:{self.server_address[1]}"
+
+
+class _ProxyHandler(socketserver.StreamRequestHandler):
+    server: _RecordingProxy
+
+    def handle(self) -> None:
+        line = self.rfile.readline(65536).decode("latin-1").strip()
+        if not line:
+            return
+        with self.server.lock:
+            self.server.requests.append(line)
+        headers = b""
+        while True:
+            h = self.rfile.readline(65536)
+            if h in (b"\r\n", b"\n", b""):
+                break
+            headers += h
+        method, target, _ = line.split(" ", 2)
+        if method == "CONNECT":
+            host, _, port = target.partition(":")
+            upstream = socket.create_connection((host, int(port or 443)), timeout=60)
+            self.wfile.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
+            self._pipe(upstream)
+        else:
+            self.wfile.write(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+
+    def _pipe(self, upstream: socket.socket) -> None:
+        conns = [self.connection, upstream]
+        try:
+            while True:
+                ready, _, _ = select.select(conns, [], [], 60)
+                if not ready:
+                    return
+                for s in ready:
+                    data = s.recv(65536)
+                    if not data:
+                        return
+                    (upstream if s is self.connection else self.connection).sendall(data)
+        finally:
+            upstream.close()
+
+
+@pytest.fixture
+def proxy() -> Iterator[_RecordingProxy]:
+    server = _RecordingProxy()
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield server
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+def _proxy_env(url: str) -> dict[str, str]:
+    return {
+        "HTTPS_PROXY": url,
+        "HTTP_PROXY": url,
+        "https_proxy": url,
+        "http_proxy": url,
+        "NO_PROXY": "",
+        "no_proxy": "",
+    }
 
 
 def _setup(home: Path, extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -59,11 +135,15 @@ def test_setup_prints_version_of_each_engine(tmp_path: Path) -> None:
 
 
 @pytest.mark.fr("FR-04")
-def test_setup_twice_does_not_download_again(tmp_path: Path) -> None:
-    first = _setup(tmp_path)
+def test_setup_twice_does_not_download_again(tmp_path: Path, proxy: _RecordingProxy) -> None:
+    env = _proxy_env(proxy.url)
+    first = _setup(tmp_path, env)
     assert first.returncode == 0, first.stderr
-    # 두 번째 실행은 네트워크를 막는다.
-    # 다시 내려받으려 하면 실패하므로, 성공하면 다운로드가 없었던 것이다.
-    second = _setup(tmp_path, NO_NETWORK)
-    assert second.returncode == 0, f"이미 설치된 엔진을 다시 내려받으려 했다: {second.stderr}"
+    # 첫 실행이 프록시를 거쳤어야, 두 번째 실행의 "요청 없음"이 의미가 있다.
+    assert proxy.requests, "첫 설치가 프록시 환경 변수를 따르지 않았다"
+    proxy.requests.clear()
+
+    second = _setup(tmp_path, env)
+    assert second.returncode == 0, second.stderr
+    assert proxy.requests == [], f"이미 설치된 엔진을 다시 내려받으려 했다: {proxy.requests}"
     _assert_versions(second.stdout)
