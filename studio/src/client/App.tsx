@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
@@ -26,6 +27,8 @@ export function App() {
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
   const [choices, setChoices] = useState<string[]>([]);
+  const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
+  const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
   const pendingOpen = useRef<string | null>(readOpenParam(window.location.search));
@@ -110,6 +113,19 @@ export function App() {
   };
 
   const active = tabState.tabs.find((t) => t.path === tabState.active);
+  const activeOffice = active ? /\.(xlsx|pptx|docx)$/i.test(active.path) : false;
+  const activeState = active ? editorStates[active.path] : undefined;
+
+  const save = async (path: string): Promise<void> => {
+    setSaveMessage("저장 요청 중…");
+    try {
+      const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
+      const body = (await res.json()) as { error?: string };
+      setSaveMessage(res.ok ? "저장을 요청했어요. 곧 작업 폴더 파일에 반영돼요." : (body.error ?? "저장하지 못했어요."));
+    } catch {
+      setSaveMessage("저장하지 못했어요.");
+    }
+  };
 
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
@@ -200,8 +216,31 @@ export function App() {
           {files.length === 0 && <p className="hint">작업 폴더에 문서 파일이 없습니다.</p>}
         </aside>
 
-        <main className="main" role="tabpanel">
-          {active ? (
+        <main
+          className={activeOffice ? "main editing" : "main"}
+          role="tabpanel"
+          data-editor-state={activeOffice ? activeState : undefined}
+        >
+          {active && activeOffice ? (
+            <>
+              <div className="editor-bar">
+                <button type="button" onClick={() => void save(active.path)}>
+                  저장
+                </button>
+                {saveMessage && <span className="hint">{saveMessage}</span>}
+              </div>
+              {activeState === "unavailable" && (
+                <p role="status" className="alert">
+                  {NO_SERVER_NOTICE}. 문서 서버 주소(DOCMILL_ONLYOFFICE_URL)를 확인한 뒤 다시 열어 주세요.
+                </p>
+              )}
+              <OfficeEditor
+                key={active.path}
+                path={active.path}
+                onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
+              />
+            </>
+          ) : active ? (
             <p className="hint">{active.name} — 문서 화면은 다음 단계에서 연결됩니다.</p>
           ) : (
             <section aria-labelledby="recent-title" role="region" aria-label="최근 파일">

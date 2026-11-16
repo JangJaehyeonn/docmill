@@ -1,6 +1,15 @@
 import { promises as fs } from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import {
+  buildEditorConfig,
+  documentKey,
+  isOnlyofficeFile,
+  normalizeUrl,
+  rebaseDownloadUrl,
+  replaceFile,
+  shouldSave,
+} from "./onlyoffice.js";
 import { addRecent, listRecent } from "./recent.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
 
@@ -8,7 +17,14 @@ export interface AppOptions {
   workspace: string;
   recentFile: string;
   clientDir: string;
+  /** 문서 서버(ONLYOFFICE) 주소. 없으면 연결 안내를 보여준다. */
+  onlyofficeUrl?: string;
+  /** 문서 서버가 studio 서버에 접근할 때 쓰는 호스트. */
+  publicHost?: string;
 }
+
+/** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
+const sessionKeys = new Map<string, string>();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -38,6 +54,7 @@ async function handleApi(
   req: http.IncomingMessage,
   res: http.ServerResponse,
   pathname: string,
+  query: URLSearchParams,
 ): Promise<void> {
   if (req.method === "GET" && pathname === "/api/files") {
     return sendJson(res, 200, { files: await listFiles(opts.workspace) });
@@ -69,7 +86,119 @@ async function handleApi(
       throw err;
     }
   }
+  if (req.method === "GET" && pathname === "/api/onlyoffice") {
+    return sendJson(res, 200, { url: normalizeUrl(opts.onlyofficeUrl) });
+  }
+  if (req.method === "GET" && pathname === "/api/editor-config") {
+    return editorConfig(opts, req, res, query);
+  }
+  if (req.method === "POST" && pathname === "/api/save") {
+    return forceSave(opts, res, query);
+  }
   sendJson(res, 404, { error: "알 수 없는 요청입니다." });
+}
+
+async function resolveQuery(
+  opts: AppOptions,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<{ rel: string; abs: string } | null> {
+  try {
+    const rel = await resolveInWorkspace(opts.workspace, query.get("path") ?? "");
+    const abs = path.join(await fs.realpath(opts.workspace), ...rel.split("/"));
+    return { rel, abs };
+  } catch (err) {
+    if (err instanceof WorkspaceError) sendJson(res, 403, { error: err.message });
+    else throw err;
+    return null;
+  }
+}
+
+async function editorConfig(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<void> {
+  const server = normalizeUrl(opts.onlyofficeUrl);
+  if (!server) return sendJson(res, 404, { error: "문서 서버에 연결되지 않았어요." });
+  const file = await resolveQuery(opts, res, query);
+  if (!file) return;
+  if (!isOnlyofficeFile(file.rel)) return sendJson(res, 400, { error: "지원하지 않는 형식입니다." });
+  const info = await fs.stat(file.abs);
+  const key = documentKey(file.rel, info.mtimeMs, info.size);
+  sessionKeys.set(file.rel, key);
+  const port = req.socket.localPort ?? 0;
+  const origin = `http://${opts.publicHost || "127.0.0.1"}:${port}`;
+  sendJson(res, 200, { server, config: buildEditorConfig(file.rel, key, origin) });
+}
+
+async function serveDocument(
+  opts: AppOptions,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<void> {
+  const file = await resolveQuery(opts, res, query);
+  if (!file) return;
+  const data = await fs.readFile(file.abs);
+  res.writeHead(200, { "content-type": "application/octet-stream" });
+  res.end(data);
+}
+
+async function saveCallback(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<void> {
+  const body = (await readBody(req)) as { status?: unknown; url?: unknown };
+  const server = normalizeUrl(opts.onlyofficeUrl);
+  if (shouldSave(body.status) && typeof body.url === "string" && server) {
+    const file = await resolveQuery(opts, res, query);
+    if (!file) return;
+    try {
+      const download = await fetch(rebaseDownloadUrl(body.url, server));
+      if (!download.ok) throw new Error(`내려받기 실패 (${download.status})`);
+      await replaceFile(file.abs, Buffer.from(await download.arrayBuffer()));
+    } catch (err) {
+      console.error("저장 콜백 처리 실패:", err);
+      return sendJson(res, 200, { error: 1 });
+    }
+  }
+  sendJson(res, 200, { error: 0 });
+}
+
+async function commandForceSave(server: string, key: string): Promise<number> {
+  const r = await fetch(`${server}/coauthoring/CommandService.ashx`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ c: "forcesave", key }),
+  });
+  return ((await r.json()) as { error?: number }).error ?? -1;
+}
+
+async function forceSave(
+  opts: AppOptions,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<void> {
+  const server = normalizeUrl(opts.onlyofficeUrl);
+  const rel = query.get("path") ?? "";
+  const key = sessionKeys.get(rel);
+  if (!server || !key) return sendJson(res, 409, { error: "저장할 편집기가 열려 있지 않습니다." });
+  try {
+    // error 4 = 아직 반영할 변경이 없음. 편집 내용이 문서 서버에 닿을 시간을 주고 몇 번 다시 요청한다.
+    let code = await commandForceSave(server, key);
+    for (let i = 0; i < 5 && code === 4; i++) {
+      await new Promise((r) => setTimeout(r, 1000));
+      code = await commandForceSave(server, key);
+    }
+    if (code !== 0 && code !== 4) throw new Error(`문서 서버 오류 ${code}`);
+    sendJson(res, 200, { ok: true, unchanged: code === 4 });
+  } catch (err) {
+    console.error("저장 요청 실패:", err);
+    sendJson(res, 502, { error: "문서 서버에 저장을 요청하지 못했습니다." });
+  }
 }
 
 async function serveStatic(
@@ -98,15 +227,22 @@ async function serveStatic(
 export function createApp(opts: AppOptions): http.Server {
   return http.createServer((req, res) => {
     let pathname: string;
+    let query: URLSearchParams;
     try {
-      pathname = new URL(req.url ?? "/", "http://localhost").pathname;
+      const parsed = new URL(req.url ?? "/", "http://localhost");
+      pathname = parsed.pathname;
+      query = parsed.searchParams;
     } catch {
       sendJson(res, 400, { error: "잘못된 요청 주소입니다." });
       return;
     }
-    const task = pathname.startsWith("/api/")
-      ? handleApi(opts, req, res, pathname)
-      : serveStatic(opts, res, pathname);
+    let task: Promise<void>;
+    if (pathname.startsWith("/api/")) task = handleApi(opts, req, res, pathname, query);
+    else if (req.method === "GET" && pathname === "/onlyoffice/file") {
+      task = serveDocument(opts, res, query);
+    } else if (req.method === "POST" && pathname === "/onlyoffice/callback") {
+      task = saveCallback(opts, req, res, query);
+    } else task = serveStatic(opts, res, pathname);
     task.catch((err: unknown) => {
       console.error("요청 처리 실패:", err);
       if (!res.headersSent) sendJson(res, 500, { error: "서버 오류가 났습니다." });

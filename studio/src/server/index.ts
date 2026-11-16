@@ -13,12 +13,17 @@ export function parsePort(argv: string[]): number {
 function main(): void {
   const workspace = path.resolve(process.env.DOCMILL_STUDIO_WORKSPACE || process.cwd());
   const here = path.dirname(fileURLToPath(import.meta.url));
+  const publicHost = process.env.DOCMILL_STUDIO_PUBLIC_HOST || "127.0.0.1";
   const server = createApp({
     workspace,
     recentFile: recentStorePath(),
     clientDir: path.join(here, "client"),
+    onlyofficeUrl: process.env.DOCMILL_ONLYOFFICE_URL,
+    publicHost,
   });
-  server.listen(parsePort(process.argv.slice(2)), "127.0.0.1", () => {
+  // 문서 서버가 다른 호스트 이름(예: host.docker.internal)으로 접근하면 모든 인터페이스에서 받는다.
+  const bindHost = publicHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+  server.listen(parsePort(process.argv.slice(2)), bindHost, () => {
     const addr = server.address();
     const port = typeof addr === "object" && addr ? addr.port : 0;
     // stdout 한 줄 계약: 앱이 준비되면 READY <url>
