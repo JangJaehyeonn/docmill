@@ -1,0 +1,10 @@
+{
+  "id": "save-01",
+  "request": "방금 한 작업을 '주간 매출 보고서'라는 이름의 레시피로 저장해줘.",
+  "expected": {
+    "tool": "save_recipe",
+    "args": {
+      "name": "주간 매출 보고서"
+    }
+  }
+}

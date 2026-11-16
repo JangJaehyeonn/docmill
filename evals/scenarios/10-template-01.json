@@ -1,0 +1,11 @@
+{
+  "id": "template-01",
+  "request": "company_intro.pptx 슬라이드 제목들을 회사 양식 corporate에 맞춰 줘.",
+  "expected": {
+    "tool": "apply_template",
+    "args": {
+      "input": "company_intro.pptx",
+      "template": "corporate"
+    }
+  }
+}

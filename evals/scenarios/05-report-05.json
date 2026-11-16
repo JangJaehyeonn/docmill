@@ -1,0 +1,12 @@
+{
+  "id": "report-05",
+  "request": "sales_q3.xlsx 데이터로 월별 매출 추이 보고서 pptx 하나 뽑아줘.",
+  "expected": {
+    "tool": "excel_to_report_ppt",
+    "args": {
+      "input": "sales_q3.xlsx",
+      "group_by": "월",
+      "value": "매출"
+    }
+  }
+}

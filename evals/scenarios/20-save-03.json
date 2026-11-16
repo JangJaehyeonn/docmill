@@ -1,0 +1,10 @@
+{
+  "id": "save-03",
+  "request": "이 과정 다음에도 그대로 쓰게 '회의록 정리'로 저장해 줘.",
+  "expected": {
+    "tool": "save_recipe",
+    "args": {
+      "name": "회의록 정리"
+    }
+  }
+}

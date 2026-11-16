@@ -1,0 +1,13 @@
+{
+  "id": "report-04",
+  "request": "엑셀 파일 sales_week2.xlsx를 지역 기준으로 매출을 합쳐서 꺾은선 그래프 PPT로 정리해줘.",
+  "expected": {
+    "tool": "excel_to_report_ppt",
+    "args": {
+      "input": "sales_week2.xlsx",
+      "group_by": "지역",
+      "value": "매출",
+      "chart": "line"
+    }
+  }
+}

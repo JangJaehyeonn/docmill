@@ -1,0 +1,11 @@
+{
+  "id": "template-03",
+  "request": "발표 자료 company_intro.pptx에 brand 양식을 적용해서 제목 글꼴이랑 색을 맞춰줘.",
+  "expected": {
+    "tool": "apply_template",
+    "args": {
+      "input": "company_intro.pptx",
+      "template": "brand"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "id": "run-02",
+  "request": "weekly-report 레시피에 이번 주 파일 sales_week1.xlsx 넣어서 실행해 주세요.",
+  "expected": {
+    "tool": "run_recipe",
+    "args": {
+      "recipe": "weekly-report",
+      "input": "sales_week1.xlsx"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "id": "report-02",
+  "request": "sales_week1.xlsx에서 제품별 수량 합계를 원형 그래프로 보여주는 발표 자료를 만들어 줘.",
+  "expected": {
+    "tool": "excel_to_report_ppt",
+    "args": {
+      "input": "sales_week1.xlsx",
+      "group_by": "제품",
+      "value": "수량",
+      "chart": "pie"
+    }
+  }
+}

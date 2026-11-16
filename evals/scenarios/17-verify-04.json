@@ -1,0 +1,13 @@
+{
+  "id": "verify-04",
+  "request": "board.pptx 차트 값을 sales_q3.xlsx에서 월별 매출 합계를 다시 계산해서 비교해봐.",
+  "expected": {
+    "tool": "verify_numbers",
+    "args": {
+      "document": "board.pptx",
+      "source": "sales_q3.xlsx",
+      "group_by": "월",
+      "value": "매출"
+    }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "id": "save-02",
+  "request": "지금까지 성공한 단계들을 weekly-report 레시피로 남겨 두자.",
+  "expected": {
+    "tool": "save_recipe",
+    "args": {
+      "name": "weekly-report"
+    }
+  }
+}

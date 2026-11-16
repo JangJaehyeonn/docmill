@@ -1,0 +1,10 @@
+{
+  "id": "tasks-04",
+  "request": "kickoff_minutes.docx 문서에서 누가 언제까지 뭘 해야 하는지 엑셀 표로 만들어줘.",
+  "expected": {
+    "tool": "doc_to_task_table",
+    "args": {
+      "input": "kickoff_minutes.docx"
+    }
+  }
+}

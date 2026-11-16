@@ -1,0 +1,8 @@
+{
+  "id": "none-04",
+  "request": "레시피 저장이랑 실행이 무슨 차이인지 설명해 줄래?",
+  "expected": {
+    "tool": null,
+    "args": {}
+  }
+}

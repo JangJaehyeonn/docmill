@@ -1,0 +1,10 @@
+{
+  "id": "tasks-03",
+  "request": "weekly_notes.docx에 적힌 액션 아이템을 담당자별로 정리한 xlsx가 필요해.",
+  "expected": {
+    "tool": "doc_to_task_table",
+    "args": {
+      "input": "weekly_notes.docx"
+    }
+  }
+}

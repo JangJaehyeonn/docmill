@@ -83,6 +83,16 @@ uv run pre-commit install
 uv run pytest
 ```
 
+### 도구 선택 평가
+
+도구 설명을 바꾼 뒤 AI가 맞는 도구·인자를 고르는지 `evals/scenarios/`의 요청으로 평가한다.
+Claude Code CLI(구독 인증)를 쓰며 API 키는 쓰지 않는다.
+
+```bash
+uv run docmill eval --model claude-code --date 2026-11-16   # evals/reports/2026-11-16.md·.json
+uv run docmill eval --compare evals/reports/2026-11-01.json evals/reports/2026-11-16.json
+```
+
 ## 라이선스
 
 MIT. 문서 엔진의 라이선스와 출처는 [NOTICE](NOTICE)를 따른다.

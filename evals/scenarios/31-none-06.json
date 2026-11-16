@@ -1,0 +1,8 @@
+{
+  "id": "none-06",
+  "request": "파워포인트에서 슬라이드 번호 넣는 방법이 뭐야?",
+  "expected": {
+    "tool": null,
+    "args": {}
+  }
+}
