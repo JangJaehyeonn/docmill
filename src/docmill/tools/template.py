@@ -123,12 +123,12 @@ def _word_heading_positions(path: Path) -> list[tuple[int, str]]:
     """본문 문단 중 제목 1~3 문단의 (1부터 세는 문단 번호, 수준)을 문서 순서로 돌려준다."""
     with zipfile.ZipFile(path) as z:
         root = ElementTree.fromstring(z.read("word/document.xml"))
+        names = templates.style_names(ElementTree.fromstring(z.read("word/styles.xml")))
     body = root.find(f"{_W}body")
     found: list[tuple[int, str]] = []
     paragraphs = [] if body is None else [c for c in body if c.tag == f"{_W}p"]
     for number, p in enumerate(paragraphs, start=1):
-        style = p.find(f"{_W}pPr/{_W}pStyle")
-        level = templates.heading_level("" if style is None else style.get(f"{_W}val", ""))
+        level = templates.paragraph_level(p, names)
         if level:
             found.append((number, level))
     return found
@@ -141,8 +141,13 @@ def _format_heading(engine: McpEngineTool, number: int, rules: dict[str, Any]) -
         _command(engine, "format.size", {"size": rules["title_size"]})
     if rules.get("title_color"):
         _command(engine, "format.color", {"color": rules["title_color"]})
+    font: dict[str, str] = {}
     if rules.get("font"):
-        _command(engine, "format.font", {"name": rules["font"]})
+        font["name"] = rules["font"]
+    if rules.get("font_ea"):
+        font["eastAsia"] = rules["font_ea"]
+    if font:
+        _command(engine, "format.font", font)
     if rules.get("title_align"):
         _command(engine, "para.align", {"value": rules["title_align"]})
 

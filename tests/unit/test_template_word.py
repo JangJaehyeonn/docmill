@@ -69,3 +69,105 @@ def test_apply_rejects_unknown_input(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     out = json.loads(apply_template(str(tmp_path / "x.txt"), "w"))
     assert out["step"] == "input"
+
+
+_NS = (
+    'xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main" '
+    'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main"'
+)
+_THEME = (
+    f"<a:theme {_NS}><a:themeElements><a:clrScheme>"
+    '<a:accent3><a:srgbClr val="A5A5A5"/></a:accent3></a:clrScheme>'
+    '<a:fontScheme><a:majorFont><a:latin typeface="Major Sans"/><a:ea typeface="Major Ko"/>'
+    '</a:majorFont><a:minorFont><a:latin typeface="Minor Sans"/><a:ea typeface=""/>'
+    "</a:minorFont></a:fontScheme></a:themeElements></a:theme>"
+)
+
+
+def _make_docx(path: Path, styles: str, body: str, theme: bool = True) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/styles.xml", f"<w:styles {_NS}>{styles}</w:styles>")
+        z.writestr("word/document.xml", f"<w:document {_NS}><w:body>{body}</w:body></w:document>")
+        if theme:
+            z.writestr("word/theme/theme1.xml", _THEME)
+    return path
+
+
+def test_doc_defaults_fill_missing_size(tmp_path: Path) -> None:
+    styles = (
+        '<w:docDefaults><w:rPrDefault><w:rPr><w:sz w:val="24"/></w:rPr></w:rPrDefault>'
+        '<w:pPrDefault><w:pPr><w:jc w:val="both"/></w:pPr></w:pPrDefault></w:docDefaults>'
+        '<w:style w:styleId="Heading1"><w:name w:val="heading 1"/>'
+        '<w:rPr><w:color w:val="112233"/></w:rPr></w:style>'
+    )
+    rules = templates.extract_docx_rules(_make_docx(tmp_path / "d.docx", styles, ""))
+    assert rules["headings"]["1"] == {
+        "title_size": 12.0,
+        "title_align": "justify",
+        "title_color": "112233",
+    }
+
+
+def test_theme_color_and_fonts_are_resolved(tmp_path: Path) -> None:
+    styles = (
+        '<w:style w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr>'
+        '<w:rFonts w:asciiTheme="majorHAnsi" w:eastAsiaTheme="majorEastAsia"/>'
+        '<w:color w:val="FFFFFF" w:themeColor="accent3"/></w:rPr></w:style>'
+        '<w:style w:styleId="Heading2"><w:name w:val="heading 2"/><w:rPr>'
+        '<w:rFonts w:asciiTheme="minorHAnsi" w:eastAsiaTheme="minorEastAsia" w:eastAsia="Gulim"/>'
+        '<w:color w:val="404040" w:themeColor="accent3" w:themeShade="BF"/></w:rPr></w:style>'
+    )
+    rules = templates.extract_docx_rules(_make_docx(tmp_path / "t.docx", styles, ""))
+    h1, h2 = rules["headings"]["1"], rules["headings"]["2"]
+    assert h1 == {"font": "Major Sans", "font_ea": "Major Ko", "title_color": "A5A5A5"}
+    assert h2["title_color"] == "404040"  # shade present: stored literal wins
+    assert h2["font"] == "Minor Sans" and h2["font_ea"] == "Gulim"  # empty theme ea falls back
+
+
+def test_style_name_maps_to_level(tmp_path: Path) -> None:
+    styles = (
+        '<w:style w:styleId="CorpH1"><w:name w:val="heading 1"/>'
+        '<w:rPr><w:sz w:val="40"/></w:rPr></w:style>'
+    )
+    body = '<w:p><w:pPr><w:pStyle w:val="CorpH1"/></w:pPr><w:r><w:t>x</w:t></w:r></w:p>'
+    path = _make_docx(tmp_path / "n.docx", styles, body)
+    assert templates.extract_docx_rules(path)["headings"]["1"]["title_size"] == 20.0
+    assert _positions(path) == [(1, "1")]
+
+
+def _positions(path: Path) -> list[tuple[int, str]]:
+    from docmill.tools.template import _word_heading_positions
+
+    return _word_heading_positions(path)
+
+
+def test_direct_formatting_on_named_style_paragraph(tmp_path: Path) -> None:
+    styles = (
+        '<w:style w:styleId="CorpH1"><w:name w:val="heading 1"/>'
+        '<w:rPr><w:sz w:val="40"/></w:rPr></w:style>'
+    )
+    body = (
+        '<w:p><w:pPr><w:pStyle w:val="CorpH1"/></w:pPr>'
+        '<w:r><w:rPr><w:sz w:val="48"/></w:rPr><w:t>x</w:t></w:r></w:p>'
+    )
+    rules = templates.extract_docx_rules(_make_docx(tmp_path / "p.docx", styles, body))
+    assert rules["headings"]["1"]["title_size"] == 24.0
+
+
+def test_format_heading_passes_east_asian_font() -> None:
+    from typing import Any
+
+    from docmill.tools import template as tool
+
+    calls: list[tuple[str, dict[str, Any]]] = []
+
+    def fake(engine: Any, command: str, params: dict[str, Any]) -> None:
+        calls.append((command, params))
+
+    original = tool._command
+    tool._command = fake  # type: ignore[assignment]
+    try:
+        tool._format_heading(None, 3, {"font": "Arial", "font_ea": "Gulim"})  # type: ignore[arg-type]
+    finally:
+        tool._command = original
+    assert ("format.font", {"name": "Arial", "eastAsia": "Gulim"}) in calls

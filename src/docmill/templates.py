@@ -233,6 +233,7 @@ DOCX_LEVELS = ("1", "2", "3")
 
 
 def heading_level(style_id: str, name: str = "") -> str | None:
+    """스타일 ID나 표시 이름이 제목 1~3이면 수준 문자열을, 아니면 None을 돌려준다."""
     for text in (style_id, name):
         m = _HEADING.fullmatch(text)
         if m:
@@ -240,33 +241,104 @@ def heading_level(style_id: str, name: str = "") -> str | None:
     return None
 
 
+def style_names(styles: ElementTree.Element) -> dict[str, str]:
+    """`word/styles.xml`의 스타일 ID → 표시 이름 매핑을 만든다."""
+    return {s.get(f"{_W}styleId", ""): _w_val(s, "name") or "" for s in styles.iter(f"{_W}style")}
+
+
+def paragraph_level(p: ElementTree.Element, names: dict[str, str]) -> str | None:
+    """문단의 스타일(ID 또는 표시 이름)로 제목 수준을 판정한다."""
+    style_id = _w_val(p.find(f"{_W}pPr"), "pStyle") or ""
+    return heading_level(style_id, names.get(style_id, ""))
+
+
 def _w_val(node: ElementTree.Element | None, tag: str, attr: str = "val") -> str | None:
     child = None if node is None else node.find(f"{_W}{tag}")
     return None if child is None else child.get(f"{_W}{attr}")
 
 
-def _word_props(ppr: ElementTree.Element | None, rpr: ElementTree.Element | None) -> dict[str, Any]:
-    """문단 속성(`w:pPr`)과 글자 속성(`w:rPr`)에서 제목 규칙을 읽는다."""
+_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_THEME_COLORS = {"text1": "dk1", "background1": "lt1", "text2": "dk2", "background2": "lt2"}
+_HEX6 = re.compile(r"[0-9A-Fa-f]{6}")
+
+
+def _theme_color_hex(theme: ElementTree.Element | None, name: str) -> str | None:
+    if theme is None:
+        return None
+    slot = theme.find(f"{_A}themeElements/{_A}clrScheme/{_A}{_THEME_COLORS.get(name, name)}")
+    if slot is None or len(slot) == 0:
+        return None
+    node = slot[0]
+    value = node.get("val") if node.tag == f"{_A}srgbClr" else node.get("lastClr")
+    return value.upper() if value and _HEX6.fullmatch(value) else None
+
+
+def _theme_face(theme: ElementTree.Element | None, ref: str) -> str | None:
+    """`majorHAnsi`·`minorEastAsia` 같은 테마 글꼴 참조를 실제 글꼴 이름으로 푼다."""
+    if theme is None:
+        return None
+    group = "majorFont" if ref.startswith("major") else "minorFont"
+    tag = "ea" if "EastAsia" in ref else "latin"
+    node = theme.find(f"{_A}themeElements/{_A}fontScheme/{_A}{group}/{_A}{tag}")
+    return (node.get("typeface") or None) if node is not None else None
+
+
+def _word_color(rpr: ElementTree.Element | None, theme: ElementTree.Element | None) -> str | None:
+    node = None if rpr is None else rpr.find(f"{_W}color")
+    if node is None:
+        return None
+    literal = node.get(f"{_W}val", "")
+    theme_name = node.get(f"{_W}themeColor")
+    adjusted = node.get(f"{_W}themeShade") or node.get(f"{_W}themeTint")
+    if theme_name and not adjusted and (c := _theme_color_hex(theme, theme_name)):
+        return c
+    if _HEX6.fullmatch(literal):  # shade/tint: the stored literal is already adjusted
+        return literal.upper()
+    return _theme_color_hex(theme, theme_name) if theme_name else None
+
+
+def _word_fonts(
+    fonts: ElementTree.Element, theme: ElementTree.Element | None
+) -> tuple[str | None, str | None]:
+    latin = None
+    for attr in ("asciiTheme", "hAnsiTheme"):
+        if ref := fonts.get(f"{_W}{attr}"):
+            latin = _theme_face(theme, ref)
+            break
+    latin = latin or fonts.get(f"{_W}ascii") or fonts.get(f"{_W}hAnsi")
+    east = None
+    if ref := fonts.get(f"{_W}eastAsiaTheme"):
+        east = _theme_face(theme, ref)
+    return latin, east or fonts.get(f"{_W}eastAsia")
+
+
+def _word_props(
+    ppr: ElementTree.Element | None,
+    rpr: ElementTree.Element | None,
+    theme: ElementTree.Element | None = None,
+) -> dict[str, Any]:
+    """문단(`w:pPr`)·글자(`w:rPr`) 속성에서 제목 규칙을 읽는다. 테마 참조는 `theme`로 푼다."""
     out: dict[str, Any] = {}
     if jc := _w_val(ppr, "jc"):
         out["title_align"] = _DOCX_ALIGN.get(jc, jc)
     if (sz := _w_val(rpr, "sz")) and sz.isdigit():
         out["title_size"] = int(sz) / 2
-    color = _w_val(rpr, "color")
-    if color and re.fullmatch(r"[0-9A-Fa-f]{6}", color):
-        out["title_color"] = color.upper()
+    if color := _word_color(rpr, theme):
+        out["title_color"] = color
     fonts = None if rpr is None else rpr.find(f"{_W}rFonts")
     if fonts is not None:
-        face = fonts.get(f"{_W}ascii") or fonts.get(f"{_W}hAnsi")
+        face, east = _word_fonts(fonts, theme)
         if face:
             out["font"] = face
-        if east := fonts.get(f"{_W}eastAsia"):
+        if east:
             out["font_ea"] = east
     return out
 
 
-def _style_chain(styles: ElementTree.Element, style_id: str) -> list[dict[str, Any]]:
-    """스타일과 그 `basedOn` 조상의 속성을 가까운 것부터 돌려준다 (순환은 끊는다)."""
+def _style_chain(
+    styles: ElementTree.Element, style_id: str, theme: ElementTree.Element | None = None
+) -> list[dict[str, Any]]:
+    """스타일과 `basedOn` 조상, 마지막으로 `docDefaults`의 속성을 가까운 것부터 돌려준다."""
     by_id = {s.get(f"{_W}styleId", ""): s for s in styles.iter(f"{_W}style")}
     layers: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -274,16 +346,26 @@ def _style_chain(styles: ElementTree.Element, style_id: str) -> list[dict[str, A
     while current and current in by_id and current not in seen:
         seen.add(current)
         node = by_id[current]
-        layers.append(_word_props(node.find(f"{_W}pPr"), node.find(f"{_W}rPr")))
+        layers.append(_word_props(node.find(f"{_W}pPr"), node.find(f"{_W}rPr"), theme))
         current = _w_val(node, "basedOn")
+    defaults = styles.find(f"{_W}docDefaults")
+    if defaults is not None:
+        layers.append(
+            _word_props(
+                defaults.find(f"{_W}pPrDefault/{_W}pPr"),
+                defaults.find(f"{_W}rPrDefault/{_W}rPr"),
+                theme,
+            )
+        )
     return layers
 
 
-def _first_heading_paragraphs(document: ElementTree.Element) -> dict[str, ElementTree.Element]:
+def _first_heading_paragraphs(
+    document: ElementTree.Element, names: dict[str, str] | None = None
+) -> dict[str, ElementTree.Element]:
     found: dict[str, ElementTree.Element] = {}
     for p in document.iter(f"{_W}p"):
-        ppr = p.find(f"{_W}pPr")
-        level = heading_level(_w_val(ppr, "pStyle") or "")
+        level = paragraph_level(p, names or {})
         if level and level not in found:
             found[level] = p
     return found
@@ -301,20 +383,27 @@ def extract_docx_rules(source: Path) -> dict[str, Any]:
         with zipfile.ZipFile(source) as z:
             styles = ElementTree.fromstring(z.read("word/styles.xml"))
             document = ElementTree.fromstring(z.read("word/document.xml"))
+            theme = (
+                ElementTree.fromstring(z.read("word/theme/theme1.xml"))
+                if "word/theme/theme1.xml" in z.namelist()
+                else None
+            )
     except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as exc:
         raise TemplateError(f"양식 파일을 읽지 못했다: {exc}") from exc
-    direct = _first_heading_paragraphs(document)
+    names = style_names(styles)
+    direct = _first_heading_paragraphs(document, names)
     headings: dict[str, dict[str, Any]] = {}
     for style in styles.iter(f"{_W}style"):
-        level = heading_level(style.get(f"{_W}styleId", ""), _w_val(style, "name") or "")
+        style_id = style.get(f"{_W}styleId", "")
+        level = heading_level(style_id, names.get(style_id, ""))
         if level is None or level in headings:
             continue
         merged: dict[str, Any] = {}
-        layers = _style_chain(styles, style.get(f"{_W}styleId", ""))
+        layers = _style_chain(styles, style_id, theme)
         if level in direct:
             ppr = direct[level].find(f"{_W}pPr")
             run = direct[level].find(f"{_W}r/{_W}rPr")
-            layers.insert(0, _word_props(ppr, run if run is not None else None))
+            layers.insert(0, _word_props(ppr, run, theme))
         for layer in layers:
             for key, value in layer.items():
                 merged.setdefault(key, value)
