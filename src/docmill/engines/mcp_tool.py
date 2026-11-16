@@ -25,6 +25,7 @@ from mcp.client.stdio import stdio_client
 
 from docmill.engines import DEFAULT_TIMEOUT_SECONDS
 from docmill.engines.base import EngineResult
+from docmill.engines.install import find_installed
 from docmill.engines.paths import PathOutsideWorkdirError, resolve_inside
 
 logger = logging.getLogger(__name__)
@@ -108,6 +109,8 @@ class McpEngineTool:
     def _executable(self) -> str:
         configured = os.environ.get(self.env_var)
         found = shutil.which(configured) if configured else shutil.which(self.binary)
+        if found is None and not configured:
+            found = find_installed(self.binary)  # `docmill setup`으로 설치한 엔진
         if found is None:
             hint = f"{self.env_var}={configured}" if configured else f"PATH의 {self.binary}"
             raise EngineUnavailableError(
