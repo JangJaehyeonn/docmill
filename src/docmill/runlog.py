@@ -44,7 +44,8 @@ CREATE TABLE IF NOT EXISTS tool_runs (
     status TEXT NOT NULL,
     duration_ms INTEGER NOT NULL,
     ai_used INTEGER NOT NULL,
-    started_at TEXT NOT NULL
+    started_at TEXT NOT NULL,
+    recipe TEXT
 )
 """
 
@@ -74,6 +75,15 @@ def _connect(home: Path | None) -> sqlite3.Connection:
     con = sqlite3.connect(folder / DB_NAME)
     con.row_factory = sqlite3.Row
     con.execute(_SCHEMA)
+    columns = {row["name"] for row in con.execute("PRAGMA table_info(tool_runs)")}
+    if "recipe" not in columns:  # 이전 버전 DB 이관
+        try:
+            with con:
+                con.execute("ALTER TABLE tool_runs ADD COLUMN recipe TEXT")
+        except sqlite3.OperationalError as exc:
+            # 동시 실행이 먼저 열을 추가했다면 정상이다.
+            if "duplicate column" not in str(exc).lower():
+                raise
     return con
 
 
@@ -123,16 +133,31 @@ def record_run(
     duration_ms: int,
     ai_used: bool,
     started_at: str | None = None,
+    recipe: str | None = None,
     home: Path | None = None,
 ) -> None:
-    """호출 한 건을 로그에 기록한다. `started_at`은 호출 시작 시각(UTC ISO)이다."""
+    """호출 한 건을 로그에 기록한다.
+
+    `started_at`은 호출 시작 시각(UTC ISO), `recipe`는 잘리지 않은 레시피 이름이다.
+    """
     started = started_at or _now()
     con = _connect(home)
     try:
         with con:
             con.execute(
-                "INSERT INTO tool_runs VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                (run_id, tool, args_summary, result, status, duration_ms, int(ai_used), started),
+                "INSERT INTO tool_runs (run_id, tool, args_summary, result, status,"
+                " duration_ms, ai_used, started_at, recipe) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id,
+                    tool,
+                    args_summary,
+                    result,
+                    status,
+                    duration_ms,
+                    int(ai_used),
+                    started,
+                    recipe,
+                ),
             )
     finally:
         con.close()
@@ -150,6 +175,25 @@ def get_run(run_id: str, home: Path | None = None) -> dict[str, Any] | None:
     record = dict(row)
     record["ai_used"] = bool(record["ai_used"])
     return record
+
+
+def list_recipe_runs(recipe: str, home: Path | None = None) -> list[dict[str, Any]]:
+    """레시피 실행(`run_recipe`) 기록을 시작 시각 순서(오래된 것부터)로 돌려준다."""
+    con = _connect(home)
+    try:
+        rows = con.execute(
+            "SELECT * FROM tool_runs WHERE tool = 'run_recipe' AND recipe = ?"
+            " ORDER BY started_at, rowid",
+            (recipe,),
+        ).fetchall()
+    finally:
+        con.close()
+    records = []
+    for row in rows:
+        record = dict(row)
+        record["ai_used"] = bool(record["ai_used"])
+        records.append(record)
+    return records
 
 
 def _safe_record(**kwargs: Any) -> None:
@@ -181,7 +225,9 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
         result: str,
         status: str,
     ) -> None:
+        recipe = call_args.get("recipe") if name == "run_recipe" else None
         _safe_record(
+            recipe=recipe if isinstance(recipe, str) else None,
             run_id=run_id,
             tool=name,
             args_summary=summarize_args(call_args),

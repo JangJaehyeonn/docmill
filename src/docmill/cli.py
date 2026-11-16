@@ -5,6 +5,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import typer
 
 from docmill import __version__
@@ -95,11 +97,41 @@ def recipes_delete(name: str = typer.Argument(..., help="삭제할 레시피 이
     typer.echo(f"삭제: {name}")
 
 
+def _verdict(record: dict[str, Any]) -> str:
+    """로그 한 건의 검증 결과를 '통과' 또는 '실패: 원인'으로 바꾼다."""
+    import json
+    import re
+
+    text = str(record["result"])
+    error: str | None = None
+    if record["status"] != "ok":
+        error = text
+    else:
+        try:
+            data = json.loads(text)
+            error = str(data["error"]) if isinstance(data, dict) and "error" in data else None
+        except ValueError:  # result was clipped; look for the error text directly
+            found = re.search(r'"error": "([^"]*)', text)
+            error = found.group(1) if found else None
+    return "통과" if error is None else f"실패: {error}"
+
+
 @app.command()
 def history(recipe: str = typer.Argument(..., help="기록을 볼 레시피 이름")) -> None:
-    """레시피 실행 기록을 보여줍니다. FR-17 (구현 예정)."""
-    typer.echo("아직 구현되지 않았습니다: FR-17 이슈에서 구현합니다.", err=True)
-    raise typer.Exit(code=2)
+    """레시피 실행 기록을 시간·소요 시간·AI 사용 여부·검증 결과 표로 보여줍니다. FR-17."""
+    from docmill.runlog import list_recipe_runs
+
+    records = list_recipe_runs(recipe)
+    if not records:
+        typer.echo(f"실행 기록이 없습니다: {recipe}")
+        return
+    rows = [("시간", "소요(초)", "AI", "검증")]
+    for rec in records:
+        ai = "사용" if rec["ai_used"] else "사용 안 함"
+        seconds = f"{int(rec['duration_ms']) / 1000:.2f}"
+        rows.append((str(rec["started_at"]), seconds, ai, _verdict(rec)))
+    for row in rows:
+        typer.echo(" | ".join(row))
 
 
 if __name__ == "__main__":

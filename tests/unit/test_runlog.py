@@ -22,6 +22,29 @@ def test_record_and_get_run(tmp_path: Path) -> None:
     assert runlog.get_run("nope", home=tmp_path) is None
 
 
+def test_list_recipe_runs_filters_by_recipe(tmp_path: Path) -> None:
+    def add(run_id: str, tool: str, summary: str, recipe: str | None) -> None:
+        runlog.record_run(
+            run_id=run_id,
+            tool=tool,
+            args_summary=summary,
+            result="{}",
+            status="ok",
+            duration_ms=5,
+            ai_used=False,
+            recipe=recipe,
+            home=tmp_path,
+        )
+
+    long_name = "긴" * 300
+    add("a", "run_recipe", "input=x.xlsx, recipe=주간", "주간")
+    add("b", "run_recipe", "recipe=월간, recipe=주간", "월간, recipe=주간")
+    add("c", "save_recipe", "name=주간", None)
+    add("d", "run_recipe", "recipe=" + long_name[:200], long_name)
+    assert [r["run_id"] for r in runlog.list_recipe_runs(long_name, tmp_path)] == ["d"]
+    assert [r["run_id"] for r in runlog.list_recipe_runs("주간", tmp_path)] == ["a"]
+
+
 def test_summarize_redacts_and_clips() -> None:
     out = runlog.summarize_args(
         {"api_key": "abc", "note": "token=xyz", "data": "X" * 5000, "rows": [1, 2], "b": b"12"}
@@ -127,3 +150,22 @@ def test_logged_records_success_and_error(tmp_path: Path, monkeypatch: pytest.Mo
     con.close()
     assert rows["ok"]["status"] == "ok" and rows["ok"]["args_summary"] == "x=2"
     assert rows["bad"]["status"] == "error" and "boom" in rows["bad"]["result"]
+
+
+def test_connect_migrates_legacy_db_repeatedly(tmp_path: Path) -> None:
+    """recipe 열이 없는 이전 DB를 이관하고, 다시 연결해도 실패하지 않는다."""
+    import sqlite3
+
+    legacy = sqlite3.connect(tmp_path / runlog.DB_NAME)
+    legacy.execute(
+        "CREATE TABLE tool_runs (run_id TEXT PRIMARY KEY, tool TEXT NOT NULL,"
+        " args_summary TEXT NOT NULL, result TEXT NOT NULL, status TEXT NOT NULL,"
+        " duration_ms INTEGER NOT NULL, ai_used INTEGER NOT NULL, started_at TEXT NOT NULL)"
+    )
+    legacy.commit()
+    legacy.close()
+    for _ in range(2):
+        con = runlog._connect(tmp_path)
+        names = {r["name"] for r in con.execute("PRAGMA table_info(tool_runs)")}
+        con.close()
+        assert "recipe" in names
