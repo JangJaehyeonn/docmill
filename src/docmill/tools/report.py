@@ -241,6 +241,21 @@ def _publish(built: Path, final: Path) -> None:
         raise
 
 
+def _render_preview(built: Path, workdir: Path) -> Path | str:
+    """첫 슬라이드 PNG를 만든다. 성공하면 PNG 경로, 실패하면 원인 문장을 돌려준다."""
+    out_dir = workdir / "preview"
+    out_dir.mkdir()
+    try:
+        with get_tool(built, workdir) as deck:
+            rendered = deck.render(built, out_dir)
+    except Exception as exc:  # preview is optional; never fail the report because of it
+        return f"{type(exc).__name__}: {exc}"
+    if not rendered.ok:
+        return rendered.message or "미리보기를 만들지 못했다"
+    pngs = sorted(out_dir.glob("*.png"))
+    return pngs[0] if pngs else "엔진이 PNG를 만들지 않았다"
+
+
 def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
     _validate(args)
     with tempfile.TemporaryDirectory(prefix="docmill-report-") as tmp:
@@ -272,7 +287,14 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         }
         if verification is not None:
             result["verification"] = verification
+        preview = _render_preview(built, workdir)
         _publish(built, final)  # publish only after everything else succeeded
+        if isinstance(preview, Path):
+            preview_final = final.with_suffix(".png")
+            _publish(preview, preview_final)
+            result["preview"] = str(preview_final)
+        else:
+            result["preview_error"] = preview
     return result
 
 
@@ -289,7 +311,8 @@ def excel_to_report_ppt(
 
     slides는 슬라이드 수(기본 5: 표지·요약·그래프·상세·마무리), chart는 bar·line·pie,
     template은 DeckCraft 테마 이름(선택)이다. verify가 true면 그래프 값과 엑셀 합계를 대조한
-    결과(checked·matched)를 함께 돌려준다. 결과는 JSON 문자열이며, 실패하면 error와
+    결과(checked·matched)를 함께 돌려준다. 첫 슬라이드 PNG 경로는 preview에 담기고
+    (만들지 못하면 preview_error에 원인), 결과는 JSON 문자열이며, 실패하면 error와
     실패한 단계(step)를 담는다.
     """
     run_id = current_run_id() or new_run_id()
