@@ -27,11 +27,19 @@ def version() -> None:
 
 
 @app.command()
-def mcp() -> None:
-    """AI 앱에 연결할 MCP 서버를 실행합니다 (stdio). FR-01."""
+def mcp(
+    http: bool = typer.Option(False, "--http", help="stdio 대신 HTTP MCP 서버로 실행합니다."),
+    host: str = typer.Option("127.0.0.1", "--host", help="HTTP 모드에서 바인딩할 주소"),
+    port: int = typer.Option(8000, "--port", help="HTTP 모드에서 열 포트"),
+) -> None:
+    """AI 앱에 연결할 MCP 서버를 실행합니다 (기본 stdio, --http면 원격 HTTP). FR-01, FR-19."""
     from docmill.server import build_server
 
-    build_server().run()
+    server = build_server()
+    if http:
+        server.run("streamable-http", host=host, port=port)
+    else:
+        server.run()
 
 
 @app.command()

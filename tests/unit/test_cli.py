@@ -56,3 +56,30 @@ def test_run_prints_result_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     result = runner.invoke(app, ["run", "r", "--input", "a.xlsx"])
     assert result.exit_code == 0
     assert result.stdout.strip() == "/tmp/result.pptx"
+
+
+def _capture_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> list[tuple[tuple[object, ...], dict[str, object]]]:
+    from mcp.server.mcpserver import MCPServer
+
+    calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+
+    def fake_run(self: MCPServer, *args: object, **kwargs: object) -> None:
+        calls.append((args, kwargs))
+
+    monkeypatch.setattr(MCPServer, "run", fake_run)
+    return calls
+
+
+def test_mcp_http_option_runs_streamable_http(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _capture_run(monkeypatch)
+    result = runner.invoke(app, ["mcp", "--http", "--port", "9123"])
+    assert result.exit_code == 0
+    assert calls == [(("streamable-http",), {"host": "127.0.0.1", "port": 9123})]
+
+
+def test_mcp_default_runs_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = _capture_run(monkeypatch)
+    assert runner.invoke(app, ["mcp"]).exit_code == 0
+    assert calls == [((), {})]
