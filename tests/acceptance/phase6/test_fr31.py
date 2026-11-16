@@ -140,7 +140,8 @@ def test_xlsx_cell_range_is_guarded(tmp_path: Path) -> None:
     c10 = re.search(r'<c r="C10".*?</c>', sheet, re.S)
     c10_before = re.search(r'<c r="C10".*?</c>', original, re.S)
     assert c10 and c10_before and c10.group(0) == c10_before.group(0)
-    c2 = re.search(r'<c r="C2"[^>]*>.*?<v>([^<]+)</v>', sheet, re.S)
+    c2_cell = re.search(r'<c r="C2"[^>]*>.*?</c>', sheet, re.S)
+    c2 = re.search(r"<v>([^<]+)</v>", c2_cell.group(0)) if c2_cell else None
     assert c2 and float(c2.group(1)) == 999, "범위 안 셀 C2는 요청한 값이어야 한다"
 
 
