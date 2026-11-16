@@ -39,6 +39,17 @@ export async function resolveInWorkspace(workspace: string, requested: string): 
   return path.relative(root, real).split(path.sep).join("/");
 }
 
+/** 내려가기 직전에 다시 확인한다: 심볼릭 링크가 아니고 실제 경로가 작업 폴더 안인 디렉터리만 true. */
+async function isSafeDir(root: string, dir: string): Promise<boolean> {
+  try {
+    const info = await fs.lstat(dir);
+    if (info.isSymbolicLink() || !info.isDirectory()) return false;
+    return isInside(root, await fs.realpath(dir));
+  } catch {
+    return false;
+  }
+}
+
 /** 작업 폴더 안의 문서 파일을 이름순(코드 포인트 순)으로 나열한다. */
 export async function listFiles(workspace: string): Promise<string[]> {
   const root = await fs.realpath(workspace);
@@ -47,7 +58,9 @@ export async function listFiles(workspace: string): Promise<string[]> {
     for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
       if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
       const full = path.join(dir, entry.name);
-      if (entry.isDirectory()) await walk(full);
+      if (entry.isDirectory()) {
+        if (await isSafeDir(root, full)) await walk(full);
+      }
       else if (entry.isFile() && DOC_EXTENSIONS.includes(path.extname(entry.name).toLowerCase())) {
         found.push(path.relative(root, full).split(path.sep).join("/"));
       }

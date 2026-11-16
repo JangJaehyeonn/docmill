@@ -2,6 +2,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { app, BrowserWindow } from "electron";
+import { ReadyLineParser } from "../src/shared/readyLine";
 
 function startServer(): Promise<string> {
   const server = spawn(process.execPath, [path.join(__dirname, "..", "server.js")], {
@@ -10,11 +11,11 @@ function startServer(): Promise<string> {
   });
   app.on("quit", () => server.kill());
   return new Promise((resolve, reject) => {
-    let buffer = "";
-    server.stdout.on("data", (chunk: Buffer) => {
-      buffer += chunk.toString("utf-8");
-      const match = /^READY (\S+)$/m.exec(buffer);
-      if (match?.[1]) resolve(match[1]);
+    const parser = new ReadyLineParser();
+    server.stdout.setEncoding("utf-8");
+    server.stdout.on("data", (chunk: string) => {
+      const url = parser.push(chunk);
+      if (url) resolve(url);
     });
     server.on("exit", () => reject(new Error("studio 서버가 먼저 종료되었습니다.")));
   });

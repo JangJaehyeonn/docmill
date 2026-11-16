@@ -23,6 +23,17 @@ describe("workspace", () => {
     expect(await listFiles(root)).toEqual(["a.xlsx", "b.docx"]);
   });
 
+  it("skips symlinked directories that point outside the workspace", async () => {
+    const { root, outside } = setup();
+    const outsideDir = path.join(path.dirname(outside), "outside-dir");
+    mkdirSync(outsideDir);
+    writeFileSync(path.join(outsideDir, "leak.docx"), "x");
+    symlinkSync(outsideDir, path.join(root, "linked"), "dir");
+    mkdirSync(path.join(root, "sub"));
+    writeFileSync(path.join(root, "sub", "c.pptx"), "x");
+    expect(await listFiles(root)).toEqual(["a.xlsx", "b.docx", "sub/c.pptx"]);
+  });
+
   it("resolves files inside the workspace", async () => {
     const { root } = setup();
     expect(await resolveInWorkspace(root, "a.xlsx")).toBe("a.xlsx");
