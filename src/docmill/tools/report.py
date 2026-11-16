@@ -21,6 +21,7 @@ from xml.etree import ElementTree as ET
 
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
+from docmill.inputschema import map_header
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.provenance import (
     ProvenanceError,
@@ -231,7 +232,7 @@ def read_table(source: Path, workdir: Path) -> SheetTable:
         sheet=str(data.get("sheet") or ""),
         first_row=first_row,
         first_col=first_col,
-        values=rows if isinstance(rows, list) else [],
+        values=map_header(rows) if isinstance(rows, list) else [],  # FR-22 column map
     )
 
 

@@ -10,7 +10,7 @@ from typing import Any
 import typer
 
 from docmill import __version__
-from docmill.recipes import RecipeError, delete_recipe, list_recipes, rename_recipe
+from docmill.recipes import RecipeError, delete_recipe, list_recipes, rename_recipe, show_recipe
 
 app = typer.Typer(
     name="docmill",
@@ -61,25 +61,44 @@ def setup() -> None:
         raise typer.Exit(code=1)
 
 
+_MAP_OPTION = typer.Option(
+    None, "--map", help="바뀐 열 이름을 원래 열로 대응합니다 (새 열=원래 열, 여러 번 가능)"
+)
+
+
 @app.command()
 def run(
     recipe: str = typer.Argument(..., help="실행할 레시피 이름"),
     input_path: str = typer.Option(..., "--input", help="레시피에 넣을 입력 파일 경로"),
     out: str | None = typer.Option(None, "--out", help="결과를 저장할 폴더"),
+    column_map: list[str] | None = _MAP_OPTION,
 ) -> None:
-    """레시피를 AI 없이 실행합니다. 성공하면 결과 파일 경로를 출력하고 종료 코드 0을 돌려줍니다."""
+    """레시피를 AI 없이 실행합니다. 성공하면 결과 파일 경로를 출력하고 종료 코드 0을 돌려줍니다.
+
+    입력 열 구조가 레시피와 다르면 결과 파일을 쓰지 않고 열 매핑 제안을 JSON으로 출력합니다. FR-22.
+    """
     import json
 
+    from docmill.inputschema import SchemaError, parse_column_map, using_column_map
     from docmill.runlog import logged
     from docmill.runner import run_recipe
     from docmill.webhook import send_summary
 
-    result = json.loads(logged(run_recipe, ai_used=False)(recipe, input_path, out))
+    try:
+        mapping = parse_column_map(column_map or [])
+    except SchemaError as exc:
+        typer.echo(f"실패(map): {exc}", err=True)
+        raise typer.Exit(code=2) from exc
+    with using_column_map(mapping):
+        result = json.loads(logged(run_recipe, ai_used=False)(recipe, input_path, out))
     ok = "error" not in result
     summary = {"recipe": recipe, "status": "success" if ok else "failure"}
     summary.update({"path": result["path"]} if ok else {"error": str(result["error"])})
     send_summary(summary)
     if not ok:
+        if "suggestions" in result:
+            keys = ("error", "step", "missing", "suggestions")
+            typer.echo(json.dumps({k: result[k] for k in keys}, ensure_ascii=False, indent=2))
         typer.echo(f"실패({result.get('step', 'unexpected')}): {result['error']}", err=True)
         raise typer.Exit(code=1)
     typer.echo(result["path"])
@@ -112,6 +131,34 @@ def recipes_rename(
         typer.echo(f"이름 변경: {old} -> {rename_recipe(old, new)}")
     except RecipeError as exc:
         raise _fail(exc) from exc
+
+
+@recipes_app.command("show")
+def recipes_show(
+    name: str = typer.Argument(..., help="볼 레시피 이름"),
+    as_json: bool = typer.Option(False, "--json", help="레시피 내용을 JSON 그대로 출력합니다"),
+) -> None:
+    """레시피의 단계와 저장된 입력 구조(시트·열 이름·열 형식)를 보여줍니다. FR-22."""
+    import json
+
+    try:
+        data = show_recipe(name)
+    except RecipeError as exc:
+        raise _fail(exc) from exc
+    if as_json:
+        typer.echo(json.dumps(data, ensure_ascii=False, indent=2))
+        return
+    typer.echo(f"레시피: {data.get('name', name)}")
+    for number, step in enumerate(data.get("steps", []), start=1):
+        typer.echo(
+            f"{number}. {step.get('tool')} {json.dumps(step.get('args', {}), ensure_ascii=False)}"
+        )
+    schema = data.get("input_schema")
+    if isinstance(schema, dict):
+        typer.echo(f"시트: {', '.join(schema.get('sheets', []))}")
+        types = schema.get("column_types", {})
+        columns = [f"{c}({types.get(c, '?')})" for c in schema.get("columns", [])]
+        typer.echo(f"열: {', '.join(columns)}")
 
 
 @recipes_app.command("delete")
