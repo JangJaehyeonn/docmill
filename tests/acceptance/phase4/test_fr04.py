@@ -43,9 +43,10 @@ def _setup(home: Path, extra_env: dict[str, str] | None = None) -> subprocess.Co
 
 
 def _assert_versions(stdout: str) -> None:
+    lines = stdout.splitlines()
     for engine in ENGINES:
-        line = next((ln for ln in stdout.splitlines() if engine in ln), "")
-        assert re.search(r"\d+\.\d+\.\d+", line), f"{engine} 버전이 출력되지 않았다: {stdout}"
+        found = any(engine in ln and re.search(r"\d+\.\d+\.\d+", ln) for ln in lines)
+        assert found, f"{engine} 버전이 출력되지 않았다: {stdout}"
 
 
 @pytest.mark.fr("FR-04")
