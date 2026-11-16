@@ -80,17 +80,27 @@ _THEME = (
     f"<a:theme {_NS}><a:themeElements><a:clrScheme>"
     '<a:accent3><a:srgbClr val="A5A5A5"/></a:accent3></a:clrScheme>'
     '<a:fontScheme><a:majorFont><a:latin typeface="Major Sans"/><a:ea typeface="Major Ko"/>'
+    '<a:font script="Hang" typeface="Major Hang"/>'
     '</a:majorFont><a:minorFont><a:latin typeface="Minor Sans"/><a:ea typeface=""/>'
+    '<a:font script="Jpan" typeface="Minor Jpan"/><a:font script="Hang" typeface="Minor Hang"/>'
     "</a:minorFont></a:fontScheme></a:themeElements></a:theme>"
 )
 
 
-def _make_docx(path: Path, styles: str, body: str, theme: bool = True) -> Path:
+def _make_docx(
+    path: Path, styles: str, body: str, theme: bool = True, ea_lang: str | None = None
+) -> Path:
     with zipfile.ZipFile(path, "w") as z:
         z.writestr("word/styles.xml", f"<w:styles {_NS}>{styles}</w:styles>")
         z.writestr("word/document.xml", f"<w:document {_NS}><w:body>{body}</w:body></w:document>")
         if theme:
             z.writestr("word/theme/theme1.xml", _THEME)
+        if ea_lang:
+            z.writestr(
+                "word/settings.xml",
+                f'<w:settings {_NS}><w:themeFontLang w:val="en-US" w:eastAsia="{ea_lang}"/>'
+                "</w:settings>",
+            )
     return path
 
 
@@ -123,6 +133,31 @@ def test_theme_color_and_fonts_are_resolved(tmp_path: Path) -> None:
     assert h1 == {"font": "Major Sans", "font_ea": "Major Ko", "title_color": "A5A5A5"}
     assert h2["title_color"] == "404040"  # shade present: stored literal wins
     assert h2["font"] == "Minor Sans" and h2["font_ea"] == "Gulim"  # empty theme ea falls back
+
+
+_EA_THEME_STYLES = (
+    '<w:style w:styleId="Heading1"><w:name w:val="heading 1"/><w:rPr>'
+    '<w:rFonts w:eastAsiaTheme="majorEastAsia"/></w:rPr></w:style>'
+    '<w:style w:styleId="Heading2"><w:name w:val="heading 2"/><w:rPr>'
+    '<w:rFonts w:eastAsiaTheme="minorEastAsia"/></w:rPr></w:style>'
+)
+
+
+@pytest.mark.parametrize(
+    ("lang", "expected"), [("ko-KR", "Minor Hang"), ("ja-JP", "Minor Jpan"), ("zh-CN", None)]
+)
+def test_empty_theme_ea_uses_theme_font_lang_script(
+    tmp_path: Path, lang: str, expected: str | None
+) -> None:
+    path = _make_docx(tmp_path / "l.docx", _EA_THEME_STYLES, "", ea_lang=lang)
+    headings = templates.extract_docx_rules(path)["headings"]
+    assert headings["1"]["font_ea"] == "Major Ko"  # non-empty a:ea wins over script fonts
+    assert headings.get("2", {}).get("font_ea") == expected
+
+
+def test_empty_theme_ea_without_settings_stays_unresolved(tmp_path: Path) -> None:
+    headings = templates.extract_docx_rules(_make_docx(tmp_path / "n.docx", _EA_THEME_STYLES, ""))
+    assert "2" not in headings
 
 
 def test_theme_color_aliases_map_to_drawingml_slots() -> None:

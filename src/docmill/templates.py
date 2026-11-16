@@ -294,6 +294,31 @@ def _theme_face(theme: ElementTree.Element | None, ref: str) -> str | None:
     return (node.get("typeface") or None) if node is not None else None
 
 
+_EA_SCRIPTS = {"ko-KR": "Hang", "ja-JP": "Jpan", "zh-CN": "Hans", "zh-TW": "Hant"}
+
+
+def _localize_theme(
+    theme: ElementTree.Element | None, settings: ElementTree.Element | None
+) -> ElementTree.Element | None:
+    """빈 테마 `a:ea`를 `themeFontLang` 동아시아 언어의 `a:font script` 글꼴로 채운다."""
+    lang = _w_val(settings, "themeFontLang", "eastAsia")
+    script = _EA_SCRIPTS.get(lang or "")
+    if theme is None or script is None:
+        return theme
+    for group in ("majorFont", "minorFont"):
+        node = theme.find(f"{_A}themeElements/{_A}fontScheme/{_A}{group}")
+        ea = None if node is None else node.find(f"{_A}ea")
+        if node is None or (ea is not None and ea.get("typeface")):
+            continue
+        for font in node.iter(f"{_A}font"):
+            if font.get("script") == script and font.get("typeface"):
+                if ea is None:
+                    ea = ElementTree.SubElement(node, f"{_A}ea")
+                ea.set("typeface", font.get("typeface", ""))
+                break
+    return theme
+
+
 def _word_color(rpr: ElementTree.Element | None, theme: ElementTree.Element | None) -> str | None:
     node = None if rpr is None else rpr.find(f"{_W}color")
     if node is None:
@@ -394,13 +419,11 @@ def extract_docx_rules(source: Path) -> dict[str, Any]:
         with zipfile.ZipFile(source) as z:
             styles = ElementTree.fromstring(z.read("word/styles.xml"))
             document = ElementTree.fromstring(z.read("word/document.xml"))
-            theme = (
-                ElementTree.fromstring(z.read("word/theme/theme1.xml"))
-                if "word/theme/theme1.xml" in z.namelist()
-                else None
-            )
+            theme = _read_xml(z, "word/theme/theme1.xml")
+            settings = _read_xml(z, "word/settings.xml")
     except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as exc:
         raise TemplateError(f"양식 파일을 읽지 못했다: {exc}") from exc
+    theme = _localize_theme(theme, settings)
     names = style_names(styles)
     direct = _first_heading_paragraphs(document, names)
     headings: dict[str, dict[str, Any]] = {}

@@ -20,7 +20,7 @@ FR-25는 FR-07·FR-18을 워드(docx)로 넓힌다. 워드 제목은 1~3 수준�
 
 ## 결과
 - 표 안의 제목 문단은 적용 대상이 아니다.
-- 테마 색·글꼴(`themeColor`, `asciiTheme`/`hAnsiTheme`/`eastAsiaTheme`)은 `word/theme/theme1.xml`로 풀어 실제 값을 저장한다. `themeShade`/`themeTint`가 있으면 이미 계산된 `w:val`을 쓴다. 테마 파일이 없거나 값을 못 풀면 그 속성은 빠진다.
+- 테마 색·글꼴(`themeColor`, `asciiTheme`/`hAnsiTheme`/`eastAsiaTheme`)은 `word/theme/theme1.xml`로 풀어 실제 값을 저장한다. `themeShade`/`themeTint`가 있으면 이미 계산된 `w:val`을 쓴다. 테마의 `a:ea`가 비어 있으면 `word/settings.xml`의 `w:themeFontLang@w:eastAsia` 언어(ko-KR→Hang, ja-JP→Jpan, zh-CN→Hans, zh-TW→Hant)에 맞는 `a:font script=...` 글꼴을 쓴다. 테마 파일이 없거나 값을 못 풀면 그 속성은 빠진다.
 - 스타일 체인 끝에 `w:docDefaults`를 최하위 계층으로 병합한다.
 - 제목 스타일은 ID와 표시 이름(`styles.xml`) 모두로 인식한다. 추출과 적용이 같은 매핑을 쓴다.
 - 동아시아 글꼴 `font_ea`는 WordCraft `format.font`의 `eastAsia` 인자(`wordcraft-cli commands --json`로 확인)로 함께 적용한다.
