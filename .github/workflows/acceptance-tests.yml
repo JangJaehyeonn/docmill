@@ -7,10 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: "인수 테스트를 만들 Phase 번호 (1~4)"
+        description: "인수 테스트를 만들 Phase 번호 (1~5)"
         required: true
         type: choice
-        options: ["1", "2", "3", "4"]
+        options: ["1", "2", "3", "4", "5"]
 
 permissions: {}
 
