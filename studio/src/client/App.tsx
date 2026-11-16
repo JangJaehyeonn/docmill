@@ -1,11 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { matchByName } from "./pick";
+import { resolvePicked } from "./pick";
+import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
 
 async function getJson<T>(url: string): Promise<T> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`${url} 요청 실패 (${res.status})`);
   return (await res.json()) as T;
+}
+
+/** Electron preload 가 노출한 실제 경로 조회 함수. 브라우저에서는 없다. */
+function realPathOf(file: File): string | null {
+  const bridge = (window as { docmillStudio?: { pathForFile?: (f: File) => string } })
+    .docmillStudio;
+  return bridge?.pathForFile?.(file) || null;
 }
 
 const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
@@ -19,6 +27,8 @@ export function App() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [choices, setChoices] = useState<string[]>([]);
   const picker = useRef<HTMLInputElement>(null);
+  // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
+  const pendingOpen = useRef<string | null>(readOpenParam(window.location.search));
 
   const refresh = useCallback(async () => {
     const [f, r] = await Promise.all([
@@ -63,37 +73,40 @@ export function App() {
     [refreshOrReport],
   );
 
+  // 목록을 (다시) 불러오고, 아직 처리하지 못한 시작 open 이 있을 때만 그 파일을 연다.
   const load = useCallback(async () => {
-    const target = new URLSearchParams(window.location.search).get("open");
-    if (!(await refreshOrReport())) return;
+    const ok = await refreshOrReport();
+    const step = afterRefresh(pendingOpen.current, ok);
+    pendingOpen.current = step.pending;
+    if (!ok) return;
     setError(null);
-    if (target) await openPath(target);
+    if (step.open) await openPath(step.open);
   }, [refreshOrReport, openPath]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  // 브라우저는 파일의 전체 경로를 알려 주지 않으므로 이름으로 작업 폴더의 파일을 찾는다.
-  // 같은 이름이 여러 개면 다른 파일을 잘못 열지 않도록 사용자가 상대 경로로 고르게 한다.
-  const openByName = (name: string): void => {
-    const matches = matchByName(files, name);
-    if (matches.length === 1 && matches[0] !== undefined) {
+  // 고른 파일의 실제 경로(Electron)가 있으면 그대로 서버에 넘겨 작업 폴더 밖이면 거부되게 한다.
+  // 브라우저는 실제 경로를 알려 주지 않으므로 이름이 같은 작업 폴더 파일을 자동으로 열지 않고 고르게 한다.
+  const openPicked = (file: File): void => {
+    const result = resolvePicked(files, file.name, realPathOf(file));
+    if (result.kind === "open") {
       setChoices([]);
-      void openPath(matches[0]);
-    } else if (matches.length > 1) {
+      void openPath(result.path);
+    } else if (result.kind === "choose") {
       setError(null);
-      setChoices(matches);
+      setChoices(result.paths);
     } else {
       setChoices([]);
-      setError(`'${name}' 파일은 작업 폴더에 없습니다. 작업 폴더 안의 파일만 열 수 있습니다.`);
+      setError(`'${file.name}' 파일은 작업 폴더에 없습니다. 작업 폴더 안의 파일만 열 수 있습니다.`);
     }
   };
 
   const onDrop = (e: React.DragEvent): void => {
     e.preventDefault();
     const dropped = e.dataTransfer.files[0];
-    if (dropped) openByName(dropped.name);
+    if (dropped) openPicked(dropped);
   };
 
   const active = tabState.tabs.find((t) => t.path === tabState.active);
@@ -137,7 +150,10 @@ export function App() {
 
       {choices.length > 0 && (
         <section role="region" aria-label="열 파일 고르기" className="alert">
-          <p>같은 이름의 파일이 여러 개 있습니다. 열 파일을 고르세요.</p>
+          <p>
+            고른 파일의 실제 위치를 확인할 수 없습니다. 작업 폴더에서 이름이 같은 파일을 찾았으니
+            열 파일을 직접 고르세요.
+          </p>
           <ul>
             {choices.map((f) => (
               <li key={f}>
@@ -167,7 +183,7 @@ export function App() {
             accept=".xlsx,.pptx,.docx,.hwp,.hwpx"
             onChange={(e) => {
               const picked = e.target.files?.[0];
-              if (picked) openByName(picked.name);
+              if (picked) openPicked(picked);
               e.target.value = "";
             }}
           />

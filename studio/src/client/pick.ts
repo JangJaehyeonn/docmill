@@ -7,3 +7,24 @@ export function baseName(p: string): string {
 export function matchByName(files: readonly string[], name: string): string[] {
   return files.filter((f) => baseName(f) === name);
 }
+
+/** 파일 선택기·끌어다 놓기로 고른 파일을 어떻게 처리할지. */
+export type PickResult =
+  | { kind: "open"; path: string }
+  | { kind: "choose"; paths: string[] }
+  | { kind: "missing" };
+
+/**
+ * 고른 파일의 처리 방법을 정한다.
+ * 실제 경로(Electron)가 있으면 그 경로를 그대로 연다. 작업 폴더 밖인지는 서버가 판단한다.
+ * 실제 경로가 없으면(브라우저) 이름이 같은 파일이 하나뿐이어도 자동으로 열지 않고 사용자가 고르게 한다.
+ */
+export function resolvePicked(
+  files: readonly string[],
+  name: string,
+  realPath: string | null,
+): PickResult {
+  if (realPath) return { kind: "open", path: realPath };
+  const matches = matchByName(files, name);
+  return matches.length > 0 ? { kind: "choose", paths: matches } : { kind: "missing" };
+}

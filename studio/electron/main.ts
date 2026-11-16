@@ -23,7 +23,13 @@ function startServer(): Promise<string> {
 
 void app.whenReady().then(async () => {
   const url = await startServer();
-  const win = new BrowserWindow({ width: 1440, height: 900, title: "docmill studio" });
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    title: "docmill studio",
+    // preload 는 파일 선택기·끌어다 놓기로 고른 파일의 실제 경로를 화면에 알려 준다.
+    webPreferences: { preload: path.join(__dirname, "preload.cjs") },
+  });
   await win.loadURL(url);
 });
 

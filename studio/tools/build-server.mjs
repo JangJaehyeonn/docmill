@@ -20,3 +20,12 @@ await build({
   external: ["electron"],
   outfile: "out/electron/main.cjs",
 });
+await build({
+  entryPoints: ["electron/preload.ts"],
+  bundle: true,
+  platform: "node",
+  target: "node22",
+  format: "cjs",
+  external: ["electron"],
+  outfile: "out/electron/preload.cjs",
+});
