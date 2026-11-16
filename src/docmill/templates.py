@@ -226,10 +226,111 @@ def extract_rules(source: Path) -> dict[str, Any]:
     raise TemplateError("양식에서 제목 서식을 찾지 못했다")
 
 
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_HEADING = re.compile(r"(?:Heading|heading |제목\s?)([123])")
+_DOCX_ALIGN = {"both": "justify", "start": "left", "end": "right"}
+DOCX_LEVELS = ("1", "2", "3")
+
+
+def heading_level(style_id: str, name: str = "") -> str | None:
+    for text in (style_id, name):
+        m = _HEADING.fullmatch(text)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _w_val(node: ElementTree.Element | None, tag: str, attr: str = "val") -> str | None:
+    child = None if node is None else node.find(f"{_W}{tag}")
+    return None if child is None else child.get(f"{_W}{attr}")
+
+
+def _word_props(ppr: ElementTree.Element | None, rpr: ElementTree.Element | None) -> dict[str, Any]:
+    """문단 속성(`w:pPr`)과 글자 속성(`w:rPr`)에서 제목 규칙을 읽는다."""
+    out: dict[str, Any] = {}
+    if jc := _w_val(ppr, "jc"):
+        out["title_align"] = _DOCX_ALIGN.get(jc, jc)
+    if (sz := _w_val(rpr, "sz")) and sz.isdigit():
+        out["title_size"] = int(sz) / 2
+    color = _w_val(rpr, "color")
+    if color and re.fullmatch(r"[0-9A-Fa-f]{6}", color):
+        out["title_color"] = color.upper()
+    fonts = None if rpr is None else rpr.find(f"{_W}rFonts")
+    if fonts is not None:
+        face = fonts.get(f"{_W}ascii") or fonts.get(f"{_W}hAnsi")
+        if face:
+            out["font"] = face
+        if east := fonts.get(f"{_W}eastAsia"):
+            out["font_ea"] = east
+    return out
+
+
+def _style_chain(styles: ElementTree.Element, style_id: str) -> list[dict[str, Any]]:
+    """스타일과 그 `basedOn` 조상의 속성을 가까운 것부터 돌려준다 (순환은 끊는다)."""
+    by_id = {s.get(f"{_W}styleId", ""): s for s in styles.iter(f"{_W}style")}
+    layers: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    current: str | None = style_id
+    while current and current in by_id and current not in seen:
+        seen.add(current)
+        node = by_id[current]
+        layers.append(_word_props(node.find(f"{_W}pPr"), node.find(f"{_W}rPr")))
+        current = _w_val(node, "basedOn")
+    return layers
+
+
+def _first_heading_paragraphs(document: ElementTree.Element) -> dict[str, ElementTree.Element]:
+    found: dict[str, ElementTree.Element] = {}
+    for p in document.iter(f"{_W}p"):
+        ppr = p.find(f"{_W}pPr")
+        level = heading_level(_w_val(ppr, "pStyle") or "")
+        if level and level not in found:
+            found[level] = p
+    return found
+
+
+def extract_docx_rules(source: Path) -> dict[str, Any]:
+    """양식 docx의 제목 1~3 스타일에서 수준별 규칙을 뽑는다.
+
+    결과는 수준 1의 규칙(`title_*`·`font`)에 수준별 규칙 `headings`와 `kind: docx`를 더한 dict다.
+    첫 제목 문단의 직접 서식이 있으면 스타일 값보다 우선한다. 못 찾으면 `TemplateError`.
+    """
+    if not source.is_file():
+        raise TemplateError(f"읽을 수 있는 .docx 양식 파일이 아니다: {source}")
+    try:
+        with zipfile.ZipFile(source) as z:
+            styles = ElementTree.fromstring(z.read("word/styles.xml"))
+            document = ElementTree.fromstring(z.read("word/document.xml"))
+    except (zipfile.BadZipFile, ElementTree.ParseError, KeyError) as exc:
+        raise TemplateError(f"양식 파일을 읽지 못했다: {exc}") from exc
+    direct = _first_heading_paragraphs(document)
+    headings: dict[str, dict[str, Any]] = {}
+    for style in styles.iter(f"{_W}style"):
+        level = heading_level(style.get(f"{_W}styleId", ""), _w_val(style, "name") or "")
+        if level is None or level in headings:
+            continue
+        merged: dict[str, Any] = {}
+        layers = _style_chain(styles, style.get(f"{_W}styleId", ""))
+        if level in direct:
+            ppr = direct[level].find(f"{_W}pPr")
+            run = direct[level].find(f"{_W}r/{_W}rPr")
+            layers.insert(0, _word_props(ppr, run if run is not None else None))
+        for layer in layers:
+            for key, value in layer.items():
+                merged.setdefault(key, value)
+        if merged:
+            headings[level] = merged
+    if not headings:
+        raise TemplateError("양식에서 제목 1~3 서식을 찾지 못했다")
+    first = headings[min(headings)]
+    return {**first, "headings": dict(sorted(headings.items())), "kind": "docx"}
+
+
 def register_template(name: str, source: Path | str, home: Path | None = None) -> dict[str, Any]:
-    """양식 PPT에서 규칙을 뽑아 `name`으로 저장하고, 저장한 규칙을 돌려준다."""
+    """양식 파일(.pptx 또는 .docx)에서 규칙을 뽑아 `name`으로 저장하고, 저장한 규칙을 돌려준다."""
     target = _path(name, home)
-    rules = extract_rules(Path(source))
+    path = Path(source)
+    rules = extract_docx_rules(path) if path.suffix.lower() == ".docx" else extract_rules(path)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(rules, ensure_ascii=False, sort_keys=True), encoding="utf-8")
     return rules
