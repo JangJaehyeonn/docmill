@@ -18,11 +18,16 @@ import sys
 from _gh import closed_frs, depends_of, fr_of, gh_json, label_names, phase_of
 
 BLOCKING = {"needs-human", "in-progress"}
+# 복잡한 구현은 이슈에 `opus` 라벨을 붙여 Opus로, 나머지는 Sonnet으로 한다.
+OPUS_LABEL = "opus"
+OPUS = "claude-opus-5-5"
+SONNET = "claude-sonnet-5-5"
 
 
-def emit(issue: str = "", fr: str = "") -> None:
+def emit(issue: str = "", fr: str = "", model: str = SONNET) -> None:
     print(f"issue={issue}")
     print(f"fr={fr}")
+    print(f"model={model}")
 
 
 def main() -> int:
@@ -45,7 +50,7 @@ def main() -> int:
         "number,labels,body",
     )
     done = closed_frs()
-    candidates: list[tuple[int, int, str]] = []
+    candidates: list[tuple[int, int, str, str]] = []
     for issue in issues:
         labels = label_names(issue)
         if labels & BLOCKING:
@@ -55,16 +60,17 @@ def main() -> int:
             continue
         if not set(depends_of(issue.get("body", ""))) <= done:
             continue
-        candidates.append((phase_of(labels), int(issue["number"]), fr))
+        model = OPUS if OPUS_LABEL in labels else SONNET
+        candidates.append((phase_of(labels), int(issue["number"]), fr, model))
 
     if not candidates:
         print("작업할 수 있는 이슈가 없습니다.", file=sys.stderr)
         emit()
         return 0
 
-    _, number, fr = sorted(candidates)[0]
-    print(f"다음 작업: #{number} ({fr})", file=sys.stderr)
-    emit(str(number), fr)
+    _, number, fr, model = sorted(candidates)[0]
+    print(f"다음 작업: #{number} ({fr}, {model})", file=sys.stderr)
+    emit(str(number), fr, model)
     return 0
 
 
