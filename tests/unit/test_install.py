@@ -71,3 +71,33 @@ def test_find_installed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert install.find_installed("gridcraft-cli") is None
     path = _fake_binary(ENGINES[0])
     assert install.find_installed("gridcraft-cli") == str(path)
+
+
+def test_version_must_match_exactly(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    spec = ENGINES[0]
+    path = _fake_binary(spec)
+    path.write_text(f"#!/bin/sh\necho gridcraft-cli {spec.version}1\n")
+    with pytest.raises(EngineInstallError):
+        install.ensure_installed(spec)
+
+
+def test_find_installed_returns_absolute_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DOCMILL_HOME", "rel-home")
+    _fake_binary(ENGINES[0])
+    assert Path(str(install.find_installed("gridcraft-cli"))).is_absolute()
+
+
+def test_setup_continues_after_os_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+
+    def fail(spec: install.EngineSpec) -> Path:
+        raise PermissionError("denied")
+
+    monkeypatch.setattr(install, "_download", fail)
+    result = runner.invoke(app, ["setup"])
+    assert result.exit_code == 1
+    assert all(spec.display in result.output for spec in ENGINES)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import platform
+import re
 import shutil
 import subprocess
 import tarfile
@@ -57,7 +58,10 @@ def engines_dir() -> Path:
 
 def installed_binary(spec: EngineSpec) -> Path | None:
     """설치된 엔진 실행 파일 경로. 없으면 `None`."""
-    folder = engines_dir() / f"{spec.name}-{spec.version}"
+    return _find_binary(engines_dir() / f"{spec.name}-{spec.version}", spec)
+
+
+def _find_binary(folder: Path, spec: EngineSpec) -> Path | None:
     if not folder.is_dir():
         return None
     found = sorted(p for p in folder.rglob(spec.binary) if p.is_file())
@@ -69,7 +73,7 @@ def find_installed(binary: str) -> str | None:
     for spec in ENGINES:
         if spec.binary == binary:
             path = installed_binary(spec)
-            return str(path) if path else None
+            return str(path.resolve()) if path else None
     return None
 
 
@@ -107,10 +111,22 @@ def _verify_checksum(archive: Path, sums: Path) -> None:
         raise EngineInstallError(f"체크섬이 맞지 않는다: {archive.name}")
 
 
+def _check_members(tar: tarfile.TarFile, dest: Path) -> None:
+    root = dest.resolve()
+    for member in tar.getmembers():
+        target = (root / member.name).resolve()
+        if not target.is_relative_to(root) or not (member.isfile() or member.isdir()):
+            raise EngineInstallError(f"허용하지 않는 압축 항목: {member.name}")
+
+
 def _extract(archive: Path, dest: Path) -> None:
     try:
         with tarfile.open(archive) as tar:
-            tar.extractall(dest, filter="data")
+            if hasattr(tarfile, "data_filter"):
+                tar.extractall(dest, filter="data")
+            else:  # Python < 3.11.4 has no extraction filters; check members by hand
+                _check_members(tar, dest)
+                tar.extractall(dest)  # members validated above
     except (tarfile.TarError, OSError) as exc:
         raise EngineInstallError(f"압축 해제 실패: {archive.name} ({exc})") from exc
 
@@ -132,12 +148,16 @@ def _download(spec: EngineSpec) -> Path:
         staging = tmp / "out"
         staging.mkdir()
         _extract(archive, staging)
+        staged = _find_binary(staging, spec)
+        if staged is None:
+            raise EngineInstallError(f"{spec.binary}를 설치 파일에서 찾지 못했다")
+        staged.chmod(staged.stat().st_mode | 0o111)
+        engine_version(spec, staged)  # reject before it becomes discoverable
         shutil.rmtree(target, ignore_errors=True)
         shutil.move(str(staging), str(target))
     binary = installed_binary(spec)
     if binary is None:
         raise EngineInstallError(f"{spec.binary}를 설치 파일에서 찾지 못했다")
-    binary.chmod(binary.stat().st_mode | 0o111)
     return binary
 
 
@@ -154,7 +174,8 @@ def engine_version(spec: EngineSpec, binary: Path) -> str:
     except (OSError, subprocess.SubprocessError) as exc:
         raise EngineInstallError(f"{spec.display} 버전을 확인하지 못했다: {exc}") from exc
     output = proc.stdout.strip()
-    if proc.returncode != 0 or spec.version not in output:
+    tokens = {t.removeprefix("v") for t in re.split(r"\s+", output)}
+    if proc.returncode != 0 or spec.version not in tokens:
         raise EngineInstallError(
             f"{spec.display} 버전이 맞지 않는다 (기대 {spec.version}, 출력 '{output}')"
         )

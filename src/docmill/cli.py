@@ -43,7 +43,7 @@ def setup() -> None:
     for spec in ENGINES:
         try:
             version, downloaded = ensure_installed(spec)
-        except EngineInstallError as exc:
+        except (EngineInstallError, OSError) as exc:
             typer.echo(f"실패({spec.display}): {exc}", err=True)
             failed = True
             continue
