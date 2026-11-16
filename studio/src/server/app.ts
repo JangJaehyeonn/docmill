@@ -126,7 +126,8 @@ async function editorConfig(
   if (!file) return;
   if (!isOnlyofficeFile(file.rel)) return sendJson(res, 400, { error: "지원하지 않는 형식입니다." });
   const info = await fs.stat(file.abs);
-  const key = documentKey(file.rel, info.mtimeMs, info.size);
+  // 열린 편집 세션이 있으면 같은 키를 쓴다 (강제 저장으로 파일이 바뀌어도 세션을 유지).
+  const key = sessionKeys.get(file.rel) ?? documentKey(file.rel, info.mtimeMs, info.size);
   sessionKeys.set(file.rel, key);
   const port = req.socket.localPort ?? 0;
   const origin = `http://${opts.publicHost || "127.0.0.1"}:${port}`;
@@ -151,15 +152,21 @@ async function saveCallback(
   res: http.ServerResponse,
   query: URLSearchParams,
 ): Promise<void> {
-  const body = (await readBody(req)) as { status?: unknown; url?: unknown };
+  const body = (await readBody(req)) as { status?: unknown; url?: unknown; key?: unknown };
   const server = normalizeUrl(opts.onlyofficeUrl);
   if (shouldSave(body.status) && typeof body.url === "string" && server) {
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
+    // 열려 있는 편집 세션의 키와 일치하는 콜백만 받는다.
+    if (typeof body.key !== "string" || sessionKeys.get(file.rel) !== body.key) {
+      return sendJson(res, 403, { error: "편집 세션과 일치하지 않는 저장 요청입니다." });
+    }
     try {
       const download = await fetch(rebaseDownloadUrl(body.url, server));
       if (!download.ok) throw new Error(`내려받기 실패 (${download.status})`);
       await replaceFile(file.abs, Buffer.from(await download.arrayBuffer()));
+      // 상태 2 = 최종 저장: 세션이 끝났으니 다음에 열 때 새 키를 발급한다.
+      if (body.status === 2) sessionKeys.delete(file.rel);
     } catch (err) {
       console.error("저장 콜백 처리 실패:", err);
       return sendJson(res, 200, { error: 1 });

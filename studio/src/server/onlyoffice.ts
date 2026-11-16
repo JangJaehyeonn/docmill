@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 
@@ -73,7 +73,15 @@ export function rebaseDownloadUrl(downloadUrl: string, serverUrl: string): strin
 
 /** 내려받은 내용을 임시 파일에 쓴 뒤 이름을 바꿔 원본을 갱신한다. */
 export async function replaceFile(target: string, data: Buffer): Promise<void> {
-  const tmp = `${target}.docmill-tmp`;
-  await fs.writeFile(tmp, data);
-  await fs.rename(tmp, target);
+  const tmp = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${randomUUID()}.docmill-tmp`,
+  );
+  try {
+    await fs.writeFile(tmp, data);
+    await fs.rename(tmp, target);
+  } catch (err) {
+    await fs.rm(tmp, { force: true });
+    throw err;
+  }
 }

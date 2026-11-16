@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -61,5 +61,15 @@ describe("onlyoffice helpers", () => {
     writeFileSync(target, "old");
     await replaceFile(target, Buffer.from("new"));
     expect(readFileSync(target, "utf-8")).toBe("new");
+    expect(readdirSync(dir)).toEqual(["a.xlsx"]);
+  });
+
+  it("handles overlapping replacements without leftovers", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "studio-oo-"));
+    const target = path.join(dir, "a.xlsx");
+    writeFileSync(target, "old");
+    await Promise.all([replaceFile(target, Buffer.from("one")), replaceFile(target, Buffer.from("two"))]);
+    expect(["one", "two"]).toContain(readFileSync(target, "utf-8"));
+    expect(readdirSync(dir)).toEqual(["a.xlsx"]);
   });
 });
