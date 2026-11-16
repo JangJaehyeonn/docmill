@@ -22,6 +22,16 @@ from xml.etree import ElementTree as ET
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
+from docmill.tools.provenance import (
+    ProvenanceError,
+    SheetTable,
+    Sources,
+    TextNumber,
+    collect,
+    dump,
+    provenance_path,
+    range_origin,
+)
 
 CHART_TYPES = {"bar": "column", "line": "line", "pie": "pie"}
 MAX_SLIDES = 30
@@ -133,6 +143,46 @@ def _summary_text(groups: list[Group], value: str, group_by: str) -> str:
     )
 
 
+def _shown(number: float, digits: int) -> float:
+    """문서에 보이는 자릿수로 반올림한 값 (`_fmt`·`:.1f` 표시와 같다)."""
+    return float(f"{number:.{digits}f}")
+
+
+def _group_numbers(kind: str, text: str, group: Group, sources: Sources) -> list[TextNumber]:
+    digits = 0 if group.total == int(group.total) else 2
+    return [
+        TextNumber(kind, text, _shown(group.total, digits), sources.group_total(group.name)),
+        TextNumber(kind, text, _shown(group.share, 1), sources.group_share(group.name)),
+    ]
+
+
+def text_numbers(
+    groups: list[Group], args: dict[str, Any], sources: Sources
+) -> dict[int, list[TextNumber]]:
+    """슬라이드 순번(0부터) → 그 슬라이드 본문에 보이는 숫자와 출처 (FR-21)."""
+    found: dict[int, list[TextNumber]] = {}
+    parts = max(args["slides"] - 4, 1)
+    detail_no = 0
+    for index, kind in enumerate(plan_slides(args["slides"])):
+        if kind == "summary":
+            body = _summary_text(groups, args["value"], args["group_by"])
+            total = sum(g.total for g in groups)
+            top = max(groups, key=lambda g: (g.total, g.name))
+            digits = 0 if total == int(total) else 2
+            found[index] = [
+                TextNumber(kind, body, _shown(total, digits), sources.total()),
+                TextNumber(kind, body, float(len(groups)), sources.group_count()),
+                *_group_numbers(kind, body, top, sources),
+            ]
+        elif kind == "detail":
+            size = -(-len(groups) // parts)
+            chunk = groups[detail_no * size : (detail_no + 1) * size]
+            body = _detail_lines(groups, detail_no, parts)
+            found[index] = [n for g in chunk for n in _group_numbers(kind, body, g, sources)]
+            detail_no += 1
+    return found
+
+
 def _slide_commands(
     kind: str, groups: list[Group], args: dict[str, Any], detail_no: int
 ) -> list[tuple[str, dict[str, Any]]]:
@@ -165,14 +215,26 @@ def _call(engine: DirectToolCaller, tool: str, arguments: dict[str, Any]) -> dic
     return _engine_json(engine.call_tool(tool, arguments), tool)
 
 
-def _read_sheet(source: Path, workdir: Path) -> list[list[Any]]:
+def read_table(source: Path, workdir: Path) -> SheetTable:
+    """엑셀 첫 시트의 사용 범위를 시트 이름·시작 위치와 함께 읽는다."""
     staged = workdir / "input.xlsx"
     shutil.copyfile(source, staged)
     with get_tool(staged, workdir) as grid:
         _engine_json(grid.open(staged), "open_workbook")
         data = _call(grid, "read_range", {})
     rows = data.get("values")
-    return rows if isinstance(rows, list) else []
+    first_row, first_col = range_origin(str(data.get("range") or ""))
+    return SheetTable(
+        file=str(source),
+        sheet=str(data.get("sheet") or ""),
+        first_row=first_row,
+        first_col=first_col,
+        values=rows if isinstance(rows, list) else [],
+    )
+
+
+def _read_sheet(source: Path, workdir: Path) -> list[list[Any]]:
+    return read_table(source, workdir).values
 
 
 def _build_deck(groups: list[Group], args: dict[str, Any], target: Path, workdir: Path) -> None:
@@ -256,15 +318,28 @@ def _render_preview(built: Path, workdir: Path) -> Path | str:
     return pngs[0] if pngs else "엔진이 PNG를 만들지 않았다"
 
 
+def _provenance(built: Path, groups: list[Group], args: dict[str, Any], sources: Sources) -> bytes:
+    """만든 pptx의 숫자마다 문서 위치와 원본 출처를 기록한 provenance.json 내용 (FR-21)."""
+    names = [g.name for g in groups]
+    plan = plan_slides(args["slides"])
+    try:
+        numbers = collect(built, plan, text_numbers(groups, args, sources), sources, names)
+    except (ProvenanceError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError) as exc:
+        raise ReportError("provenance", f"숫자 출처를 기록하지 못했다: {exc}") from exc
+    return dump(numbers)
+
+
 def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
     _validate(args)
     with tempfile.TemporaryDirectory(prefix="docmill-report-") as tmp:
         workdir = Path(tmp).resolve()
-        groups = aggregate(
-            _read_sheet(Path(args["input"]), workdir), args["group_by"], args["value"]
-        )
+        table = read_table(Path(args["input"]), workdir)
+        groups = aggregate(table.values, args["group_by"], args["value"])
         built = workdir / "report.pptx"
         _build_deck(groups, args, built, workdir)
+        sources = Sources(table, args["group_by"], args["value"])
+        built_prov = provenance_path(built)
+        built_prov.write_bytes(_provenance(built, groups, args, sources))
         out_dir = get_home() / "outputs"
         out_dir.mkdir(parents=True, exist_ok=True)
         final = out_dir / f"{output_stem(run_id)}.pptx"
@@ -281,6 +356,7 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
             "path": str(final),
             "summary": summary,
             "run_id": run_id,
+            "provenance": str(provenance_path(final)),
             "groups": [
                 {"name": g.name, "total": g.total, "share": round(g.share, 1)} for g in groups
             ],
@@ -288,6 +364,7 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         if verification is not None:
             result["verification"] = verification
         preview = _render_preview(built, workdir)
+        _publish(built_prov, provenance_path(final))
         _publish(built, final)  # publish only after everything else succeeded
         if isinstance(preview, Path):
             preview_final = final.with_suffix(".png")
@@ -315,7 +392,9 @@ def excel_to_report_ppt(
 
     slides는 슬라이드 수(기본 5: 표지·요약·그래프·상세·마무리), chart는 bar·line·pie,
     template은 DeckCraft 테마 이름(선택)이다. verify가 true면 그래프 값과 엑셀 합계를 대조한
-    결과(checked·matched)를 함께 돌려준다. 첫 슬라이드 PNG 경로는 preview에 담기고
+    결과(checked·matched)를 함께 돌려준다. 문서 숫자마다 위치와 원본 출처(시트·셀 범위·
+    집계 방식)를 기록한 `<결과 파일 이름>.provenance.json` 경로는 provenance에,
+    첫 슬라이드 PNG 경로는 preview에 담기고
     (만들지 못하면 preview_error에 원인), 결과는 JSON 문자열이며, 실패하면 error와
     실패한 단계(step)를 담는다.
     """
