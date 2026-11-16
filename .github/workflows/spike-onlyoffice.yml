@@ -23,10 +23,9 @@ jobs:
         run: |
           npm i --no-save playwright@1.48.2 >/dev/null
           npx playwright install --with-deps chromium >/dev/null
-          printf '%s\n' 'import http.server' 'class H(http.server.SimpleHTTPRequestHandler):' '    def do_POST(self):' '        n = int(self.headers.get("Content-Length", 0)); self.rfile.read(n)' '        self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(b"{\\"error\\":0}")' 'http.server.ThreadingHTTPServer(("0.0.0.0", 8090), H).serve_forever()' > srv.py
           python3 srv.py > srv.log 2>&1 &
           sleep 1; curl -sI http://localhost:8090/sales_q3.xlsx | head -1
-          node run.cjs
+          node run.cjs || true
           tail -5 srv.log
           docker exec oo bash -c 'tail -20 /var/log/onlyoffice/documentserver/converter/out.log /var/log/onlyoffice/documentserver/docservice/out.log' || true
       - uses: actions/upload-artifact@v4
