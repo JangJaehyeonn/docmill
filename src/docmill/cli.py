@@ -35,6 +35,25 @@ def mcp() -> None:
 
 
 @app.command()
+def setup() -> None:
+    """고정된 버전의 엔진(GridCraft·DeckCraft·WordCraft)을 설치하고 버전을 출력합니다. FR-04."""
+    from docmill.engines.install import ENGINES, EngineInstallError, ensure_installed
+
+    failed = False
+    for spec in ENGINES:
+        try:
+            version, downloaded = ensure_installed(spec)
+        except EngineInstallError as exc:
+            typer.echo(f"실패({spec.display}): {exc}", err=True)
+            failed = True
+            continue
+        note = "설치함" if downloaded else "이미 설치됨"
+        typer.echo(f"{spec.display}: {version} ({note})")
+    if failed:
+        raise typer.Exit(code=1)
+
+
+@app.command()
 def run(
     recipe: str = typer.Argument(..., help="실행할 레시피 이름"),
     input_path: str = typer.Option(..., "--input", help="레시피에 넣을 입력 파일 경로"),
