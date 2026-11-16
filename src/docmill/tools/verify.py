@@ -15,6 +15,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.tools.provenance import load_chart_sources
 from docmill.tools.report import Group, ReportError, _read_sheet, aggregate
 
 _C_NS = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
@@ -57,8 +58,15 @@ def _close(actual: float, expected: float) -> bool:
     return abs(actual - expected) <= _TOLERANCE * max(1.0, abs(expected))
 
 
-def compare(series: list[dict[str, Any]], groups: list[Group]) -> dict[str, Any]:
-    """그래프 값을 그룹 합계와 대조한다. 범주 이름이 있으면 이름으로, 없으면 순서로 짝짓는다."""
+def compare(
+    series: list[dict[str, Any]],
+    groups: list[Group],
+    sources: dict[tuple[str, int, int], dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """그래프 값을 그룹 합계와 대조한다. 범주 이름이 있으면 이름으로, 없으면 순서로 짝짓는다.
+
+    sources(그래프 점 → 원본 출처)가 있으면 불일치 항목에 그 점의 출처(source)를 붙인다.
+    """
     totals = {g.name: g.total for g in groups}
     checked = matched = 0
     mismatches: list[dict[str, Any]] = []
@@ -78,7 +86,11 @@ def compare(series: list[dict[str, Any]], groups: list[Group]) -> dict[str, Any]
             if expected is not None and actual is not None and _close(actual, expected):
                 matched += 1
                 continue
-            mismatches.append({"location": where, "expected": expected, "actual": raw})
+            mismatch: dict[str, Any] = {"location": where, "expected": expected, "actual": raw}
+            source = (sources or {}).get((ser["chart"], ser["series"], idx))
+            if source is not None:
+                mismatch["source"] = source
+            mismatches.append(mismatch)
     return {"checked": checked, "matched": matched, "mismatches": mismatches}
 
 
@@ -96,7 +108,13 @@ def _verify(document: str, source: str, group_by: str, value: str) -> dict[str, 
         raise ReportError("document", f"문서를 읽지 못했다: {exc}") from exc
     if not any(ser["values"] or ser["categories"] for ser in series):
         raise ReportError("extract", "문서에서 대조할 그래프 숫자를 찾지 못했다")
-    return compare(series, groups)
+    try:
+        sources = load_chart_sources(doc)
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        result = compare(series, groups)
+        result["provenance_error"] = f"출처 파일을 읽지 못했다: {exc}"
+        return result
+    return compare(series, groups, sources)
 
 
 def verify_numbers(document: str, source: str, group_by: str, value: str) -> str:
@@ -104,7 +122,8 @@ def verify_numbers(document: str, source: str, group_by: str, value: str) -> str
 
     source 엑셀의 group_by 열 기준 value 합계를 계산해 document의 그래프 값과 비교한다.
     결과는 JSON 문자열이며 checked(대조 개수), matched(일치 개수), mismatches(location·
-    expected·actual)를 담는다. 실패하면 error와 실패한 단계(step)를 담는다.
+    expected·actual)를 담는다. 문서 옆에 `<문서 이름>.provenance.json`이 있으면 불일치
+    항목에 그 숫자의 원본 출처(source)도 담는다. 실패하면 error와 실패한 단계(step)를 담는다.
     """
     run_id = current_run_id() or new_run_id()
     try:

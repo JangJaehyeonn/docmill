@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from docmill.tools.provenance import SheetTable
 from docmill.tools.report import (
     Group,
     ReportError,
@@ -76,6 +77,63 @@ def test_verify_report_without_chart_matches_nothing(tmp_path: Path) -> None:
     assert verify_report(pptx, [Group("A", 1.0, 100.0)]) == {"checked": 2, "matched": 0}
 
 
+def _fake_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """엔진 없이 보고서 흐름을 돌리도록 엑셀 읽기·덱 생성·출처 기록을 바꾼다."""
+    import docmill.tools.report as report
+
+    table = SheetTable(file="in.xlsx", sheet="S", first_row=1, first_col=1, values=ROWS)
+    monkeypatch.setattr(report, "read_table", lambda *_a: table)
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    monkeypatch.setattr(report, "_provenance", lambda *_a: b'{"numbers": []}\n')
+
+
+def test_provenance_is_published_next_to_pptx(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    _fake_engine(monkeypatch)
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    prov = Path(out["provenance"])
+    assert prov.name == Path(out["path"]).name + ".provenance.json"
+    assert json.loads(prov.read_text(encoding="utf-8")) == {"numbers": []}
+
+
+def test_provenance_failure_blocks_publishing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import docmill.tools.report as report
+
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    source = tmp_path / "in.xlsx"
+    source.write_bytes(b"x")
+    table = SheetTable(file="in.xlsx", sheet="S", first_row=1, first_col=1, values=ROWS)
+    monkeypatch.setattr(report, "read_table", lambda *_a: table)
+    # Not a zip, so locating numbers in the deck fails.
+    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
+    assert out["step"] == "provenance"
+    outputs = tmp_path / "outputs"
+    assert not outputs.exists() or not list(outputs.iterdir())
+
+
+def test_text_numbers_match_displayed_values() -> None:
+    from docmill.tools.provenance import Sources
+    from docmill.tools.report import text_numbers
+
+    table = SheetTable(file="in.xlsx", sheet="S", first_row=1, first_col=1, values=ROWS)
+    groups = aggregate(ROWS, "부서", "매출")
+    args = {"group_by": "부서", "value": "매출", "slides": 5}
+    found = text_numbers(groups, args, Sources(table, "부서", "매출"))
+    assert sorted(found) == [1, 3]
+    summary = [(n.value, n.source["aggregation"]) for n in found[1]]
+    assert summary == [(60.5, "sum"), (2.0, "count_distinct"), (30.5, "sumif"), (50.4, "share")]
+    assert all("매출 합계: 60.50" in n.text for n in found[1])
+    detail = [(n.value, n.source.get("criteria")) for n in found[3]]
+    assert detail == [(30.5, "A"), (50.4, "A"), (30.0, "B"), (49.6, "B")]
+
+
 def test_verification_mismatch_blocks_publishing(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -84,8 +142,7 @@ def test_verification_mismatch_blocks_publishing(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
     monkeypatch.setattr(report, "verify_report", lambda *_a: {"checked": 3, "matched": 0})
     out = json.loads(excel_to_report_ppt(str(source), "부서", "매출"))
     assert out["step"] == "verify"
@@ -100,8 +157,7 @@ def test_failure_before_publish_leaves_no_output(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
 
     def boom(_number: float) -> str:
         raise RuntimeError("summary failed")
@@ -120,8 +176,7 @@ def test_copy_failure_leaves_no_partial_output(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
 
     def partial_copy(_src: Path, dst: Path) -> None:
         Path(dst).write_bytes(b"par")
@@ -141,8 +196,7 @@ def test_preview_png_is_published_next_to_pptx(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
 
     def fake_preview(_built: Path, workdir: Path) -> Path:
         png = workdir / "first.png"
@@ -164,8 +218,7 @@ def test_preview_failure_does_not_fail_report(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
     monkeypatch.setattr(report, "_render_preview", lambda *_a: "렌더 실패")
     out = json.loads(excel_to_report_ppt(str(source), "부서", "매출", verify=False))
     assert "error" not in out
@@ -182,8 +235,7 @@ def test_preview_publish_failure_keeps_report_result(
     monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
     source = tmp_path / "in.xlsx"
     source.write_bytes(b"x")
-    monkeypatch.setattr(report, "_read_sheet", lambda *_a: ROWS)
-    monkeypatch.setattr(report, "_build_deck", lambda _g, _a, built, _w: built.write_bytes(b"p"))
+    _fake_engine(monkeypatch)
 
     def fake_preview(_built: Path, workdir: Path) -> Path:
         png = workdir / "first.png"
