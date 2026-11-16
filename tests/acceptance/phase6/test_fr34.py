@@ -12,7 +12,7 @@ tests/fixtures/ 의 template_word.docx 처럼 문제 없는 파일이 필요하�
   이때 에이전트 없이 도구가 바로 호출된다.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -28,8 +28,6 @@ from typing import Any
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
-from tests.acceptance.conftest import page, start_studio
 
 RRN = "900101-1234567"
 CHECKS = ["숫자 검증", "날짜 요일", "개인정보", "자리표시자", "빈 제목"]

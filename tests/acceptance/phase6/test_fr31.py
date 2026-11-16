@@ -9,8 +9,8 @@ meeting_1111.docx (모두 있음).
   - xlsx: scope `{"sheet": 1, "range": "C2:C4"}`, edit `{"set_cells": {"C2": 999}}` (시트는 1부터 번호)
   - docx: scope `{"paragraphs": [3]}` (본문 문단 번호, 0부터), edit `{"set_paragraphs": {"3": "새 문장"}}`
   - 범위 밖을 건드리는 편집은 같은 형식에서 scope 밖 대상(슬라이드 3 도형 2, 셀 C10, 문단 5)을 함께 적어 만든다.
-    (구현은 편집을 그대로 적용한 뒤 범위 밖 변경을 되돌려야 한다. 테스트용 편집 함수는 edit에 `"unguarded": true`를
-    넣어 범위 검사 없이 적용하게 하는 식으로 표현한다.)
+    도구는 편집을 적용한 뒤 결과를 원본과 비교해 범위 밖에서 바뀐 곳을 되돌리고 목록으로 알려야 한다.
+    (AI에 노출되는 도구이므로 범위 검사를 끄는 인자는 두지 않는다.)
 - 결과 JSON: `path`, `out_of_scope_changes`(정수), `reverted`(목록, 각 항목에 `location`), `summary`(문구).
   변경이 없으면 summary에 '범위 밖 변경 0곳'이 들어 있다.
 - 동작 확인은 결과 파일 zip의 XML을 표준 라이브러리로 직접 비교한다.
@@ -85,7 +85,6 @@ PPT_LEAK = {
         {"slide": 3, "shape": 2, "text": "몰래 바꾼 제목"},
         {"slide": 2, "shape": 3, "text": "몰래 바꾼 본문"},
     ],
-    "unguarded": True,
 }
 
 
@@ -122,7 +121,7 @@ def test_xlsx_cell_range_is_guarded(tmp_path: Path) -> None:
         tmp_path,
         XLSX,
         {"sheet": 1, "range": "C2:C4"},
-        {"set_cells": {"C2": 999, "C10": 111}, "unguarded": True},
+        {"set_cells": {"C2": 999, "C10": 111}},
     )
     assert leak["out_of_scope_changes"] >= 1
     assert any("C10" in str(r["location"]) for r in leak["reverted"])
@@ -142,7 +141,7 @@ def test_docx_paragraph_range_is_guarded(tmp_path: Path) -> None:
         tmp_path,
         DOCX,
         {"paragraphs": [3]},
-        {"set_paragraphs": {"3": "새 문장입니다", "5": "몰래 바꾼 문단"}, "unguarded": True},
+        {"set_paragraphs": {"3": "새 문장입니다", "5": "몰래 바꾼 문단"}},
     )
     assert leak["out_of_scope_changes"] >= 1 and leak["reverted"]
     doc = _parts(Path(leak["path"]))["word/document.xml"].decode("utf-8")

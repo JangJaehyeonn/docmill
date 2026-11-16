@@ -5,14 +5,14 @@
 가정(구현 방법이 정해지면 맞춰 고친다):
 - 목록에서 파일을 열면 탭이 생기고, 탭 패널 안에 ONLYOFFICE 편집기 iframe이 뜬다.
 - 편집기가 문서 준비 완료가 되면 패널의 `data-editor-state="ready"` 속성이 붙는다 (`role=tabpanel`).
-- 편집기 API 접근을 위해 페이지에 `window.docEditor`(ONLYOFFICE DocsAPI.DocEditor 인스턴스)가 노출된다.
-  셀 값 변경은 편집기 커맨드 서비스(`createConnector` → `executeMethod`/`callCommand`)로 한다.
-- 저장은 편집기 API로 강제 저장(`window.docEditor.downloadAs` 후 서버가 콜백 처리) 또는 앱의 `저장` 버튼이다.
-  여기서는 `저장` 버튼(`role=button`, name=저장)을 누른다고 가정한다.
+- 셀 값 변경은 사람처럼 편집기 iframe에 키보드로 입력한다. (`createConnector`는 무료판 문서 서버에 없어서 쓰지 않는다.)
+  스프레드시트 편집기의 이름 상자(셀 주소 입력란, `#ce-cell-name`)에 D1을 넣어 이동한 뒤 값을 입력한다.
+- 저장은 앱의 `저장` 버튼(`role=button`, name=저장)이다. 앱은 문서 서버에 강제 저장(command service `forcesave`)을
+  요청하고, 저장 콜백으로 받은 파일을 작업 폴더 원본에 쓴다.
 - 연결 안내 문구: '문서 서버에 연결되지 않았어요'.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -26,8 +26,6 @@ from pathlib import Path
 from typing import Any
 
 import pytest
-
-from tests.acceptance.conftest import page, start_studio
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 FILES = ["sales_q3.xlsx", "company_intro.pptx", "meeting_1111.docx"]
@@ -59,6 +57,17 @@ def _open(page: Any, name: str) -> None:
     page.get_by_role("tab", name=name).wait_for()
 
 
+def _editor_frame(page: Any) -> Any:
+    # ONLYOFFICE 편집기는 앱 iframe 안에 다시 iframe(frameEditor)으로 뜬다. 이름 상자가 있는 프레임을 찾는다.
+    deadline = time.monotonic() + 60
+    while time.monotonic() < deadline:
+        for frame in page.frames:
+            if frame.locator("#ce-cell-name").count():
+                return frame
+        time.sleep(1)
+    raise AssertionError("스프레드시트 편집기 프레임을 찾지 못했다")
+
+
 def _sheet_strings(path: Path) -> list[str]:
     with zipfile.ZipFile(path) as z:
         out = [z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("xl/")]
@@ -88,15 +97,13 @@ def test_cell_edit_and_save_updates_original_xlsx(
     _open(page, "sales_q3.xlsx")
     page.locator('[role="tabpanel"][data-editor-state="ready"]').wait_for(timeout=120_000)
     marker = "docmill-fr27-marker"
-    page.evaluate(
-        """(marker) => new Promise((resolve) => {
-            const connector = window.docEditor.createConnector();
-            connector.callCommand(
-              "Api.GetActiveSheet().GetRange('D1').SetValue('" + marker + "');",
-              () => resolve(true));
-        })""",
-        marker,
-    )
+    editor = _editor_frame(page)
+    name_box = editor.locator("#ce-cell-name")
+    name_box.click()
+    name_box.fill("D1")
+    name_box.press("Enter")
+    page.keyboard.type(marker)
+    page.keyboard.press("Enter")
     page.get_by_role("button", name="저장").click()
     saved = ws / "sales_q3.xlsx"
     deadline = time.monotonic() + 60

@@ -9,7 +9,7 @@
 - 가짜 에이전트는 받은 입력을 파일로 남긴다 (stdin 전체).
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -26,8 +26,6 @@ from typing import Any
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-
-from tests.acceptance.conftest import page, start_studio
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
@@ -86,8 +84,19 @@ def test_same_file_gives_same_suggestions_in_same_order(tmp_path: Path) -> None:
 _FAKE = textwrap.dedent(
     """
     import json, sys
+    def _read_stdin(timeout=2.0):
+        # 앱이 stdin을 닫지 않아도 멈추지 않게, 2초 동안 새 입력이 없으면 그만 읽는다.
+        import os, select
+        fd = sys.stdin.fileno()
+        chunks = []
+        while select.select([fd], [], [], timeout)[0]:
+            b = os.read(fd, 65536)
+            if not b:
+                break
+            chunks.append(b)
+        return b"".join(chunks).decode("utf-8", "replace")
     cfg = sys.argv[1]
-    open(cfg, "w", encoding="utf-8").write(sys.stdin.read())
+    open(cfg, "w", encoding="utf-8").write(_read_stdin())
     for o in ({"type": "assistant", "message": {"content": [{"type": "text", "text": "알겠어요"}]}},
               {"type": "result", "subtype": "success", "result": "알겠어요"}):
         print(json.dumps(o, ensure_ascii=False), flush=True)

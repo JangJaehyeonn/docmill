@@ -10,7 +10,7 @@
 - 이 파일은 tests/acceptance/ 로 옮겨졌을 때 conftest의 start_studio·page 픽스처를 쓴다.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -23,8 +23,6 @@ from typing import Any
 from urllib.parse import quote
 
 import pytest
-
-from tests.acceptance.conftest import page, start_studio
 
 REPO = Path(__file__).resolve().parents[3]
 FIXTURES = REPO / "tests" / "fixtures"

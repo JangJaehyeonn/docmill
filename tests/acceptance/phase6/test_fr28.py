@@ -9,7 +9,7 @@
 - 저장은 `저장` 버튼. 다시 열기는 탭을 닫고(`탭 닫기` 버튼) 목록에서 다시 연다.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -21,8 +21,6 @@ from typing import Any
 from urllib.parse import urlparse
 
 import pytest
-
-from tests.acceptance.conftest import page, start_studio
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 NAME = "meeting_1111.hwp"

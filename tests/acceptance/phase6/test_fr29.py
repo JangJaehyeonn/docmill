@@ -12,7 +12,7 @@
 - 가짜 에이전트는 stream-json: assistant(tool_use) → user(tool_result) → assistant(text) → result.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -27,15 +27,24 @@ from typing import Any
 
 import pytest
 
-from tests.acceptance.conftest import page, start_studio
-
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 
 FAKE_AGENT = textwrap.dedent(
     """
     import json, sys, time
+    def _read_stdin(timeout=2.0):
+        # 앱이 stdin을 닫지 않아도 멈추지 않게, 2초 동안 새 입력이 없으면 그만 읽는다.
+        import os, select
+        fd = sys.stdin.fileno()
+        chunks = []
+        while select.select([fd], [], [], timeout)[0]:
+            b = os.read(fd, 65536)
+            if not b:
+                break
+            chunks.append(b)
+        return b"".join(chunks).decode("utf-8", "replace")
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
-    stdin = sys.stdin.read()
+    stdin = _read_stdin()
     with open(cfg["dump"], "w", encoding="utf-8") as f:
         json.dump({"stdin": stdin, "argv": sys.argv[2:], "env": dict(__import__("os").environ)}, f)
     if cfg.get("sleep"):

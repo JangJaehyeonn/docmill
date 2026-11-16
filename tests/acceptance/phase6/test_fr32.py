@@ -11,7 +11,7 @@ meeting_1111.docx에 문구를 덧붙여 만든다 (표준 라이브러리 zipfi
 - 적용 후 탭 `data-reloaded` 값이 늘어난다.
 """
 
-# ruff: noqa: E501, F811, F401
+# ruff: noqa: E501
 
 from __future__ import annotations
 
@@ -27,8 +27,6 @@ from typing import Any
 
 import pytest
 
-from tests.acceptance.conftest import page, start_studio
-
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 NAME = "meeting_1111.docx"
 MARK = "미리보기-표식"
@@ -36,8 +34,19 @@ MARK = "미리보기-표식"
 _FAKE = textwrap.dedent(
     """
     import json, sys
+    def _read_stdin(timeout=2.0):
+        # 앱이 stdin을 닫지 않아도 멈추지 않게, 2초 동안 새 입력이 없으면 그만 읽는다.
+        import os, select
+        fd = sys.stdin.fileno()
+        chunks = []
+        while select.select([fd], [], [], timeout)[0]:
+            b = os.read(fd, 65536)
+            if not b:
+                break
+            chunks.append(b)
+        return b"".join(chunks).decode("utf-8", "replace")
     cfg = json.load(open(sys.argv[1], encoding="utf-8"))
-    sys.stdin.read()
+    _read_stdin()
     def emit(o): print(json.dumps(o, ensure_ascii=False), flush=True)
     emit({"type": "assistant", "message": {"content": [
         {"type": "tool_use", "id": "t0", "name": "mcp__docmill__guarded_edit", "input": {}}]}})
