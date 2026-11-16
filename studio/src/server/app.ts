@@ -154,6 +154,12 @@ async function saveCallback(
 ): Promise<void> {
   const body = (await readBody(req)) as { status?: unknown; url?: unknown; key?: unknown };
   const server = normalizeUrl(opts.onlyofficeUrl);
+  if (body.status === 4 && typeof body.key === "string") {
+    // 상태 4 = 변경 없이 닫힘: 일치하는 세션이면 키를 폐기해 다음에 열 때 새 키를 발급한다.
+    const closed = await resolveQuery(opts, res, query);
+    if (!closed) return;
+    if (sessionKeys.get(closed.rel) === body.key) sessionKeys.delete(closed.rel);
+  }
   if (shouldSave(body.status) && typeof body.url === "string" && server) {
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
