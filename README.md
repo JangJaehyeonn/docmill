@@ -55,6 +55,24 @@ claude mcp add docmill -- uv run --directory /path/to/docmill docmill mcp
 
 `/path/to/docmill`은 이 저장소를 내려받은 경로로 바꾼다. 서버는 업무 단위 도구만 노출하며 엔진의 저수준 도구는 노출하지 않는다.
 
+### 원격 서버로 운영하기
+
+`docmill mcp --http`는 `/mcp`에서 streamable HTTP MCP 서버를 연다.
+
+- `DOCMILL_HTTP_TOKEN`을 설정하면 모든 요청에 `Authorization: Bearer <토큰>`이 필요하다(없거나 틀리면 401).
+- 토큰이 없으면 `--host`와 상관없이 `127.0.0.1`에만 바인딩한다.
+- `GET /healthz`는 엔진 3개의 준비 상태를 JSON으로 돌려주고, 하나라도 준비되지 않으면 503이다.
+
+엔진이 포함된 Docker 이미지는 기본으로 포트 8000에서 HTTP 모드를 실행한다.
+
+```bash
+docker run -d -p 8000:8000 -e DOCMILL_HTTP_TOKEN=<토큰> ghcr.io/jangjaehyeonn/docmill:latest
+```
+
+서버 배포는 `deploy/`를 쓴다. `deploy/compose.yaml`로 띄우거나,
+`bash deploy/deploy.sh --image <새 이미지> [--previous <이전 이미지>] [--timeout 60]`으로 이미지를 바꾼다.
+배포 스크립트는 새 이미지를 받아 실행하고, 헬스 체크가 시간 안에 통과하지 않으면 이전 이미지로 되돌린 뒤 종료 코드 1을 돌려준다.
+
 ## 구조
 
 ```

@@ -1,0 +1,33 @@
+# docmill 원격 모드 compose 파일 (FR-24)
+#
+# 사용법:
+#   export DOCMILL_HTTP_TOKEN=...            # 필수. 저장소에 올리지 않는다
+#   export DOCMILL_IMAGE=ghcr.io/...:<태그>   # 선택 (기본 latest)
+#   docker compose -f deploy/compose.yaml up -d
+#
+# 이미지 교체와 실패 시 되돌리기는 deploy.sh를 쓴다.
+services:
+  docmill:
+    image: ${DOCMILL_IMAGE:-ghcr.io/jangjaehyeonn/docmill:latest}
+    container_name: docmill
+    restart: unless-stopped
+    environment:
+      DOCMILL_HTTP_TOKEN: ${DOCMILL_HTTP_TOKEN:?DOCMILL_HTTP_TOKEN을 설정하세요}
+    ports:
+      - "${DOCMILL_PORT:-8000}:8000"
+    volumes:
+      - docmill-data:/data
+    healthcheck:
+      test:
+        - CMD
+        - /app/.venv/bin/python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=4)"
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  docmill-data:
+    name: docmill-data

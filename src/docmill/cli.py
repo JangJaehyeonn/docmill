@@ -32,12 +32,18 @@ def mcp(
     host: str = typer.Option("127.0.0.1", "--host", help="HTTP 모드에서 바인딩할 주소"),
     port: int = typer.Option(8000, "--port", help="HTTP 모드에서 열 포트"),
 ) -> None:
-    """AI 앱에 연결할 MCP 서버를 실행합니다 (기본 stdio, --http면 원격 HTTP). FR-01, FR-19."""
+    """AI 앱에 연결할 MCP 서버를 실행합니다 (기본 stdio, --http면 원격 HTTP). FR-01, FR-19.
+
+    HTTP 모드는 DOCMILL_HTTP_TOKEN이 있으면 Bearer 토큰을 요구하고, 없으면 127.0.0.1에만
+    바인딩합니다. /healthz로 엔진 준비 상태를 알려줍니다. FR-24.
+    """
     from docmill.server import build_server
 
     server = build_server()
     if http:
-        server.run("streamable-http", host=host, port=port)
+        from docmill.remote import serve_http
+
+        serve_http(server, host, port)
     else:
         server.run()
 
