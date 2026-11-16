@@ -244,8 +244,8 @@ def _publish(built: Path, final: Path) -> None:
 def _render_preview(built: Path, workdir: Path) -> Path | str:
     """첫 슬라이드 PNG를 만든다. 성공하면 PNG 경로, 실패하면 원인 문장을 돌려준다."""
     out_dir = workdir / "preview"
-    out_dir.mkdir()
     try:
+        out_dir.mkdir()
         with get_tool(built, workdir) as deck:
             rendered = deck.render(built, out_dir)
     except Exception as exc:  # preview is optional; never fail the report because of it
@@ -291,8 +291,12 @@ def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
         _publish(built, final)  # publish only after everything else succeeded
         if isinstance(preview, Path):
             preview_final = final.with_suffix(".png")
-            _publish(preview, preview_final)
-            result["preview"] = str(preview_final)
+            try:
+                _publish(preview, preview_final)
+            except Exception as exc:  # preview is optional; keep the report result
+                result["preview_error"] = f"{type(exc).__name__}: {exc}"
+            else:
+                result["preview"] = str(preview_final)
         else:
             result["preview_error"] = preview
     return result
