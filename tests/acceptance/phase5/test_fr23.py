@@ -10,14 +10,16 @@
 - 보고서: `<out-dir>/<날짜>.md`, `<날짜>.json`. JSON은 `scenarios`(id → `tool_match`,
   `args_match` 불리언)와 `tools`(도구 이름 → `tool_rate`, `args_rate`)를 가진다.
   도구 없음 시나리오는 `tools`에서 키 `none`으로 센다.
-- `docmill eval --compare 이전.json 새.json`은 도구별 한 줄씩 이전·새 정확도와 변화
-  (오르면 `+`)를 stdout에 출력한다.
+- `docmill eval --compare 이전.json 새.json`은 도구별로 한 줄씩 stdout에 출력한다.
+  줄은 도구 이름으로 시작하고, 이어서 이전 도구 일치율(%)·새 도구 일치율(%)·변화(%p, 부호 포함)
+  세 숫자를 이 순서로 담는다. 예: `apply_template 66.7% -> 100.0% (+33.3)`. 소수 첫째 자리.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -116,7 +118,9 @@ def test_scenario_set_covers_all_tools_and_no_tool_cases() -> None:
 @pytest.mark.fr("FR-23")
 def test_fake_model_scores_match_expected(tmp_path: Path) -> None:
     scenarios = [s for s in _load() if s["expected"]["tool"]]
-    wrong_tool = {scenarios[0]["id"]}
+    no_tool = [s for s in _load() if s["expected"]["tool"] is None]
+    # 도구 없음 시나리오 하나에는 도구를 부르는 오답을 준다.
+    wrong_tool = {scenarios[0]["id"], no_tool[0]["id"]}
     wrong_args = {scenarios[1]["id"]}
     proc, out = _run_fake(tmp_path, _answers(wrong_tool, wrong_args))
     assert proc.returncode == 0, proc.stderr
@@ -131,6 +135,9 @@ def test_fake_model_scores_match_expected(tmp_path: Path) -> None:
         ok_args = sum(1 for s in mine if s["id"] not in wrong_tool | wrong_args)
         assert report["tools"][tool]["tool_rate"] == pytest.approx(ok_tool / len(mine))
         assert report["tools"][tool]["args_rate"] == pytest.approx(ok_args / len(mine))
+    ok_none = sum(1 for s in no_tool if s["id"] not in wrong_tool)
+    assert report["tools"]["none"]["tool_rate"] == pytest.approx(ok_none / len(no_tool))
+    assert report["tools"]["none"]["args_rate"] == pytest.approx(ok_none / len(no_tool))
 
 
 @pytest.mark.fr("FR-23")
@@ -147,10 +154,22 @@ def test_compare_prints_per_tool_accuracy_change(tmp_path: Path) -> None:
         str(out_b / "2026-01-02.json"),
     )
     assert proc.returncode == 0, proc.stderr
+    before = json.loads((out_a / "2026-01-01.json").read_text(encoding="utf-8"))["tools"]
+    after = json.loads((out_b / "2026-01-02.json").read_text(encoding="utf-8"))["tools"]
+    lines = proc.stdout.splitlines()
     for tool in TOOLS:
-        assert tool in proc.stdout
-    line = next(ln for ln in proc.stdout.splitlines() if improved_tool in ln)
-    assert "+" in line, "정확도가 오른 도구에 변화가 표시되어야 한다"
+        line = next((ln for ln in lines if ln.strip().startswith(tool)), None)
+        assert line is not None, f"{tool} 줄이 없다: {proc.stdout}"
+        nums = [float(x) for x in re.findall(r"[+-]?\d+(?:\.\d+)?", line[len(tool) :])]
+        assert len(nums) >= 3, line
+        old, new, delta = nums[:3]
+        exp_old = before[tool]["tool_rate"] * 100
+        exp_new = after[tool]["tool_rate"] * 100
+        assert old == pytest.approx(exp_old, abs=0.05), line
+        assert new == pytest.approx(exp_new, abs=0.05), line
+        assert delta == pytest.approx(exp_new - exp_old, abs=0.1), line
+        if tool == improved_tool:
+            assert delta > 0 and "+" in line, "정확도가 오른 도구는 양수 변화로 표시되어야 한다"
 
 
 @pytest.mark.fr("FR-23")

@@ -136,7 +136,11 @@ def test_map_option_runs_and_matches_original_result(tmp_path: Path) -> None:
     assert mapped.returncode == 0, mapped.stderr
     plain = _run(tmp_path, FIXTURES / "sales_week2.xlsx", tmp_path / "out_plain")
     assert plain.returncode == 0, plain.stderr
-    assert _chart_xml(_result_path(mapped)) == _chart_xml(_result_path(plain))
+    mapped_charts = _chart_xml(_result_path(mapped))
+    plain_charts = _chart_xml(_result_path(plain))
+    assert mapped_charts, "매핑 실행 결과에 그래프가 없다"
+    assert plain_charts, "원래 열 이름 실행 결과에 그래프가 없다"
+    assert mapped_charts == plain_charts
 
 
 @pytest.mark.fr("FR-22")
