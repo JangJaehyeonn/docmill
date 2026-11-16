@@ -9,8 +9,11 @@
 - provenance.json은 `{"numbers": [...]}` 이고 각 항목은 다음을 가진다.
   - `value`: 문서에 보이는 숫자 그대로 (예: 4050, 39.9, 5). 비중은 문서처럼 소수 첫째 자리.
   - `kind`: `summary` · `chart` · `detail`
-  - `location`: `slide`(1부터) 그리고 `shape`(텍스트 도형) 또는 `table_cell` 또는
-    `chart`(그래프 파트 이름, 예: chart1)·`series`(1부터)·`point`(0부터 c:pt idx)
+  - `location`: `slide`(1부터, 슬라이드 파트 slideN.xml의 N). 그리고
+    - 본문 숫자: `shape` = 그 숫자가 든 도형(또는 표 프레임)의 `p:cNvPr` `id`.
+      표라면 `table_cell`을 덧붙일 수 있다.
+    - 그래프 숫자: `chart`(그래프 파트 이름, 예: chart1)·`series`(1부터)·`point`(0부터 c:pt idx).
+      그 슬라이드가 해당 그래프 파트를 참조해야 한다.
   - `source`: `file`·`sheet`·`aggregation`·`range`, 집계에 따라 `criteria_range`·`criteria`.
     `range`·`criteria_range`는 `C2:C16`처럼 열 하나의 연속 범위이고 길이가 같다.
 - 집계 방식:
@@ -150,6 +153,47 @@ def _tolerance(src: dict[str, Any]) -> float:
 _NUMBER = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?")
 _A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
 _C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
+_P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
+_REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+
+
+def _shape_numbers(pptx: Path) -> dict[tuple[int, str], list[float]]:
+    """(슬라이드 번호, 도형 cNvPr id) → 그 도형 텍스트의 숫자 목록."""
+    found: dict[tuple[int, str], list[float]] = {}
+    with zipfile.ZipFile(pptx) as z:
+        for name in z.namelist():
+            m = re.fullmatch(r"ppt/slides/slide(\d+)\.xml", name)
+            if not m:
+                continue
+            root = ET.fromstring(z.read(name))
+            for el in root.iter():
+                if el.tag not in (f"{_P}sp", f"{_P}graphicFrame"):
+                    continue
+                c_nv = next(el.iter(f"{_P}cNvPr"), None)
+                if c_nv is None:
+                    continue
+                text = "\n".join(t.text or "" for t in el.iter(f"{_A}t"))
+                nums = [float(x.replace(",", "")) for x in _NUMBER.findall(text)]
+                found[(int(m.group(1)), str(c_nv.get("id")))] = nums
+    return found
+
+
+def _slide_charts(pptx: Path) -> dict[int, set[str]]:
+    """슬라이드 번호 → 그 슬라이드가 참조하는 그래프 파트 이름(chart1 등)."""
+    found: dict[int, set[str]] = {}
+    with zipfile.ZipFile(pptx) as z:
+        for name in z.namelist():
+            m = re.fullmatch(r"ppt/slides/_rels/slide(\d+)\.xml\.rels", name)
+            if not m:
+                continue
+            root = ET.fromstring(z.read(name))
+            charts = {
+                Path(r.get("Target", "")).stem
+                for r in root.iter(f"{_REL}Relationship")
+                if re.search(r"charts/chart\d+\.xml$", r.get("Target", ""))
+            }
+            found[int(m.group(1))] = charts
+    return found
 
 
 def _slide_numbers(pptx: Path) -> dict[int, list[float]]:
@@ -199,13 +243,21 @@ def test_every_number_has_location_and_source(tmp_path: Path) -> None:
     pptx = Path(out["path"])
     numbers = _load_prov(pptx)
     assert {"summary", "chart", "detail"} <= {n["kind"] for n in numbers}
+    shapes = _shape_numbers(pptx)
+    slide_charts = _slide_charts(pptx)
     for n in numbers:
-        assert n["location"]["slide"] >= 1
-        assert (
-            n["location"].get("shape")
-            or n["location"].get("table_cell")
-            or (n["kind"] == "chart" and "chart" in n["location"])
-        )
+        loc = n["location"]
+        assert loc["slide"] >= 1
+        if n["kind"] == "chart":
+            # 기록한 슬라이드가 실제로 그 그래프를 담고 있어야 한다.
+            assert loc["chart"] in slide_charts.get(int(loc["slide"]), set()), n
+        else:
+            # 기록한 도형에 그 숫자가 실제로 보여야 한다.
+            key = (int(loc["slide"]), str(loc["shape"]))
+            assert key in shapes, f"없는 도형을 가리킨다: {n}"
+            assert any(v == pytest.approx(float(n["value"])) for v in shapes[key]), (
+                f"도형에 그 숫자가 없다: {n} / 도형 숫자 {shapes[key]}"
+            )
         src = n["source"]
         assert src["sheet"] and src["range"] and src["aggregation"]
         assert Path(src["file"]).name == SAMPLE.name

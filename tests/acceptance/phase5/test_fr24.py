@@ -9,8 +9,9 @@
   `DOCMILL_<이름대문자>_PATH=/nonexistent/engine` (기존 엔진 경로 변수) 로 바꾼다.
 - 저장소 루트의 `Dockerfile`이 이미지를 만들고, 컨테이너는 포트 8000에서 HTTP 모드를 띄운다.
 - `deploy/deploy.sh --image <새 이미지> --previous <이전 이미지> --timeout <초>` 는
-  PATH의 `docker`와 `curl`을 쓴다. 컨테이너는 `docker run ... <이미지>`로 띄운다
-  (이미지 이름을 인자로 넘긴다). 헬스 체크는 `curl`로 하고,
+  PATH의 `docker`와 `curl`을 쓴다. 컨테이너는 `docker run [옵션] <이미지> [명령]`으로 띄운다.
+  옵션은 `-d`·`--rm` 같은 단독 플래그이거나 `--name=x`·`--publish=...`처럼 `=`로 값을 붙여 쓴다.
+  그래서 `run` 뒤 첫 번째 `-`로 시작하지 않는 인자가 이미지다. 헬스 체크는 `curl`로 하고,
   실패하면 `docker run ... <이전 이미지>`로 되돌린다.
   테스트는 가짜 `docker`·`curl` 스크립트를 PATH 앞에 두고 호출 기록(`$FAKE_LOG`)을 확인한다.
   가짜 curl은 `FAKE_HEALTH=fail`이면 실패한다.
@@ -236,11 +237,17 @@ def _deploy(tmp: Path, health: str) -> tuple[subprocess.CompletedProcess[str], l
     return proc, log.read_text().splitlines()
 
 
+def _run_image(call: str) -> str | None:
+    """`docker run [옵션] IMAGE [명령]`에서 IMAGE를 꺼낸다. docker run이 아니면 None."""
+    parts = call.split()
+    if parts[:2] != ["docker", "run"]:
+        return None
+    return next((p for p in parts[2:] if not p.startswith("-")), None)
+
+
 def _run_index(calls: list[str], image: str) -> list[int]:
-    """`docker run ... <image>` 호출의 위치 목록."""
-    return [
-        i for i, c in enumerate(calls) if c.startswith("docker run ") and image in c.split()[2:]
-    ]
+    """IMAGE 자리가 image인 `docker run` 호출의 위치 목록."""
+    return [i for i, c in enumerate(calls) if _run_image(c) == image]
 
 
 @pytest.mark.fr("FR-24")
