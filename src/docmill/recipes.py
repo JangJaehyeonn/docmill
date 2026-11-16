@@ -173,7 +173,7 @@ def list_recipes() -> list[str]:
     folder = recipes_dir()
     if not folder.is_dir():
         return []
-    return sorted(p.stem for p in folder.glob("*.json") if not p.name.startswith("."))
+    return sorted(p.stem for p in folder.glob("*.json"))
 
 
 def _existing_path(name: str) -> Path:

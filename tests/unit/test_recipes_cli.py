@@ -46,6 +46,12 @@ def test_list_rename_delete_functions() -> None:
         delete_recipe("b")
 
 
+def test_dot_prefixed_name_is_listed_after_rename() -> None:
+    _write("a")
+    assert rename_recipe("a", ".b") == ".b"
+    assert list_recipes() == [".b"]
+
+
 def test_cli_list_rename_delete() -> None:
     _write("a")
     assert runner.invoke(app, ["recipes"]).stdout.split() == ["a"]
