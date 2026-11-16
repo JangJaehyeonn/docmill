@@ -150,3 +150,22 @@ def test_logged_records_success_and_error(tmp_path: Path, monkeypatch: pytest.Mo
     con.close()
     assert rows["ok"]["status"] == "ok" and rows["ok"]["args_summary"] == "x=2"
     assert rows["bad"]["status"] == "error" and "boom" in rows["bad"]["result"]
+
+
+def test_connect_migrates_legacy_db_repeatedly(tmp_path: Path) -> None:
+    """recipe 열이 없는 이전 DB를 이관하고, 다시 연결해도 실패하지 않는다."""
+    import sqlite3
+
+    legacy = sqlite3.connect(tmp_path / runlog.DB_NAME)
+    legacy.execute(
+        "CREATE TABLE tool_runs (run_id TEXT PRIMARY KEY, tool TEXT NOT NULL,"
+        " args_summary TEXT NOT NULL, result TEXT NOT NULL, status TEXT NOT NULL,"
+        " duration_ms INTEGER NOT NULL, ai_used INTEGER NOT NULL, started_at TEXT NOT NULL)"
+    )
+    legacy.commit()
+    legacy.close()
+    for _ in range(2):
+        con = runlog._connect(tmp_path)
+        names = {r["name"] for r in con.execute("PRAGMA table_info(tool_runs)")}
+        con.close()
+        assert "recipe" in names

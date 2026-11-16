@@ -77,8 +77,13 @@ def _connect(home: Path | None) -> sqlite3.Connection:
     con.execute(_SCHEMA)
     columns = {row["name"] for row in con.execute("PRAGMA table_info(tool_runs)")}
     if "recipe" not in columns:  # 이전 버전 DB 이관
-        with con:
-            con.execute("ALTER TABLE tool_runs ADD COLUMN recipe TEXT")
+        try:
+            with con:
+                con.execute("ALTER TABLE tool_runs ADD COLUMN recipe TEXT")
+        except sqlite3.OperationalError as exc:
+            # 동시 실행이 먼저 열을 추가했다면 정상이다.
+            if "duplicate column" not in str(exc).lower():
+                raise
     return con
 
 
