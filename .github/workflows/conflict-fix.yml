@@ -93,3 +93,14 @@ jobs:
             --max-turns 30
             --model ${{ steps.attempt.outputs.n == '3' && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
             --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git fetch origin main),Bash(git merge origin/main:*),Bash(git push origin ${{ needs.find.outputs.branch }}),Bash(gh pr view:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*),Bash(npm --prefix studio:*),Bash(npm ci:*),Bash(npm install:*),Bash(npm run:*),Bash(npx:*),Bash(node:*),Bash(uv run playwright:*)"
+      # setup-studio 안의 actions/setup-node는 잡 끝에 post 단계를 돌린다. 위에서 .pipeline을 지웠으므로
+      # 액션 파일을 되살려야 post 단계가 'action.yml을 찾을 수 없음'으로 잡 전체를 실패시키지 않는다.
+      - name: 설치 액션 사본 복원 (post 단계용)
+        if: always() && steps.attempt.outputs.proceed == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          path: .pipeline
+          sparse-checkout: |
+            .github/actions
+            scripts
