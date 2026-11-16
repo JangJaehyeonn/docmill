@@ -106,18 +106,26 @@ class McpEngineTool:
             shutil.rmtree(self.workdir, ignore_errors=True)
 
     # -- 실행 파일·인자 -------------------------------------------------------
-    def _executable(self) -> str:
-        configured = os.environ.get(self.env_var)
-        found = shutil.which(configured) if configured else shutil.which(self.binary)
+    @classmethod
+    def locate(cls) -> str:
+        """엔진 실행 파일 경로를 찾는다. 없으면 `EngineUnavailableError`.
+
+        환경 변수(`env_var`) > PATH의 `binary` > `docmill setup` 설치본 순서로 찾는다.
+        """
+        configured = os.environ.get(cls.env_var)
+        found = shutil.which(configured) if configured else shutil.which(cls.binary)
         if found is None and not configured:
-            found = find_installed(self.binary)  # `docmill setup`으로 설치한 엔진
+            found = find_installed(cls.binary)  # `docmill setup`으로 설치한 엔진
         if found is None:
-            hint = f"{self.env_var}={configured}" if configured else f"PATH의 {self.binary}"
+            hint = f"{cls.env_var}={configured}" if configured else f"PATH의 {cls.binary}"
             raise EngineUnavailableError(
-                f"{self.name} 엔진 실행 파일을 찾을 수 없다 ({hint}). "
-                f"{self.env_var} 환경 변수로 경로를 지정한다."
+                f"{cls.name} 엔진 실행 파일을 찾을 수 없다 ({hint}). "
+                f"{cls.env_var} 환경 변수로 경로를 지정한다."
             )
         return found
+
+    def _executable(self) -> str:
+        return self.locate()
 
     def _args(self) -> list[str]:
         args = ["mcp"]

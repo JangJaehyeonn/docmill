@@ -73,10 +73,13 @@ def _capture_run(
 
 
 def test_mcp_http_option_runs_streamable_http(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls = _capture_run(monkeypatch)
+    from docmill import remote
+
+    calls: list[tuple[str, int]] = []
+    monkeypatch.setattr(remote, "serve_http", lambda server, host, port: calls.append((host, port)))
     result = runner.invoke(app, ["mcp", "--http", "--port", "9123"])
     assert result.exit_code == 0
-    assert calls == [(("streamable-http",), {"host": "127.0.0.1", "port": 9123})]
+    assert calls == [("127.0.0.1", 9123)]
 
 
 def test_mcp_default_runs_stdio(monkeypatch: pytest.MonkeyPatch) -> None:
