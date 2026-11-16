@@ -121,8 +121,11 @@ def apply_map_to_columns(columns: list[str], mapping: Mapping[str, str]) -> list
     if absent:
         names = ", ".join(f"'{name}'" for name in absent)
         raise SchemaError(f"매핑할 열이 입력 파일에 없다: {names}")
+    if not mapping:
+        return list(columns)
     mapped = [mapping.get(name, name) for name in columns]
-    clashes = sorted({name for name in mapped if name and mapped.count(name) > 1})
+    # Only clashes the mapping itself creates; pre-existing duplicates are left alone.
+    clashes = sorted({name for name in mapping.values() if mapped.count(name) > 1})
     if clashes:
         names = ", ".join(f"'{name}'" for name in clashes)
         raise SchemaError(f"매핑 후 같은 이름의 열이 생긴다: {names}")

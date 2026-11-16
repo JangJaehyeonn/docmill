@@ -128,7 +128,11 @@ def preflight(steps: list[dict[str, Any]], input: str) -> None:
     with tempfile.TemporaryDirectory(prefix="docmill-preflight-") as tmp:
         rows = _read_sheet(source, Path(tmp).resolve())
     header = [str(c).strip() if c is not None else "" for c in (rows[0] if rows else [])]
-    missing = [name for name in needed if name not in header]
+    try:
+        mapped = apply_map_to_columns(header, active_column_map())
+    except SchemaError as exc:
+        raise RecipeError("preflight", str(exc)) from exc
+    missing = [name for name in needed if name not in mapped]
     if missing:
         names = ", ".join(f"'{name}'" for name in missing)
         raise RecipeError(

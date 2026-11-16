@@ -76,6 +76,14 @@ def test_apply_map_to_columns() -> None:
         apply_map_to_columns(["부서", "금액"], {"금액": "부서"})
 
 
+def test_apply_map_ignores_preexisting_duplicates() -> None:
+    cols = ["부서", "매출", "비고", "비고"]
+    assert apply_map_to_columns(cols, {}) == cols
+    assert apply_map_to_columns(cols, {"부서": "팀"}) == ["팀", "매출", "비고", "비고"]
+    with pytest.raises(SchemaError, match="같은 이름"):
+        apply_map_to_columns(["부서", "매출", "금액"], {"금액": "매출"})
+
+
 def test_map_header_only_inside_context() -> None:
     rows: list[list[Any]] = [["부서", "금액"], ["a", 1]]
     assert map_header(rows) == rows
