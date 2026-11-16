@@ -144,6 +144,10 @@ def test_claude_code_model_uses_cli_without_api_key(monkeypatch: pytest.MonkeyPa
     assert answer == Answer("save_recipe", {"name": "a"})
     assert seen["cmd"][:3] == ["claude", "-p", NONE.request]
     assert "ANTHROPIC_API_KEY" not in seen["env"]
+    # User settings (permissions.allow, env API keys) must not be loaded.
+    cmd = seen["cmd"]
+    assert cmd[cmd.index("--setting-sources") + 1] == "project"
+    assert "--bare" not in cmd
     assert "docmill" in seen["config"]["mcpServers"]
 
 

@@ -137,12 +137,17 @@ def mcp_config(docmill_home: str) -> dict[str, Any]:
 def claude_command(request: str, config_path: str) -> list[str]:
     """시나리오 하나를 Claude Code CLI 비대화 모드로 보내는 명령을 만든다.
 
-    docmill 도구는 허용 목록에 넣지 않으므로 실행은 거부되고, 모델이 고른 호출만 기록된다.
+    `--setting-sources project`로 사용자 설정(~/.claude/settings.json)을 읽지 않는다. 그래서
+    사용자의 `permissions.allow`로 docmill 도구가 실제 실행되거나 설정 파일 `env`의 API 키가
+    적용되는 일이 없다. 작업 폴더는 빈 임시 폴더라 프로젝트 설정도 없다. 로그인 정보는 그대로
+    쓰므로 `--bare`나 `CLAUDE_CONFIG_DIR` 변경은 하지 않는다.
     """
     return [
         "claude",
         "-p",
         request,
+        "--setting-sources",
+        "project",
         "--mcp-config",
         config_path,
         "--strict-mcp-config",
