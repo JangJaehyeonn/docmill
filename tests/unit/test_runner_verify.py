@@ -56,3 +56,25 @@ def test_real_mismatch_detected(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
     with pytest.raises(RecipeError) as info:
         verify_outputs(STEPS, {"$input": str(FIXTURES / "sales_week2.xlsx")}, made["path"])
     assert info.value.step == "verify"
+
+
+def test_multi_report_verifies_only_producing_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """원본이 다른 보고서를 두 번 만들어도 최종 산출물은 마지막 원본으로만 검증한다."""
+    monkeypatch.setenv("DOCMILL_HOME", str(tmp_path))
+    monkeypatch.delenv(FORCE_VERIFY_FAIL_ENV, raising=False)
+    week1, week2 = str(FIXTURES / "sales_week1.xlsx"), str(FIXTURES / "sales_week2.xlsx")
+    steps: list[dict[str, Any]] = [
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": week1, "group_by": "부서", "value": "매출"},
+        },
+        {
+            "tool": "excel_to_report_ppt",
+            "args": {"input": "$input", "group_by": "부서", "value": "매출"},
+        },
+    ]
+    made = json.loads(excel_to_report_ppt(week2, "부서", "매출"))
+    variables = {"$input": week2, "$step1": "other.pptx", "$step2": made["path"]}
+    verify_outputs(steps, variables, made["path"])

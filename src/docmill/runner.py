@@ -122,16 +122,24 @@ FORCE_VERIFY_FAIL_ENV = "DOCMILL_TEST_FORCE_VERIFY_FAIL"
 
 
 def verify_outputs(steps: list[dict[str, Any]], variables: dict[str, str], document: str) -> None:
-    """보고서 단계마다 최종 산출물의 그래프 숫자를 원본 엑셀 합계와 대조한다 (FR-12).
+    """최종 산출물을 만든 보고서 단계의 원본 엑셀 합계와 그래프 숫자를 대조한다 (FR-12).
 
     불일치나 검증 오류가 있으면 `RecipeError("verify", 원인)`을 낸다.
     환경 변수 `DOCMILL_TEST_FORCE_VERIFY_FAIL=1`이면 테스트용으로 불일치를 강제한다.
     """
     if Path(document).suffix.lower() != ".pptx":
         return
-    for index, step in enumerate(steps, start=1):
-        if step.get("tool") != "excel_to_report_ppt":
-            continue
+    produced_by = max(
+        (i for i in range(1, len(steps) + 1) if variables.get(f"$step{i}") == document),
+        default=len(steps),
+    )
+    # Only the last report step up to the one that produced the document applies to it.
+    report_steps = [
+        (index, step)
+        for index, step in enumerate(steps[:produced_by], start=1)
+        if step.get("tool") == "excel_to_report_ppt"
+    ]
+    for index, step in report_steps[-1:]:
         args = bind_args(step.get("args", {}), variables, f"{index}:excel_to_report_ppt")
         if not all(isinstance(args.get(k), str) for k in ("input", "group_by", "value")):
             continue  # nothing to compare against
