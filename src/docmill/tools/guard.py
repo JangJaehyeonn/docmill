@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.edits import Editor, Parts, apply_edit
@@ -97,8 +98,20 @@ def _revert(location: str, change: str) -> dict[str, str]:
     return {"location": location, "change": change}
 
 
+def _well_formed(data: bytes) -> bool:
+    """편집된 파트가 올바른 XML인지 확인한다 (제어 문자 등으로 깨진 결과를 걸러낸다)."""
+    try:
+        ET.fromstring(data)
+    except (ET.ParseError, ValueError):
+        return False
+    return True
+
+
 def _guard_whole(g: GuardedPart, after: Parts, snap: Snapshot, out: Outcome) -> None:
     if fingerprint_part(g.name, after[g.name]) == snap.part_prints[g.name]:
+        return
+    if not _well_formed(after[g.name]):
+        out.reverted.append(_revert(g.label, "XML이 깨짐"))
         return
     out.parts[g.name] = after[g.name]
     out.changed.append(g.label)
@@ -135,6 +148,9 @@ def _guard_part(g: GuardedPart, after: Parts, snap: Snapshot, out: Outcome) -> N
         return
     if g.whole:
         _guard_whole(g, after, snap, out)
+        return
+    if not _well_formed(after[g.name]):
+        out.reverted.append(_revert(g.label, "XML이 깨짐"))
         return
     try:
         edited = PartView.of(g, _decode(after, g.name))

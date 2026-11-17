@@ -23,6 +23,7 @@ from docmill.tools.scope import (
     ScopeError,
     numbered,
     parse_cell,
+    shape_key,
     sheet_parts,
     slide_parts,
 )
@@ -30,7 +31,6 @@ from docmill.tools.scope import (
 Parts = dict[str, bytes]
 Editor = Callable[[str, Parts, dict[str, Any], dict[str, Any]], Parts]
 _START = re.compile(r"<([^\s/>]+)(?:\"[^\"]*\"|'[^']*'|[^'\">])*>")
-_SHAPE_ID = r"<(?:[\w.-]+:)?cNvPr\b[^>]*?\sid=\"{}\""
 
 
 def _start_tag(fragment: str) -> tuple[str, str]:
@@ -65,6 +65,8 @@ def set_shape_text(shape: str, text: str) -> str:
     paragraphs = element_spans(shape, lambda n, p: n == "p" and p[-1:] == ("txBody",))
     if not paragraphs:
         raise ScopeError("글자를 넣을 수 없는 도형이다")
+    if len(element_spans(shape, lambda n, p: n == "txBody")) != 1:
+        raise ScopeError("글자 상자가 하나인 도형만 고칠 수 있다")
     first = shape[paragraphs[0].start : paragraphs[0].end]
     start, pre = _start_tag(first)
     ppr = _first(first, lambda n, p: n == "pPr" and len(p) == 1)
@@ -90,9 +92,11 @@ def _set_text(parts: Parts, items: Any) -> None:
         name = numbered(slides, item.get("slide"), "슬라이드")
         shape_id = item.get("shape")
         text = _part_text(parts, name)
-        pattern = re.compile(_SHAPE_ID.format(re.escape(str(shape_id))))
         spans = element_spans(text, lambda n, p: n in SHAPE_TAGS and p[-1:] == ("spTree",))
-        span = next((s for s in spans if pattern.search(text[s.start : s.end])), None)
+        wanted = str(shape_id)
+        span = next(
+            (s for i, s in enumerate(spans) if shape_key(text[s.start : s.end], i) == wanted), None
+        )
         if span is None:
             raise ScopeError(f"슬라이드 {item['slide']}에 도형 {shape_id}가 없다")
         new = set_shape_text(text[span.start : span.end], item["text"])

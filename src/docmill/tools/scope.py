@@ -106,7 +106,7 @@ def _check_keys(scope: dict[str, Any], allowed: set[str]) -> None:
         raise ScopeError(f"알 수 없는 범위 항목: {', '.join(extra)}")
 
 
-def _shape_key(fragment: str, index: int) -> str:
+def shape_key(fragment: str, index: int) -> str:
     m = _SHAPE_ID.search(fragment)
     return m.group(1) if m else f"?{index}"
 
@@ -133,7 +133,7 @@ def _pptx(parts: dict[str, bytes], scope: dict[str, Any]) -> list[GuardedPart]:
                 label=f"슬라이드 {number}",
                 unit_kind="도형",
                 want=lambda n, p: n in SHAPE_TAGS and p[-1:] == ("spTree",),
-                key_of=_shape_key,
+                key_of=shape_key,
                 unit_format=f"슬라이드 {number} 도형 {{}}",
                 in_scope=shapes.__contains__ if picked and shapes is not None else _never,
                 whole=picked and shapes is None,

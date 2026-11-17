@@ -170,6 +170,21 @@ def test_pptx_whole_slide_scope_allows_any_change_on_that_slide() -> None:
     assert "본문".encode() in _parts(data)["ppt/slides/slide2.xml"]
 
 
+@pytest.mark.parametrize("scope", [{"slides": [2]}, PPT_SCOPE])
+def test_control_characters_do_not_produce_a_corrupt_part(scope: dict[str, Any]) -> None:
+    original = _parts(PPTX.read_bytes())["ppt/slides/slide2.xml"]
+    edit = {"set_text": [{"slide": 2, "shape": 2, "text": "깨짐\x01"}]}
+    data, outcome = guard_edit(".pptx", PPTX.read_bytes(), scope, edit)
+    assert [r["change"] for r in outcome.reverted] == ["XML이 깨짐"]
+    assert _parts(data)["ppt/slides/slide2.xml"] == original
+
+
+def test_set_text_rejects_shape_with_several_text_bodies() -> None:
+    shape = "<p:sp><p:txBody><a:p/></p:txBody><p:txBody><a:p/></p:txBody></p:sp>"
+    with pytest.raises(Exception, match="글자 상자"):
+        set_shape_text(shape, "x")
+
+
 def test_xlsx_cells_outside_range_are_reverted() -> None:
     scope = {"sheet": 1, "range": "C2:C4"}
     data, outcome = guard_edit(
