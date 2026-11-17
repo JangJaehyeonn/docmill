@@ -45,6 +45,14 @@ def test_privacy_is_masked_and_classified(tmp_path: Path) -> None:
         assert raw not in out
 
 
+def test_unseparated_phone_and_placeholder_pii_are_masked(tmp_path: Path) -> None:
+    text = "연락처 01012345678 [작성: 900101-1234567]"
+    out = preflight(str(_docx(tmp_path / "q.docx", [(text, None)])))
+    kinds = [e["kind"] for e in json.loads(out)["checks"][2]["locations"]]
+    assert "전화번호" in kinds
+    assert "01012345678" not in out and "1234567" not in out
+
+
 def test_dates_are_not_mistaken_for_accounts(tmp_path: Path) -> None:
     assert _run(tmp_path, [("2026-11-16(월) 회의", None)])["개인정보"]["status"] == "통과"
 

@@ -152,9 +152,9 @@ export function App() {
   const activeEditing = activeOffice || activeHwp;
   const activeState = active ? editorStates[active.path] : undefined;
 
-  const saveHwp = async (path: string): Promise<void> => {
+  const saveHwp = async (path: string): Promise<boolean> => {
     // 같은 문서의 저장은 한 번에 하나만: 늦게 끝난 옛 저장이 최신 내용을 덮지 않게 한다.
-    if (!beginSave(path)) return;
+    if (!beginSave(path)) return false;
     setSavingPaths((m) => ({ ...m, [path]: true }));
     setSaveMessage("저장 중…");
     try {
@@ -168,23 +168,27 @@ export function App() {
       if (!res.ok) throw new Error("save");
       await notifyHwpSaved({ path, ...exported });
       setSaveMessage("저장했어요. 작업 폴더 파일에 반영됐어요.");
+      return true;
     } catch {
       setSaveMessage("저장하지 못했어요.");
+      return false;
     } finally {
       endSave(path);
       setSavingPaths((m) => ({ ...m, [path]: false }));
     }
   };
 
-  const save = async (path: string): Promise<void> => {
+  const save = async (path: string): Promise<boolean> => {
     if (isHwpPath(path)) return saveHwp(path);
     setSaveMessage("저장 요청 중…");
     try {
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
       setSaveMessage(res.ok ? "저장을 요청했어요. 곧 작업 폴더 파일에 반영돼요." : (body.error ?? "저장하지 못했어요."));
+      return res.ok;
     } catch {
       setSaveMessage("저장하지 못했어요.");
+      return false;
     }
   };
 
@@ -370,6 +374,7 @@ export function App() {
           tabs={tabState.tabs.map((t) => t.path)}
           active={tabState.active}
           onPaths={onAgentPaths}
+          onSave={save}
         />
       </div>
     </div>

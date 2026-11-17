@@ -45,7 +45,7 @@ _DATE = re.compile(
     r"\s*(?:\(\s*(?P<w1>[월화수목금토일])(?:요일)?\s*\)|(?P<w2>[월화수목금토일])요일)"
 )
 _RRN = re.compile(r"(?<!\d)\d{6}-[1-4]\d{6}(?!\d)")
-_PHONE = re.compile(r"(?<![\d-])0\d{1,2}[-. ]\d{3,4}[-. ]\d{4}(?![\d-])")
+_PHONE = re.compile(r"(?<![\d-])0\d{1,2}[-. ]?\d{3,4}[-. ]?\d{4}(?![\d-])")
 _ACCOUNT = re.compile(r"(?<![\d-])\d{2,6}(?:-\d{2,8}){2,3}(?![\d-])")
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PRIVACY_RULES = (
@@ -128,6 +128,13 @@ def _privacy_matches(text: str) -> list[tuple[str, str]]:
     return [(kind, raw) for _, kind, raw in sorted(found)]
 
 
+def mask_privacy(text: str) -> str:
+    """문장 안의 개인정보 구간만 가려서 돌려준다 (다른 검사 결과에 원문이 새지 않게)."""
+    for _, raw in _privacy_matches(text):
+        text = text.replace(raw, mask(raw))
+    return text
+
+
 def check_privacy(segments: list[Segment]) -> dict[str, Any]:
     """주민등록번호·전화번호·계좌번호·이메일을 찾는다. 결과에는 가린 값만 쓴다."""
     found = [
@@ -141,7 +148,7 @@ def check_privacy(segments: list[Segment]) -> dict[str, Any]:
 def check_placeholders(segments: list[Segment]) -> dict[str, Any]:
     """TBD·[작성]·○○○ 같은 자리표시자가 남은 곳을 찾는다."""
     found = [
-        _entry(segment.location, match.group(0))
+        _entry(segment.location, mask_privacy(match.group(0)))
         for segment in segments
         for match in _PLACEHOLDER.finditer(segment.text)
     ]

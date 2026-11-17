@@ -21,6 +21,7 @@ export function ChatPanel(props: {
   tabs: string[];
   active: string | null;
   onPaths: (paths: string[]) => void;
+  onSave: (path: string) => Promise<boolean>;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [text, setText] = useState("");
@@ -91,10 +92,12 @@ export function ChatPanel(props: {
     setItems((s) => [...s, { kind: "user", id: ++counter.current, text: "보내기 전 점검" }]);
     let text: string;
     try {
+      // 저장하지 않은 편집도 점검되도록 먼저 저장한다. 저장에 실패하면 점검하지 않는다.
+      if (!(await props.onSave(path))) throw new Error("save");
       const res = await fetch(`/api/preflight?path=${encodeURIComponent(path)}`);
       text = formatPreflight((await res.json()) as PreflightBody);
     } catch {
-      text = "보내기 전 점검을 실행하지 못했어요.";
+      text = "저장하지 못했거나 점검을 실행하지 못했어요. 저장한 뒤 다시 시도해 주세요.";
     }
     setItems((s) => [...s, { kind: "assistant", id: ++counter.current, text }]);
     setBusy(false);
