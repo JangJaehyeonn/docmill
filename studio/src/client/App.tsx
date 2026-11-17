@@ -128,14 +128,15 @@ export function App() {
     setSavingPaths((m) => ({ ...m, [path]: true }));
     setSaveMessage("저장 중…");
     try {
-      const { editor, bytes } = await exportHwp(path);
+      const exported = await exportHwp(path);
+      const { bytes } = exported;
       const res = await fetch(`/api/hwp?path=${encodeURIComponent(path)}`, {
         method: "PUT",
         headers: { "content-type": "application/octet-stream" },
         body: bytes as BodyInit,
       });
       if (!res.ok) throw new Error("save");
-      await notifyHwpSaved(path, editor);
+      await notifyHwpSaved({ path, ...exported });
       setSaveMessage("저장했어요. 작업 폴더 파일에 반영됐어요.");
     } catch {
       setSaveMessage("저장하지 못했어요.");

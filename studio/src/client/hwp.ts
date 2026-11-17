@@ -38,22 +38,41 @@ export function makeHandle(editor: RhwpEditor): RhwpHandle {
 export interface HwpExport {
   editor: RhwpEditor;
   bytes: Uint8Array;
+  /** 내보낼 때의 편집 순번 (rhwp `getDocumentState().changeSeq`, 모든 편집마다 1씩 증가). 알 수 없으면 null. */
+  changeSeq: number | null;
+}
+
+async function changeSeqOf(editor: RhwpEditor): Promise<number | null> {
+  try {
+    return (await editor.getDocumentState()).changeSeq;
+  } catch {
+    return null;
+  }
 }
 
 /** 열린 편집기의 내용을 원래 형식(hwp 또는 hwpx)으로 내보낸다. */
 export async function exportHwp(path: string): Promise<HwpExport> {
   const editor = open.get(path);
   if (!editor) throw new Error("편집기가 열려 있지 않습니다.");
+  const changeSeq = await changeSeqOf(editor);
   const bytes = await editor.hwpctrl.exportBytes(/\.hwpx$/i.test(path) ? "hwpx" : "hwp");
-  return { editor, bytes };
+  return { editor, bytes, changeSeq };
 }
 
 /**
- * 저장 완료를 알린다 (수정됨 표시를 지운다). 내보내기에 쓴 편집기가 아직 그 경로의 편집기일 때만
- * 알린다. 저장 중에 파일을 다시 열어 새 편집기가 생겼다면, 그 편집 내용은 이번 저장에 없으므로 알리지 않는다.
+ * 저장 완료를 알린다 (수정됨 표시와 자동복구 draft 를 지운다). 다음일 때만 알린다.
+ * - 내보내기에 쓴 편집기가 아직 그 경로의 편집기다 (다시 열어 새 편집기가 생기지 않았다).
+ * - 내보낸 뒤 편집이 없었다 (편집 순번이 그대로다). 저장 중에 더 고친 내용은 이번 저장에 없으므로
+ *   수정됨 표시를 남겨 둔다. 편집 순번을 알 수 없으면 안전하게 알리지 않는다.
  */
-export async function notifyHwpSaved(path: string, editor: RhwpEditor): Promise<boolean> {
-  if (!isCurrentHwpEditor(path, editor)) return false;
+export async function notifyHwpSaved(saved: {
+  path: string;
+  editor: RhwpEditor;
+  changeSeq: number | null;
+}): Promise<boolean> {
+  const { path, editor, changeSeq } = saved;
+  if (!isCurrentHwpEditor(path, editor) || changeSeq === null) return false;
+  if ((await changeSeqOf(editor)) !== changeSeq) return false;
   await editor.notifySaved(path.split("/").pop());
   return true;
 }
