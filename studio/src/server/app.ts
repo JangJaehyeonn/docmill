@@ -20,6 +20,13 @@ import {
   type ChatEvent,
   type ChatRequest,
 } from "./chat.js";
+import {
+  applyPreview,
+  cancelPreview,
+  parsePreview,
+  registerPreview,
+  type PendingPreview,
+} from "./preview.js";
 import { addRecent, listRecent } from "./recent.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
@@ -46,6 +53,9 @@ const MAX_HWP_BYTES = 256 * 1024 * 1024;
 
 /** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
 const sessionKeys = new Map<string, string>();
+
+/** 적용·취소를 기다리는 미리보기 (ID → 원본·사본). */
+const pendingPreviews = new Map<string, PendingPreview>();
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -119,11 +129,47 @@ async function handleApi(
     return sendJson(res, 200, { suggestions: await fetchSuggestions(file.abs) });
   }
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
+  if (req.method === "POST" && pathname === "/api/preview/apply") {
+    return decide(opts, req, res, "apply");
+  }
+  if (req.method === "POST" && pathname === "/api/preview/cancel") {
+    return decide(opts, req, res, "cancel");
+  }
   if (pathname === "/api/hwp") return hwpFile(opts, req, res, query);
   if (req.method === "POST" && pathname === "/api/save") {
     return forceSave(opts, res, query);
   }
   sendJson(res, 404, { error: "알 수 없는 요청입니다." });
+}
+
+/** 미리보기 적용·취소. 서버가 만든 미리보기 ID 만 받는다. */
+async function decide(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  action: "apply" | "cancel",
+): Promise<void> {
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+  }
+  const body = (await readBody(req)) as { id?: unknown };
+  const root = await fs.realpath(opts.workspace);
+  const id = typeof body.id === "string" ? body.id : "";
+  try {
+    if (action === "apply") {
+      const rel = await applyPreview(pendingPreviews, root, id);
+      if (rel === null) return sendJson(res, 404, { error: "대기 중인 미리보기가 아닙니다." });
+      sessionKeys.delete(rel);
+      return sendJson(res, 200, { ok: true, path: rel });
+    }
+    if (!(await cancelPreview(pendingPreviews, root, id))) {
+      return sendJson(res, 404, { error: "대기 중인 미리보기가 아닙니다." });
+    }
+    sendJson(res, 200, { ok: true });
+  } catch (err) {
+    console.error("미리보기 처리 실패:", err);
+    sendJson(res, 500, { error: "미리보기를 처리하지 못했어요." });
+  }
 }
 
 /** 채팅 한 턴: 에이전트를 실행하고 이벤트를 줄 단위 JSON(NDJSON)으로 흘려보낸다. */
@@ -164,7 +210,13 @@ async function chat(
   // 경로 확인이 비동기라 순서가 뒤바뀌지 않도록 이벤트를 한 줄로 이어서 보낸다.
   let queue: Promise<void> = Promise.resolve();
   const send = async (e: ChatEvent): Promise<void> => {
-    if (e.type === "tool_result") {
+    const info = e.type === "tool_result" ? parsePreview(e.text) : null;
+    const reg = info ? await registerPreview(pendingPreviews, root, info) : null;
+    if (e.type === "tool_result" && info && reg) {
+      // 사본에 적용된 결과: 원본은 건드리지 않고(경로 알림 없이) 결과 뒤에 미리보기 카드를 보낸다.
+      if (!res.writableEnded) res.write(JSON.stringify({ ...e, paths: [] }) + "\n");
+      e = { type: "preview", id: reg.id, path: reg.rel, summary: info.summary };
+    } else if (e.type === "tool_result") {
       // 작업 폴더 안의 문서 파일만 상대 경로로 바꿔 알린다.
       const rel: string[] = [];
       for (const p of e.paths) {

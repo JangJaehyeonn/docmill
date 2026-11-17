@@ -17,6 +17,7 @@ export interface ChatRequest {
 export type ChatEvent =
   | { type: "tool"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; text: string; paths: string[] }
+  | { type: "preview"; id: string; path: string; summary: string[] }
   | { type: "assistant"; text: string }
   | { type: "error"; message: string }
   | { type: "done" };

@@ -2,12 +2,24 @@
 export type ChatItem =
   | { kind: "user"; id: number; text: string }
   | { kind: "tool"; id: number; toolId: string; name: string; result?: string }
-  | { kind: "assistant"; id: number; text: string };
+  | { kind: "assistant"; id: number; text: string }
+  | {
+      kind: "preview";
+      id: number;
+      previewId: string;
+      path: string;
+      summary: string[];
+      status: PreviewStatus;
+    };
+
+/** 미리보기 카드 상태: 결정 대기 / 처리 중 / 적용됨 (취소하면 카드가 사라진다). */
+export type PreviewStatus = "pending" | "working" | "applied";
 
 /** 서버가 흘려보내는 채팅 이벤트 (studio/src/server/chat.ts 와 같은 모양). */
 export type ChatEvent =
   | { type: "tool"; id: string; name: string; input: unknown }
   | { type: "tool_result"; id: string; text: string; paths: string[] }
+  | { type: "preview"; id: string; path: string; summary: string[] }
   | { type: "assistant"; text: string }
   | { type: "error"; message: string }
   | { type: "done" };
@@ -21,6 +33,17 @@ export function applyEvent(items: ChatItem[], event: ChatEvent, nextId: number):
     return items.map((it) =>
       it.kind === "tool" && it.toolId === event.id ? { ...it, result: event.text } : it,
     );
+  }
+  if (event.type === "preview") {
+    const card: ChatItem = {
+      kind: "preview",
+      id: nextId,
+      previewId: event.id,
+      path: event.path,
+      summary: event.summary,
+      status: "pending",
+    };
+    return [...items, card];
   }
   if (event.type === "assistant") {
     return [...items, { kind: "assistant", id: nextId, text: event.text }];
@@ -74,5 +97,30 @@ export async function sendChat(
     splitEvents(buffer + "\n").events.forEach(onEvent);
   } catch {
     onEvent({ type: "error", message: "에이전트와 연결이 끊겼어요. 다시 시도하세요." });
+  }
+}
+
+/** 미리보기 카드의 상태를 바꾼다. */
+export function setPreviewStatus(
+  items: ChatItem[],
+  previewId: string,
+  status: PreviewStatus,
+): ChatItem[] {
+  return items.map((it) =>
+    it.kind === "preview" && it.previewId === previewId ? { ...it, status } : it,
+  );
+}
+
+/** 미리보기를 적용(apply)하거나 취소(cancel)한다. 성공하면 true. */
+export async function decidePreview(action: "apply" | "cancel", id: string): Promise<boolean> {
+  try {
+    const res = await fetch(`/api/preview/${action}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
+    return res.ok;
+  } catch {
+    return false;
   }
 }
