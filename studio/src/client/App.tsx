@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { ChatPanel } from "./ChatPanel";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
@@ -33,6 +34,7 @@ export function App() {
   const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingPaths, setSavingPaths] = useState<Record<string, boolean>>({});
+  const [reloads, setReloads] = useState<Record<string, number>>({});
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
   const pendingOpen = useRef<string | null>(readOpenParam(window.location.search));
@@ -78,6 +80,21 @@ export function App() {
       await refreshOrReport();
     },
     [refreshOrReport],
+  );
+
+  // 에이전트 결과의 파일: 열려 있는 탭이면 다시 불러오고, 아니면 새 탭으로 연다.
+  const tabsRef = useRef(tabState);
+  tabsRef.current = tabState;
+  const onAgentPaths = useCallback(
+    (paths: string[]) => {
+      for (const p of paths) {
+        if (tabsRef.current.tabs.some((t) => t.path === p)) {
+          setEditorStates((m) => ({ ...m, [p]: "loading" }));
+          setReloads((m) => ({ ...m, [p]: (m[p] ?? 0) + 1 }));
+        } else void openPath(p);
+      }
+    },
+    [openPath],
   );
 
   // 목록을 (다시) 불러오고, 아직 처리하지 못한 시작 open 이 있을 때만 그 파일을 연다.
@@ -168,6 +185,7 @@ export function App() {
                 role="tab"
                 aria-selected={t.path === tabState.active}
                 title={t.path}
+                data-reloaded={reloads[t.path] ?? 0}
                 onClick={() => setTabState((s) => openTab(s, t))}
               >
                 {t.name}
@@ -287,7 +305,7 @@ export function App() {
                 </p>
               )}
               <OfficeEditor
-                key={active.path}
+                key={`${active.path}#${reloads[active.path] ?? 0}`}
                 path={active.path}
                 onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
               />
@@ -316,7 +334,7 @@ export function App() {
             .filter((t) => isHwpPath(t.path))
             .map((t) => (
               <HwpEditor
-                key={t.path}
+                key={`${t.path}#${reloads[t.path] ?? 0}`}
                 path={t.path}
                 active={t.path === tabState.active}
                 onState={(st) => setEditorStates((m) => ({ ...m, [t.path]: st }))}
@@ -324,6 +342,11 @@ export function App() {
               />
             ))}
         </main>
+        <ChatPanel
+          tabs={tabState.tabs.map((t) => t.path)}
+          active={tabState.active}
+          onPaths={onAgentPaths}
+        />
       </div>
     </div>
   );
