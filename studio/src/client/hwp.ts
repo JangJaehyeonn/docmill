@@ -34,14 +34,46 @@ export function makeHandle(editor: RhwpEditor): RhwpHandle {
   };
 }
 
-/** 열린 편집기의 내용을 원래 형식(hwp 또는 hwpx)으로 내보낸다. */
-export async function exportHwp(path: string): Promise<Uint8Array> {
-  const editor = open.get(path);
-  if (!editor) throw new Error("편집기가 열려 있지 않습니다.");
-  return editor.hwpctrl.exportBytes(/\.hwpx$/i.test(path) ? "hwpx" : "hwp");
+/** 내보낸 바이트와, 내보내기에 쓴 편집기 인스턴스. */
+export interface HwpExport {
+  editor: RhwpEditor;
+  bytes: Uint8Array;
 }
 
-/** 열린 편집기에 저장 완료를 알린다 (수정됨 표시를 지운다). */
-export async function notifyHwpSaved(path: string): Promise<void> {
-  await open.get(path)?.notifySaved(path.split("/").pop());
+/** 열린 편집기의 내용을 원래 형식(hwp 또는 hwpx)으로 내보낸다. */
+export async function exportHwp(path: string): Promise<HwpExport> {
+  const editor = open.get(path);
+  if (!editor) throw new Error("편집기가 열려 있지 않습니다.");
+  const bytes = await editor.hwpctrl.exportBytes(/\.hwpx$/i.test(path) ? "hwpx" : "hwp");
+  return { editor, bytes };
+}
+
+/**
+ * 저장 완료를 알린다 (수정됨 표시를 지운다). 내보내기에 쓴 편집기가 아직 그 경로의 편집기일 때만
+ * 알린다. 저장 중에 파일을 다시 열어 새 편집기가 생겼다면, 그 편집 내용은 이번 저장에 없으므로 알리지 않는다.
+ */
+export async function notifyHwpSaved(path: string, editor: RhwpEditor): Promise<boolean> {
+  if (!isCurrentHwpEditor(path, editor)) return false;
+  await editor.notifySaved(path.split("/").pop());
+  return true;
+}
+
+/** 이 편집기가 지금 그 경로에 등록된 편집기인지. */
+export function isCurrentHwpEditor(path: string, editor: RhwpEditor): boolean {
+  return open.get(path) === editor;
+}
+
+/** 경로별 저장 중 표시. 같은 문서의 저장이 겹쳐 오래된 내용이 최신을 덮지 않게 한다. */
+const saving = new Set<string>();
+
+/** 저장을 시작할 수 있으면 true 를 돌려주고 저장 중으로 표시한다. */
+export function beginSave(path: string): boolean {
+  if (saving.has(path)) return false;
+  saving.add(path);
+  return true;
+}
+
+/** 저장 중 표시를 지운다. */
+export function endSave(path: string): void {
+  saving.delete(path);
 }

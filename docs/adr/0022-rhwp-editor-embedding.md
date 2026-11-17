@@ -8,7 +8,7 @@
 hwp·hwpx 탭에 편집 화면이 필요하다. rhwp 편집기는 `file:` 출처를 거부하고, 공개 데모(edwardkim.github.io)는 외부 사이트 의존이라 쓰지 않기로 했다 (ADR 0020).
 
 ## 결정
-- 새 의존성 `@rhwp/editor` 0.9.0(`createStudio`)으로 iframe 편집기를 붙인다. 편집기 자원은 `RHWP_STUDIO_DIST` 빌드 폴더를 studio 서버가 `/rhwp/` 로 내보낸다 (폴더 밖 경로 거부, wasm MIME 지정).
+- 새 의존성 `@rhwp/editor` 0.9.0(`createStudio`)으로 iframe 편집기를 붙인다. 편집기 자원은 `RHWP_STUDIO_DIST` 빌드 폴더를 studio 서버가 `/rhwp/` 로 내보낸다 (폴더 밖 경로 거부, wasm MIME 지정). 빌드는 `RHWP_DISABLE_EXTERNAL_WEBFONTS=1 npx vite build --base /rhwp/` 로 하여 외부 웹폰트 요청을 끈다 (`.github/actions/setup-studio` 와 같다).
 - 문서는 `GET /api/hwp`로 받아 `loadFile` 하고, 저장은 `hwpctrl.exportBytes`로 내보낸 바이트를 `PUT /api/hwp`로 보내 작업 폴더 원본을 임시 파일 교체 방식으로 바꾼다. PUT 은 `application/octet-stream` 만 받아 다른 웹페이지의 단순 요청 저장을 막는다.
 - `window.rhwpEditor` 에 `insertText`·`getText` 두 동작만 노출한다 (hwpctrl `SetTextFile`·`GetTextFile` 사용, 문서 맨 앞에 넣는다).
 
