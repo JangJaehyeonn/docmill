@@ -14,6 +14,7 @@ import {
   shouldSave,
 } from "./onlyoffice.js";
 import { addRecent, listRecent } from "./recent.js";
+import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
 
 export interface AppOptions {
@@ -26,7 +27,12 @@ export interface AppOptions {
   publicHost?: string;
   /** /onlyoffice/* 주소 서명용 비밀값. 없으면 프로세스마다 새로 만든다. */
   secret?: string;
+  /** rhwp 편집기 빌드 폴더(RHWP_STUDIO_DIST). `/rhwp/` 아래로 내보낸다. */
+  rhwpDist?: string;
 }
+
+/** 한글 파일 저장 요청 본문의 최대 크기 (256MB). */
+const MAX_HWP_BYTES = 256 * 1024 * 1024;
 
 /** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
 const sessionKeys = new Map<string, string>();
@@ -97,6 +103,7 @@ async function handleApi(
   if (req.method === "GET" && pathname === "/api/editor-config") {
     return editorConfig(opts, req, res, query);
   }
+  if (pathname === "/api/hwp") return hwpFile(opts, req, res, query);
   if (req.method === "POST" && pathname === "/api/save") {
     return forceSave(opts, res, query);
   }
@@ -138,6 +145,46 @@ async function editorConfig(
   const origin = `http://${opts.publicHost || "127.0.0.1"}:${port}`;
   const sig = signPath(secretOf(opts), file.rel);
   sendJson(res, 200, { server, config: buildEditorConfig(file.rel, key, origin, sig) });
+}
+
+async function readBytes(req: http.IncomingMessage): Promise<Buffer | null> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of req) {
+    size += (chunk as Buffer).length;
+    if (size > MAX_HWP_BYTES) return null;
+    chunks.push(chunk as Buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+/** 한글 파일 읽기(GET)와 저장(PUT). 저장은 작업 폴더의 원본 파일을 통째로 바꾼다. */
+async function hwpFile(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+  query: URLSearchParams,
+): Promise<void> {
+  if (req.method !== "GET" && req.method !== "PUT") {
+    return sendJson(res, 405, { error: "허용되지 않는 요청입니다." });
+  }
+  const file = await resolveQuery(opts, res, query);
+  if (!file) return;
+  if (!isHwpFile(file.rel)) return sendJson(res, 400, { error: "한글 파일(hwp, hwpx)이 아닙니다." });
+  if (req.method === "GET") {
+    res.writeHead(200, { "content-type": "application/octet-stream", "cache-control": "no-store" });
+    res.end(await fs.readFile(file.abs));
+    return;
+  }
+  // 다른 웹페이지가 몰래 보내는 저장 요청을 막기 위해 단순 요청 형식이 아닌 것만 받는다.
+  if (req.headers["content-type"] !== "application/octet-stream") {
+    return sendJson(res, 415, { error: "저장 형식이 맞지 않습니다." });
+  }
+  const data = await readBytes(req);
+  if (!data) return sendJson(res, 413, { error: "파일이 너무 큽니다." });
+  if (data.length === 0) return sendJson(res, 400, { error: "빈 파일은 저장할 수 없습니다." });
+  await replaceFile(file.abs, data);
+  sendJson(res, 200, { ok: true, bytes: data.length });
 }
 
 async function serveDocument(
@@ -294,7 +341,9 @@ export function createApp(opts: AppOptions): http.Server {
     }
     let task: Promise<void>;
     if (pathname.startsWith("/api/")) task = handleApi(opts, req, res, pathname, query);
-    else if (req.method === "GET" && pathname === "/onlyoffice/file") {
+    else if (req.method === "GET" && pathname.startsWith("/rhwp/")) {
+      task = serveRhwp(opts.rhwpDist, res, pathname);
+    } else if (req.method === "GET" && pathname === "/onlyoffice/file") {
       task = serveDocument(opts, res, query);
     } else if (req.method === "POST" && pathname === "/onlyoffice/callback") {
       task = saveCallback(opts, req, res, query);
