@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { applyEvent, sendChat, type ChatEvent, type ChatItem } from "./chat";
+import { applyEvent, decidePreview, sendChat, setPreviewStatus, type ChatEvent, type ChatItem } from "./chat";
 
 interface Suggestion {
   label: string;
@@ -38,6 +38,23 @@ export function ChatPanel(props: {
       stale = true;
     };
   }, [props.active]);
+
+  const decide = async (action: "apply" | "cancel", id: string, path: string): Promise<void> => {
+    setItems((s) => setPreviewStatus(s, id, "working"));
+    const ok = await decidePreview(action, id);
+    if (!ok) {
+      setItems((s) => setPreviewStatus(s, id, "pending"));
+      setError(action === "apply" ? "변경을 적용하지 못했어요." : "미리보기를 취소하지 못했어요.");
+      return;
+    }
+    // 취소하면 카드를 지우고, 적용하면 결과만 남긴다.
+    setItems((s) =>
+      action === "cancel"
+        ? s.filter((it) => !(it.kind === "preview" && it.previewId === id))
+        : setPreviewStatus(s, id, "applied"),
+    );
+    if (action === "apply") pathsRef.current([path]);
+  };
 
   const submit = async (override?: string): Promise<void> => {
     const message = (override ?? text).trim();
@@ -85,6 +102,34 @@ export function ChatPanel(props: {
               <summary>도구 호출: {it.name}</summary>
               <pre>{it.result ?? "실행 중…"}</pre>
             </details>
+          ) : it.kind === "preview" ? (
+            <div key={it.id} data-role="preview-card" className="tool-card">
+              <strong>{it.path} 변경 미리보기</strong>
+              <ul>
+                {it.summary.map((l) => (
+                  <li key={l}>{l}</li>
+                ))}
+              </ul>
+              {it.status === "applied" && <p className="hint">적용했어요.</p>}
+              {(it.status === "pending" || it.status === "working") && (
+                <div>
+                  <button
+                    type="button"
+                    disabled={it.status === "working"}
+                    onClick={() => void decide("apply", it.previewId, it.path)}
+                  >
+                    적용
+                  </button>
+                  <button
+                    type="button"
+                    disabled={it.status === "working"}
+                    onClick={() => void decide("cancel", it.previewId, it.path)}
+                  >
+                    취소
+                  </button>
+                </div>
+              )}
+            </div>
           ) : (
             <div key={it.id} data-role="assistant" className="bubble assistant">
               {it.text}
