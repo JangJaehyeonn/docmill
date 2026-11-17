@@ -52,25 +52,25 @@ jobs:
                            (.conclusion as $c | ["success","skipped","neutral"] | index($c) | not))] | length')
             [ "$bad" = "0" ] || continue
             # 열린 CodeRabbit 스레드가 있고, 모두 "반영했습니다" 답글이 달렸는지 (반박 답글만 있는 스레드는 제외).
-            # 스레드는 --paginate로 모든 페이지를 받는다. 스레드 하나의 댓글은 최대 100개까지 본다
-            # (CodeRabbit 스레드가 100개를 넘으면 알리지 않고 90분 정체 알림에 맡긴다).
+            # 스레드는 --paginate로 모든 페이지를 받는다. 각 스레드는 첫 댓글(root)과 마지막 댓글 100개(답글)를 본다.
+            # 반영 답글은 최근 댓글에 있으므로 댓글이 아무리 많아도 판정에서 빠지지 않는다.
             threads=$(gh api graphql --paginate -f owner="$owner" -f name="$name" -F n="$n" -f query='
               query($owner:String!,$name:String!,$n:Int!,$endCursor:String){repository(owner:$owner,name:$name){
                 pullRequest(number:$n){reviewThreads(first:50,after:$endCursor){
                   pageInfo{hasNextPage endCursor}
-                  nodes{isResolved comments(first:100){totalCount nodes{author{login} url body}}}}}}}' \
+                  nodes{isResolved root:comments(first:1){nodes{author{login} url}}
+                    replies:comments(last:100){nodes{author{login} body}}}}}}}' \
               --jq '.data.repository.pullRequest.reviewThreads.nodes[]
                      | select(.isResolved | not)
-                     | select((.comments.nodes[0].author.login // "") | startswith("coderabbitai"))' \
+                     | select((.root.nodes[0].author.login // "") | startswith("coderabbitai"))' \
               | jq -s '.') || continue
-            # 댓글이 100개를 넘는 스레드가 있으면 판단하지 않는다.
-            [ "$(printf '%s' "$threads" | jq '[.[] | select(.comments.totalCount > 100)] | length')" = "0" ] || continue
             open=$(printf '%s' "$threads" | jq 'length')
             unanswered=$(printf '%s' "$threads" | jq '[.[] | select(
-              [.comments.nodes[1:][] | select(((.author.login // "") | startswith("coderabbitai")) | not)
+              [.replies.nodes[] | select(.author.login != null)
+               | select((.author.login | startswith("coderabbitai")) | not)
                | select(.body | contains("반영했습니다"))] | length == 0)] | length')
             [ "$open" -gt 0 ] && [ "$unanswered" = "0" ] || continue
-            links=$(printf '%s' "$threads" | jq -r '.[] | "- " + .comments.nodes[0].url')
+            links=$(printf '%s' "$threads" | jq -r '.[] | "- " + .root.nodes[0].url')
             echo "PR #$n: 해결 처리만 남은 스레드 $open개"
             gh pr comment "$n" --repo "$REPO" --body "<!-- docmill-resolve:$sha -->
           @JangJaehyeonn CI는 모두 통과했고, CodeRabbit 스레드 ${open}개에 반영 답글이 달려 있는데 해결 처리가 안 돼 승인이 막혀 있습니다.
