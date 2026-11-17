@@ -51,8 +51,10 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
     return dict(json.loads(text))
 
 
-def _suggest(home: Path, sample: str) -> dict[str, Any]:
-    args = {"input": str(FIXTURES / sample)}
+def _suggest(home: Path, sample: str | Path) -> dict[str, Any]:
+    # 문자열은 고정 샘플 이름, Path는 그 파일 그대로 (제안 문구에 파일 경로가 들어갈 수 있다).
+    target = sample if isinstance(sample, Path) else FIXTURES / sample
+    args = {"input": str(target)}
     # Playwright 동기 API가 이벤트 루프를 돌리는 테스트에서도 부를 수 있게 별도 스레드에서 실행한다.
     with ThreadPoolExecutor(max_workers=1) as pool:
         return pool.submit(
@@ -125,7 +127,7 @@ def test_studio_shows_suggestion_buttons_and_sends_message(
     button = page.get_by_role("button", name="할 일 표 만들기")
     button.wait_for(timeout=60_000)
     # 제안 문구는 도구 결과의 message와 같아야 한다.
-    expected = _suggest(tmp_path, "meeting_1111.docx")["suggestions"]
+    expected = _suggest(tmp_path, ws / "meeting_1111.docx")["suggestions"]
     message = next(s["message"] for s in expected if s["tool"] == "doc_to_task_table")
     button.click()
     bubble = page.locator('[data-role="user"]').first
