@@ -16,6 +16,7 @@ from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
+from docmill.tools.preflight import preflight
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.review import review_map
 from docmill.tools.suggest import suggest_actions
@@ -75,6 +76,11 @@ def _register_review(server: MCPServer) -> None:
     server.tool()(review_map)
 
 
+def _register_preflight(server: MCPServer) -> None:
+    """`preflight` 업무 도구(FR-34)를 등록한다."""
+    server.tool()(preflight)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -84,6 +90,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_suggest,
     _register_guard,
     _register_review,
+    _register_preflight,
 )
 
 

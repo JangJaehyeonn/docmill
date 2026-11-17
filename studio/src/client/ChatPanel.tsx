@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { applyEvent, decidePreview, sendChat, setPreviewStatus, type ChatEvent, type ChatItem } from "./chat";
+import {
+  applyEvent,
+  decidePreview,
+  formatPreflight,
+  sendChat,
+  setPreviewStatus,
+  type ChatEvent,
+  type ChatItem,
+  type PreflightBody,
+} from "./chat";
 
 interface Suggestion {
   label: string;
@@ -73,6 +82,24 @@ export function ChatPanel(props: {
     setBusy(false);
   };
 
+  // 에이전트 없이 preflight 도구를 바로 불러 항목별 결과를 채팅에 보여준다.
+  const runPreflightCheck = async (): Promise<void> => {
+    const path = props.active;
+    if (!path || busy) return;
+    setError(null);
+    setBusy(true);
+    setItems((s) => [...s, { kind: "user", id: ++counter.current, text: "보내기 전 점검" }]);
+    let text: string;
+    try {
+      const res = await fetch(`/api/preflight?path=${encodeURIComponent(path)}`);
+      text = formatPreflight((await res.json()) as PreflightBody);
+    } catch {
+      text = "보내기 전 점검을 실행하지 못했어요.";
+    }
+    setItems((s) => [...s, { kind: "assistant", id: ++counter.current, text }]);
+    setBusy(false);
+  };
+
   return (
     <aside className="chat" aria-label="AI 채팅">
       <h2>AI 채팅</h2>
@@ -91,6 +118,11 @@ export function ChatPanel(props: {
           ))}
         </div>
       )}
+      <div className="suggestions">
+        <button type="button" disabled={busy || !props.active} onClick={() => void runPreflightCheck()}>
+          보내기 전 점검
+        </button>
+      </div>
       <div className="chat-log" role="log" aria-live="polite">
         {items.map((it) =>
           it.kind === "user" ? (

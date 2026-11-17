@@ -1,5 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { applyEvent, splitEvents, type ChatItem } from "./chat";
+import { applyEvent, formatPreflight, splitEvents, type ChatItem } from "./chat";
+
+describe("formatPreflight", () => {
+  it("항목별 상태와 위치 개수를 줄마다 적는다", () => {
+    const text = formatPreflight({
+      checks: [
+        { name: "자리표시자", status: "주의", count: 2 },
+        { name: "개인정보", status: "통과", count: 0 },
+      ],
+    });
+    expect(text).toBe("보내기 전 점검 결과\n자리표시자: 주의 (2곳)\n개인정보: 통과");
+  });
+
+  it("실패하면 이유를 보인다", () => {
+    expect(formatPreflight({ checks: [], error: "파일 없음" })).toContain("파일 없음");
+  });
+});
 
 describe("applyEvent", () => {
   it("도구 호출 카드에 결과를 붙이고 마지막 메시지를 뒤에 더한다", () => {

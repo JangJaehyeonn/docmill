@@ -100,6 +100,21 @@ export async function sendChat(
   }
 }
 
+/** `/api/preflight` 응답 모양. */
+export interface PreflightBody {
+  checks: { name: string; status: string; count: number }[];
+  error?: string;
+}
+
+/** 점검 결과를 채팅에 보일 줄 단위 글자로 만든다 (항목: 상태 · 위치 n곳). */
+export function formatPreflight(body: PreflightBody): string {
+  if (body.error) return `보내기 전 점검 실패: ${body.error}`;
+  const lines = body.checks.map(
+    (c) => `${c.name}: ${c.status}${c.count > 0 ? ` (${c.count}곳)` : ""}`,
+  );
+  return ["보내기 전 점검 결과", ...lines].join("\n");
+}
+
 /** 미리보기 카드의 상태를 바꾼다. */
 export function setPreviewStatus(
   items: ChatItem[],

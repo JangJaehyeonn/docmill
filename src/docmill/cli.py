@@ -56,6 +56,14 @@ def suggest(path: str = typer.Argument(..., help="제안을 받을 문서 경로
     typer.echo(suggest_actions(path))
 
 
+@app.command("preflight")
+def preflight_command(path: str = typer.Argument(..., help="점검할 문서 경로")) -> None:
+    """문서를 보내기 전 안전 점검 결과를 JSON으로 출력합니다 (studio가 쓴다). FR-34."""
+    from docmill.tools.preflight import preflight
+
+    typer.echo(preflight(path))
+
+
 @app.command()
 def setup() -> None:
     """고정된 버전의 엔진(GridCraft·DeckCraft·WordCraft)을 설치하고 버전을 출력합니다. FR-04."""

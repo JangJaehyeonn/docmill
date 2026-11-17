@@ -28,6 +28,7 @@ import {
   type PendingPreview,
 } from "./preview.js";
 import { addRecent, listRecent } from "./recent.js";
+import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
@@ -127,6 +128,11 @@ async function handleApi(
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
     return sendJson(res, 200, { suggestions: await fetchSuggestions(file.abs) });
+  }
+  if (req.method === "GET" && pathname === "/api/preflight") {
+    const file = await resolveQuery(opts, res, query);
+    if (!file) return;
+    return sendJson(res, 200, await runPreflight(file.abs));
   }
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (req.method === "POST" && pathname === "/api/preview/apply") {
