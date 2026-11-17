@@ -55,4 +55,24 @@ describe("미리보기 적용·취소", () => {
     expect(await registerPreview(store, root, { path: orig, copy: orig, summary: [] })).toBeNull();
     expect(await registerPreview(store, root, { path: orig, copy: "/etc/passwd", summary: [] })).toBeNull();
   });
+
+  it("같은 ID 를 동시에 적용·취소하면 한쪽만 처리된다", async () => {
+    const { root, orig, copy } = await setup();
+    const store = new Map<string, PendingPreview>();
+    const reg = await registerPreview(store, root, { path: orig, copy, summary: [] });
+    const results = await Promise.all([
+      applyPreview(store, root, reg!.id),
+      cancelPreview(store, root, reg!.id),
+    ]);
+    expect([results[0] !== null, results[1]].filter(Boolean)).toHaveLength(1);
+  });
+
+  it("적용 중 읽기에 실패하면 ID 를 되살려 재시도할 수 있다", async () => {
+    const { root, orig, copy } = await setup();
+    const store = new Map<string, PendingPreview>();
+    const reg = await registerPreview(store, root, { path: orig, copy, summary: [] });
+    await fs.rm(copy);
+    await expect(applyPreview(store, root, reg!.id)).rejects.toThrow();
+    expect(store.has(reg!.id)).toBe(true);
+  });
 });

@@ -75,7 +75,7 @@ async function removeCopy(root: string, copyRel: string): Promise<void> {
   }
 }
 
-/** 적용: 원본을 사본 내용으로 바꾸고 사본을 지운다. 알 수 없는 ID 면 null. */
+/** 적용: 원본을 사본 내용으로 바꾸고 사본을 지운다. 알 수 없는(또는 처리 중인) ID 면 null. */
 export async function applyPreview(
   store: Map<string, PendingPreview>,
   root: string,
@@ -83,14 +83,21 @@ export async function applyPreview(
 ): Promise<string | null> {
   const p = store.get(id);
   if (!p) return null;
-  const data = await fs.readFile(path.join(root, ...p.copy.split("/")));
-  await replaceFile(path.join(root, ...p.rel.split("/")), data);
+  // Claim the id before any async work so a concurrent decision is rejected.
   store.delete(id);
-  await removeCopy(root, p.copy);
+  try {
+    const data = await fs.readFile(path.join(root, ...p.copy.split("/")));
+    await replaceFile(path.join(root, ...p.rel.split("/")), data);
+  } catch (err) {
+    store.set(id, p); // not committed yet: allow retry
+    throw err;
+  }
+  // The original is already replaced; a leftover copy must not fail the apply.
+  await removeCopy(root, p.copy).catch((err) => console.error("사본 정리 실패:", err));
   return p.rel;
 }
 
-/** 취소: 사본만 지운다. 알 수 없는 ID 면 false. */
+/** 취소: 사본만 지운다. 알 수 없는(또는 처리 중인) ID 면 false. */
 export async function cancelPreview(
   store: Map<string, PendingPreview>,
   root: string,
@@ -99,6 +106,11 @@ export async function cancelPreview(
   const p = store.get(id);
   if (!p) return false;
   store.delete(id);
-  await removeCopy(root, p.copy);
+  try {
+    await removeCopy(root, p.copy);
+  } catch (err) {
+    store.set(id, p); // copy still there: allow retry
+    throw err;
+  }
   return true;
 }
