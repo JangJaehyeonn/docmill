@@ -34,7 +34,7 @@ export function agentEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 export function defaultAgentCommand(): string {
   const mcp = JSON.stringify({ mcpServers: { docmill: { command: "docmill", args: ["mcp"] } } });
   const quoted = process.platform === "win32" ? `"${mcp.replace(/"/g, '\\"')}"` : `'${mcp}'`;
-  return `claude -p --output-format stream-json --verbose --mcp-config ${quoted}`;
+  return `claude -p --output-format stream-json --verbose --mcp-config ${quoted} --allowedTools "mcp__docmill__*"`;
 }
 
 /** 에이전트 stdin 으로 넘길 프롬프트: 열린 탭 목록·활성 파일(절대 경로)과 사용자 메시지. */

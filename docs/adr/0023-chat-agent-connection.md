@@ -9,7 +9,7 @@ studio 오른쪽 채팅 패널의 메시지를 AI에게 넘겨 docmill 도구로
 구독 인증만 쓰고 Anthropic API 키는 쓰지 않아야 하며, 테스트에서는 가짜 에이전트로 바꿔 끼울 수 있어야 한다.
 
 ## 결정
-studio 서버(`POST /api/chat`)가 `DOCMILL_STUDIO_AGENT_CMD`(기본 `claude -p --output-format stream-json --verbose --mcp-config ...`, docmill MCP 서버 연결 포함)를 자식 프로세스로 실행한다.
+studio 서버(`POST /api/chat`)가 `DOCMILL_STUDIO_AGENT_CMD`(기본 `claude -p --output-format stream-json --verbose --mcp-config ... --allowedTools "mcp__docmill__*"`, docmill MCP 서버 연결과 docmill 도구만 사전 허용 포함)를 자식 프로세스로 실행한다.
 열린 탭·활성 파일의 절대 경로와 사용자 메시지를 stdin 프롬프트로 넘기고, stdout의 stream-json을 줄 단위 JSON(NDJSON)으로 화면에 흘려보낸다.
 실행 환경에서는 `ANTHROPIC_API_KEY`·`ANTHROPIC_AUTH_TOKEN`을 뺀다. 120초 안에 끝나지 않거나 비정상 종료하면 프로세스 그룹을 정리하고 실패 이유를 채팅에 보여 준다.
 도구 결과 JSON의 `path`가 작업 폴더 안 문서면 열린 탭은 다시 불러오고, 없으면 새 탭으로 연다.

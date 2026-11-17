@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChatPanel } from "./ChatPanel";
 import { HwpEditor } from "./HwpEditor";
-import { beginSave, endSave, exportHwp, isHwpPath, notifyHwpSaved } from "./hwp";
+import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
@@ -34,6 +34,7 @@ export function App() {
   const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [savingPaths, setSavingPaths] = useState<Record<string, boolean>>({});
+  const [conflicts, setConflicts] = useState<string[]>([]);
   const [reloads, setReloads] = useState<Record<string, number>>({});
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
@@ -85,16 +86,28 @@ export function App() {
   // 에이전트 결과의 파일: 열려 있는 탭이면 다시 불러오고, 아니면 새 탭으로 연다.
   const tabsRef = useRef(tabState);
   tabsRef.current = tabState;
+  const reloadTab = useCallback((p: string) => {
+    setEditorStates((m) => ({ ...m, [p]: "loading" }));
+    setReloads((m) => ({ ...m, [p]: (m[p] ?? 0) + 1 }));
+    setConflicts((c) => c.filter((x) => x !== p));
+  }, []);
   const onAgentPaths = useCallback(
     (paths: string[]) => {
       for (const p of paths) {
-        if (tabsRef.current.tabs.some((t) => t.path === p)) {
-          setEditorStates((m) => ({ ...m, [p]: "loading" }));
-          setReloads((m) => ({ ...m, [p]: (m[p] ?? 0) + 1 }));
-        } else void openPath(p);
+        if (!tabsRef.current.tabs.some((t) => t.path === p)) {
+          void openPath(p);
+        } else if (!isHwpPath(p)) {
+          reloadTab(p);
+        } else {
+          // 저장하지 않은 편집이 있으면 자동으로 교체하지 않고 사용자에게 고르게 한다.
+          void hasUnsavedHwpEdits(p).then((dirty) => {
+            if (!dirty) reloadTab(p);
+            else setConflicts((c) => (c.includes(p) ? c : [...c, p]));
+          });
+        }
       }
     },
-    [openPath],
+    [openPath, reloadTab],
   );
 
   // 목록을 (다시) 불러오고, 아직 처리하지 못한 시작 open 이 있을 때만 그 파일을 연다.
@@ -342,6 +355,17 @@ export function App() {
               />
             ))}
         </main>
+        {conflicts.map((p) => (
+          <div key={p} role="alert" className="alert">
+            <span>{p}에 저장하지 않은 편집이 있어 에이전트 결과를 아직 불러오지 않았어요.</span>
+            <button type="button" onClick={() => reloadTab(p)}>
+              편집을 버리고 다시 불러오기
+            </button>
+            <button type="button" onClick={() => setConflicts((c) => c.filter((x) => x !== p))}>
+              내 편집 유지
+            </button>
+          </div>
+        ))}
         <ChatPanel
           tabs={tabState.tabs.map((t) => t.path)}
           active={tabState.active}
