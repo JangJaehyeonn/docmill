@@ -22,6 +22,7 @@ import {
 } from "./chat.js";
 import { addRecent, listRecent } from "./recent.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
+import { fetchSuggestions } from "./suggest.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
 
 export interface AppOptions {
@@ -111,6 +112,11 @@ async function handleApi(
   }
   if (req.method === "GET" && pathname === "/api/editor-config") {
     return editorConfig(opts, req, res, query);
+  }
+  if (req.method === "GET" && pathname === "/api/suggest") {
+    const file = await resolveQuery(opts, res, query);
+    if (!file) return;
+    return sendJson(res, 200, { suggestions: await fetchSuggestions(file.abs) });
   }
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (pathname === "/api/hwp") return hwpFile(opts, req, res, query);

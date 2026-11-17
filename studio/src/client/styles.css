@@ -30,3 +30,4 @@ body { margin: 0; font-family: system-ui, "Noto Sans KR", sans-serif; color: #1f
 .tool-card pre { white-space: pre-wrap; word-break: break-all; margin: 6px 0 0; }
 .chat-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .chat-form label { display: flex; flex-direction: column; gap: 4px; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }

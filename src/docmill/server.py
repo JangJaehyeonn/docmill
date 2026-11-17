@@ -16,6 +16,7 @@ from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.report import excel_to_report_ppt
+from docmill.tools.suggest import suggest_actions
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
 from docmill.tools.verify import verify_numbers
@@ -57,12 +58,18 @@ def _register_template(server: MCPServer) -> None:
     server.tool()(apply_template)
 
 
+def _register_suggest(server: MCPServer) -> None:
+    """`suggest_actions` 업무 도구(FR-30)를 등록한다."""
+    server.tool()(suggest_actions)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
     _register_tasks,
     _register_template,
     _register_verify,
+    _register_suggest,
 )
 
 
