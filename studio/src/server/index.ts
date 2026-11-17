@@ -21,8 +21,10 @@ function main(): void {
     onlyofficeUrl: process.env.DOCMILL_ONLYOFFICE_URL,
     publicHost,
   });
-  // 문서 서버가 다른 호스트 이름(예: host.docker.internal)으로 접근하면 모든 인터페이스에서 받는다.
-  const bindHost = publicHost === "127.0.0.1" ? "127.0.0.1" : "0.0.0.0";
+  // 기본은 루프백에서만 받는다 (Docker Desktop은 host.docker.internal 요청을 호스트 루프백으로 넘긴다).
+  // 문서 서버가 루프백에 닿지 않는 환경이면 DOCMILL_STUDIO_BIND=0.0.0.0 으로 연다.
+  // 그래도 다른 호스트는 서명된 /onlyoffice/* 주소만 쓸 수 있다.
+  const bindHost = process.env.DOCMILL_STUDIO_BIND || "127.0.0.1";
   server.listen(parsePort(process.argv.slice(2)), bindHost, () => {
     const addr = server.address();
     const port = typeof addr === "object" && addr ? addr.port : 0;

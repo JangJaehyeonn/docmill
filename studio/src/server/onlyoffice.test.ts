@@ -4,6 +4,8 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   buildEditorConfig,
+  signPath,
+  verifyPathSig,
   documentKey,
   isOnlyofficeFile,
   normalizeUrl,
@@ -40,6 +42,18 @@ describe("onlyoffice helpers", () => {
     );
     expect(cfg.editorConfig.callbackUrl).toContain("/onlyoffice/callback?path=");
     expect(() => buildEditorConfig("a.hwp", "k", "http://x")).toThrow();
+  });
+
+  it("signs paths and verifies signatures", () => {
+    const sig = signPath("secret", "a.xlsx");
+    expect(verifyPathSig("secret", "a.xlsx", sig)).toBe(true);
+    expect(verifyPathSig("secret", "b.xlsx", sig)).toBe(false);
+    expect(verifyPathSig("other", "a.xlsx", sig)).toBe(false);
+    expect(verifyPathSig("secret", "a.xlsx", null)).toBe(false);
+    expect(verifyPathSig("secret", "a.xlsx", "zz")).toBe(false);
+    const cfg = buildEditorConfig("a.xlsx", "k", "http://h:1", sig);
+    expect(cfg.document.url).toContain(`&sig=${sig}`);
+    expect(cfg.editorConfig.callbackUrl).toContain(`&sig=${sig}`);
   });
 
   it("saves only on status 2 or 6", () => {

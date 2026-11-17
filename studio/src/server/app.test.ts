@@ -4,7 +4,7 @@ import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { createApp } from "./app";
+import { createApp, isLoopback } from "./app";
 
 let lastWorkspace = "";
 
@@ -65,7 +65,10 @@ describe("createApp", () => {
     };
     const first = await getKey();
     expect(await getKey()).toBe(first);
-    const cb = await fetch(`${base}/onlyoffice/callback?path=a.xlsx`, {
+    const r = await fetch(`${base}/api/editor-config?path=a.xlsx`);
+    const cfg = (await r.json()) as { config: { editorConfig: { callbackUrl: string } } };
+    const cbPath = new URL(cfg.config.editorConfig.callbackUrl).search;
+    const cb = await fetch(`${base}/onlyoffice/callback${cbPath}`, {
       method: "POST",
       body: JSON.stringify({ status: 4, key: first }),
     });
@@ -75,5 +78,30 @@ describe("createApp", () => {
     writeFileSync(target, "changed-content");
     utimesSync(target, new Date(2030, 0, 1), new Date(2030, 0, 1));
     expect(await getKey()).not.toBe(first);
+  });
+
+  it("문서 서버 주소(/onlyoffice/*)는 편집기 설정에 담긴 서명이 있어야 쓸 수 있다", async () => {
+    server = makeApp({ onlyofficeUrl: "http://localhost" });
+    const port = await listen(server);
+    const base = `http://127.0.0.1:${port}`;
+    const r = await fetch(`${base}/api/editor-config?path=a.xlsx`);
+    const cfg = (await r.json()) as {
+      config: { document: { url: string; key: string }; editorConfig: { callbackUrl: string } };
+    };
+    const fileQuery = new URL(cfg.config.document.url).search;
+    expect(fileQuery).toContain("sig=");
+    expect((await fetch(`${base}/onlyoffice/file${fileQuery}`)).status).toBe(200);
+    expect((await fetch(`${base}/onlyoffice/file?path=a.xlsx`)).status).toBe(403);
+    expect((await fetch(`${base}/onlyoffice/file?path=a.xlsx&sig=00`)).status).toBe(403);
+    const forged = await fetch(`${base}/onlyoffice/callback?path=a.xlsx`, {
+      method: "POST",
+      body: JSON.stringify({ status: 6, key: cfg.config.document.key, url: "http://localhost/x" }),
+    });
+    expect(forged.status).toBe(403);
+  });
+
+  it("루프백 주소만 앱 화면과 API를 쓸 수 있다", () => {
+    expect(["127.0.0.1", "::1", "::ffff:127.0.0.1"].every(isLoopback)).toBe(true);
+    expect(["172.17.0.2", "192.168.0.5", undefined].some(isLoopback)).toBe(false);
   });
 });

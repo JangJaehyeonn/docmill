@@ -1,8 +1,11 @@
 import { promises as fs } from "node:fs";
+import { randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import {
   buildEditorConfig,
+  signPath,
+  verifyPathSig,
   documentKey,
   isOnlyofficeFile,
   normalizeUrl,
@@ -21,6 +24,8 @@ export interface AppOptions {
   onlyofficeUrl?: string;
   /** 문서 서버가 studio 서버에 접근할 때 쓰는 호스트. */
   publicHost?: string;
+  /** /onlyoffice/* 주소 서명용 비밀값. 없으면 프로세스마다 새로 만든다. */
+  secret?: string;
 }
 
 /** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
@@ -131,7 +136,8 @@ async function editorConfig(
   sessionKeys.set(file.rel, key);
   const port = req.socket.localPort ?? 0;
   const origin = `http://${opts.publicHost || "127.0.0.1"}:${port}`;
-  sendJson(res, 200, { server, config: buildEditorConfig(file.rel, key, origin) });
+  const sig = signPath(secretOf(opts), file.rel);
+  sendJson(res, 200, { server, config: buildEditorConfig(file.rel, key, origin, sig) });
 }
 
 async function serveDocument(
@@ -141,6 +147,9 @@ async function serveDocument(
 ): Promise<void> {
   const file = await resolveQuery(opts, res, query);
   if (!file) return;
+  if (!verifyPathSig(secretOf(opts), file.rel, query.get("sig"))) {
+    return sendJson(res, 403, { error: "서명이 없거나 맞지 않는 요청입니다." });
+  }
   const data = await fs.readFile(file.abs);
   res.writeHead(200, { "content-type": "application/octet-stream" });
   res.end(data);
@@ -152,6 +161,12 @@ async function saveCallback(
   res: http.ServerResponse,
   query: URLSearchParams,
 ): Promise<void> {
+  const signed = await resolveQuery(opts, res, query);
+  if (!signed) return;
+  // 문서 서버에 준 콜백 주소(서명 포함)로 온 요청만 받는다.
+  if (!verifyPathSig(secretOf(opts), signed.rel, query.get("sig"))) {
+    return sendJson(res, 403, { error: "서명이 없거나 맞지 않는 요청입니다." });
+  }
   const body = (await readBody(req)) as { status?: unknown; url?: unknown; key?: unknown };
   console.error("저장 콜백 수신: status=%s", String(body.status));
   const server = normalizeUrl(opts.onlyofficeUrl);
@@ -237,6 +252,28 @@ async function serveStatic(
   }
 }
 
+const secrets = new WeakMap<AppOptions, string>();
+
+/** 이 앱의 서명 비밀값 (옵션에 없으면 처음 쓸 때 무작위로 만든다). */
+function secretOf(opts: AppOptions): string {
+  let s = opts.secret ?? secrets.get(opts);
+  if (!s) {
+    s = randomBytes(32).toString("hex");
+    secrets.set(opts, s);
+  }
+  return s;
+}
+
+/** 요청이 같은 컴퓨터(루프백)에서 왔는지. */
+export function isLoopback(address: string | undefined): boolean {
+  return (
+    address === "127.0.0.1" ||
+    address === "::1" ||
+    address === "::ffff:127.0.0.1" ||
+    (address ?? "").startsWith("127.")
+  );
+}
+
 /** studio HTTP 서버를 만든다 (listen 은 호출자가 한다). */
 export function createApp(opts: AppOptions): http.Server {
   return http.createServer((req, res) => {
@@ -248,6 +285,11 @@ export function createApp(opts: AppOptions): http.Server {
       query = parsed.searchParams;
     } catch {
       sendJson(res, 400, { error: "잘못된 요청 주소입니다." });
+      return;
+    }
+    // 앱 화면과 API는 같은 컴퓨터에서만 쓴다. 다른 호스트(예: Docker 문서 서버)는 서명된 /onlyoffice/* 만 부를 수 있다.
+    if (!pathname.startsWith("/onlyoffice/") && !isLoopback(req.socket.remoteAddress)) {
+      sendJson(res, 403, { error: "이 컴퓨터에서만 열 수 있습니다." });
       return;
     }
     let task: Promise<void>;

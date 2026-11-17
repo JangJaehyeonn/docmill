@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import path from "node:path";
 
 export interface OnlyofficeOptions {
@@ -42,12 +43,33 @@ export interface EditorConfig {
   };
 }
 
+/**
+ * 문서 서버 전용 주소(/onlyoffice/*)에 붙이는 서명. 서버 프로세스마다 새로 만든 비밀값으로
+ * 파일 경로에 서명하므로, 편집기 설정을 받은 쪽(루프백의 앱 화면)만 올바른 주소를 안다.
+ */
+export function signPath(secret: string, rel: string): string {
+  return createHmac("sha256", secret).update(rel).digest("hex");
+}
+
+/** 서명이 맞는지 고정 시간 비교로 확인한다. */
+export function verifyPathSig(secret: string, rel: string, sig: string | null): boolean {
+  if (!sig) return false;
+  const expected = Buffer.from(signPath(secret, rel), "hex");
+  const given = Buffer.from(sig, "hex");
+  return given.length === expected.length && timingSafeEqual(given, expected);
+}
+
 /** 편집기에 넘길 설정을 만든다. `origin` 은 문서 서버가 접근할 studio 서버 주소. */
-export function buildEditorConfig(rel: string, key: string, origin: string): EditorConfig {
+export function buildEditorConfig(
+  rel: string,
+  key: string,
+  origin: string,
+  sig = "",
+): EditorConfig {
   const ext = path.extname(rel).slice(1).toLowerCase();
   const documentType = DOC_TYPES[ext];
   if (!documentType) throw new Error("ONLYOFFICE 로 열 수 없는 형식입니다.");
-  const q = `path=${encodeURIComponent(rel)}`;
+  const q = `path=${encodeURIComponent(rel)}${sig ? `&sig=${sig}` : ""}`;
   return {
     documentType,
     document: {
