@@ -191,3 +191,45 @@ def test_broken_provenance_is_reported(tmp_path: Path) -> None:
     doc.with_name(doc.name + ".provenance.json").write_text("{", encoding="utf-8")
     result = json.loads(review_map(str(doc)))
     assert "provenance_error" in result and result["items"]
+
+
+def test_signed_numbers_keep_their_sign() -> None:
+    seg = Segment("text", "손익 -10", {"slide": 1, "shape": "10"})
+    assert check_segments([seg], Provenance(text={(1, "10"): [-10.0]})) == []
+    unmatched = check_segments([seg], Provenance(text={(1, "10"): [10.0]}))
+    assert [i["text"] for i in unmatched] == ["-10"]
+    plus = Segment("text", "증감 +10", {"slide": 1, "shape": "10"})
+    assert check_segments([plus], Provenance(text={(1, "10"): [10.0]})) == []
+
+
+def test_docx_tab_separates_words(tmp_path: Path) -> None:
+    doc = tmp_path / "t.docx"
+    body = (
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        "<w:body><w:p><w:r><w:t>매출</w:t><w:tab/><w:t>100</w:t></w:r></w:p></w:body></w:document>"
+    )
+    with zipfile.ZipFile(doc, "w") as z:
+        z.writestr("word/document.xml", body)
+    assert [s.text for s in read_segments(doc)] == ["매출 100"]
+    assert [i["text"] for i in _items(doc)] == ["100"]
+
+
+def test_diff_replace_of_different_length_keeps_before() -> None:
+    old = [
+        Segment("text", "매출 100", {"paragraph": 1}),
+        Segment("text", "비용 50", {"paragraph": 2}),
+    ]
+    new = [Segment("text", "매출 110", {"paragraph": 1})]
+    changed = diff_segments(new, old)
+    assert [(i["change"], i["text"], i.get("before")) for i in changed] == [
+        ("수정", "매출 110", "매출 100"),
+        ("삭제", "비용 50", None),
+    ]
+
+
+def test_items_are_in_document_order(tmp_path: Path) -> None:
+    base = _pptx(tmp_path / "base.pptx", ["가", "비용 9"])
+    new = _pptx(tmp_path / "new.pptx", ["나", "비용 9"])
+    _provenance(new)
+    items = _items(new, base)
+    assert [(i["reason"], i["text"]) for i in items[:2]] == [(CHANGED, "나"), (UNSOURCED, "9")]

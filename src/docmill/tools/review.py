@@ -36,7 +36,7 @@ _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _SLIDE_PART = re.compile(r"ppt/slides/slide(\d+)\.xml")
 # A number that is not glued to a preceding word (so "영업1팀", "Q3" are not numbers).
-_NUMBER = re.compile(r"(?<![\w.,])(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+_NUMBER = re.compile(r"(?<![\w.,])[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 _SENTENCE_END = re.compile(r"(?<=[.!?。])\s+")
 _PREDICTION_WORDS = (
     "예상",
@@ -100,7 +100,14 @@ def _to_float(raw: str) -> float | None:
 
 
 def _paragraph_text(paragraph: ET.Element, text_tag: str) -> str:
-    return "".join(t.text or "" for t in paragraph.iter(text_tag)).strip()
+    ns = text_tag[: text_tag.index("}") + 1]
+    breaks = {f"{ns}tab", f"{ns}br"}
+    parts = [
+        (e.text or "") if e.tag == text_tag else " "
+        for e in paragraph.iter()
+        if e.tag == text_tag or e.tag in breaks
+    ]
+    return "".join(parts).strip()
 
 
 def _cnv_id(shape: ET.Element) -> str:
@@ -240,39 +247,57 @@ def _text_items(segment: Segment, prov: Provenance) -> list[dict[str, Any]]:
 
 def check_segments(segments: list[Segment], prov: Provenance) -> list[dict[str, Any]]:
     """출처 없는 숫자와 근거 없는 예측 문장을 문서 순서대로 고른다."""
-    items: list[dict[str, Any]] = []
-    for segment in segments:
+    return [item for _, item in _keyed_checks(segments, prov)]
+
+
+def _keyed_checks(
+    segments: list[Segment], prov: Provenance
+) -> list[tuple[tuple[int, int], dict[str, Any]]]:
+    keyed: list[tuple[tuple[int, int], dict[str, Any]]] = []
+    for i, segment in enumerate(segments):
         if segment.kind == "chart":
-            if not _chart_sourced(segment, prov):
-                items.append(_item(UNSOURCED, segment.text, segment.location))
+            found = (
+                []
+                if _chart_sourced(segment, prov)
+                else [_item(UNSOURCED, segment.text, segment.location)]
+            )
         else:
-            items += _text_items(segment, prov)
-    return items
+            found = _text_items(segment, prov)
+        keyed += [((i, 0), item) for item in found]
+    return keyed
 
 
 def _key(segment: Segment) -> tuple[str, str]:
     return (segment.kind, segment.text)
 
 
-def diff_segments(current: list[Segment], baseline: list[Segment]) -> list[dict[str, Any]]:
-    """기준 버전과 비교해 바뀐(수정·추가·삭제) 문단·그래프 값을 문서 순서대로 고른다."""
+def _keyed_diff(
+    current: list[Segment], baseline: list[Segment]
+) -> list[tuple[tuple[int, int], dict[str, Any]]]:
+    """바뀐 항목과 문서 순서 키. 삭제 항목은 바로 앞 현재 세그먼트 뒤에 놓는다."""
     matcher = difflib.SequenceMatcher(
         a=[_key(s) for s in baseline], b=[_key(s) for s in current], autojunk=False
     )
-    items: list[dict[str, Any]] = []
+    keyed: list[tuple[tuple[int, int], dict[str, Any]]] = []
     for op, a1, a2, b1, b2 in matcher.get_opcodes():
         if op == "equal":
             continue
         old, new = baseline[a1:a2], current[b1:b2]
         for offset, segment in enumerate(new):
             extra: dict[str, Any] = {"change": "추가"}
-            if op == "replace" and len(old) == len(new):
+            if offset < len(old):
                 extra = {"change": "수정", "before": old[offset].text}
-            items.append(_item(CHANGED, segment.text, segment.location, **extra))
-        if op == "delete" or (op == "replace" and len(old) != len(new)):
-            for segment in old if op == "delete" else old[len(new) :]:
-                items.append(_item(CHANGED, segment.text, segment.location, change="삭제"))
-    return items
+            item = _item(CHANGED, segment.text, segment.location, **extra)
+            keyed.append(((b1 + offset, 1), item))
+        for segment in old[len(new) :]:
+            item = _item(CHANGED, segment.text, segment.location, change="삭제")
+            keyed.append(((b2 - 1, 2), item))
+    return keyed
+
+
+def diff_segments(current: list[Segment], baseline: list[Segment]) -> list[dict[str, Any]]:
+    """기준 버전과 비교해 바뀐(수정·추가·삭제) 문단·그래프 값을 문서 순서대로 고른다."""
+    return [item for _, item in _keyed_diff(current, baseline)]
 
 
 # ── 도구 ────────────────────────────────────────────────────────────────
@@ -287,10 +312,11 @@ def build_review(document: Path, baseline: Path | None = None) -> dict[str, Any]
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
         prov = Provenance()
         result["provenance_error"] = f"출처 파일을 읽지 못했습니다: {exc}"
-    items = check_segments(segments, prov)
+    keyed = _keyed_checks(segments, prov)
     if baseline is not None:
-        items += diff_segments(segments, read_segments(baseline))
-    result["items"] = items
+        keyed += _keyed_diff(segments, read_segments(baseline))
+    keyed.sort(key=lambda pair: pair[0])  # stable: document order
+    result["items"] = [item for _, item in keyed]
     return result
 
 
