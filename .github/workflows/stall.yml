@@ -38,27 +38,31 @@ jobs:
                   | "\(.number) \(.headRefOid)"' |
           while read -r n sha; do
             # 이 커밋에 이미 알렸으면 건너뛴다.
-            if gh api "repos/$REPO/issues/$n/comments?per_page=100" --jq '.[].body' \
+            if gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100" --jq '.[].body' \
                 | grep -q "docmill-resolve:$sha"; then continue; fi
             # 마지막 커밋 뒤로 RESOLVE_MINUTES가 지났는지.
             committed=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.committer.date')
             age=$(( (now - $(date -u -d "$committed" +%s)) / 60 ))
             [ "$age" -ge "$RESOLVE_MINUTES" ] || continue
-            # CI가 모두 끝났고 실패가 없는지 (건너뜀·중립·취소된 이전 실행은 무시).
-            bad=$(gh api "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq \
-              '[.check_runs[] | select(.status != "completed" or
-                 (.conclusion as $c | ["success","skipped","neutral","cancelled"] | index($c) | not))] | length')
+            # 체크 이름마다 가장 최근 실행만 보고, 모두 끝났고 성공(또는 건너뜀·중립)인지 확인한다.
+            # 이전 실행이 취소되고 다시 성공한 경우는 통과, 최근 실행이 취소·실패면 통과가 아니다.
+            bad=$(gh api --paginate "repos/$REPO/commits/$sha/check-runs?per_page=100" --jq '.check_runs[]' \
+              | jq -s '[group_by(.name)[] | max_by(.id)
+                       | select(.status != "completed" or
+                           (.conclusion as $c | ["success","skipped","neutral"] | index($c) | not))] | length')
             [ "$bad" = "0" ] || continue
-            # 열린 CodeRabbit 스레드가 있고, 모두 답글(반영 설명)이 달렸는지.
+            # 열린 CodeRabbit 스레드가 있고, 모두 "반영했습니다" 답글이 달렸는지 (반박 답글만 있는 스레드는 제외).
             threads=$(gh api graphql -f owner="$owner" -f name="$name" -F n="$n" -f query='
               query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
                 pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved
-                  comments(first:20){totalCount nodes{author{login} url}}}}}}}' \
+                  comments(first:20){nodes{author{login} url body}}}}}}}' \
               --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
                      | select(.isResolved | not)
                      | select(.comments.nodes[0].author.login | startswith("coderabbitai"))]')
             open=$(printf '%s' "$threads" | jq 'length')
-            unanswered=$(printf '%s' "$threads" | jq '[.[] | select(.comments.totalCount < 2)] | length')
+            unanswered=$(printf '%s' "$threads" | jq '[.[] | select(
+              [.comments.nodes[1:][] | select((.author.login | startswith("coderabbitai")) | not)
+               | select(.body | contains("반영했습니다"))] | length == 0)] | length')
             [ "$open" -gt 0 ] && [ "$unanswered" = "0" ] || continue
             links=$(printf '%s' "$threads" | jq -r '.[] | "- " + .comments.nodes[0].url')
             echo "PR #$n: 해결 처리만 남은 스레드 $open개"
