@@ -13,6 +13,13 @@ import {
   replaceFile,
   shouldSave,
 } from "./onlyoffice.js";
+import {
+  buildPrompt,
+  defaultAgentCommand,
+  runAgent,
+  type ChatEvent,
+  type ChatRequest,
+} from "./chat.js";
 import { addRecent, listRecent } from "./recent.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
@@ -27,6 +34,8 @@ export interface AppOptions {
   publicHost?: string;
   /** /onlyoffice/* 주소 서명용 비밀값. 없으면 프로세스마다 새로 만든다. */
   secret?: string;
+  /** 채팅 에이전트 명령(DOCMILL_STUDIO_AGENT_CMD). 없으면 claude CLI. */
+  agentCmd?: string;
   /** rhwp 편집기 빌드 폴더(RHWP_STUDIO_DIST). `/rhwp/` 아래로 내보낸다. */
   rhwpDist?: string;
 }
@@ -103,11 +112,79 @@ async function handleApi(
   if (req.method === "GET" && pathname === "/api/editor-config") {
     return editorConfig(opts, req, res, query);
   }
+  if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (pathname === "/api/hwp") return hwpFile(opts, req, res, query);
   if (req.method === "POST" && pathname === "/api/save") {
     return forceSave(opts, res, query);
   }
   sendJson(res, 404, { error: "알 수 없는 요청입니다." });
+}
+
+/** 채팅 한 턴: 에이전트를 실행하고 이벤트를 줄 단위 JSON(NDJSON)으로 흘려보낸다. */
+async function chat(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+  }
+  const body = (await readBody(req)) as Partial<ChatRequest>;
+  if (typeof body.message !== "string" || body.message.trim() === "") {
+    return sendJson(res, 400, { error: "보낼 메시지가 없습니다." });
+  }
+  const root = await fs.realpath(opts.workspace);
+  const tabs: string[] = [];
+  for (const t of Array.isArray(body.tabs) ? body.tabs : []) {
+    try {
+      tabs.push(await resolveInWorkspace(root, String(t)));
+    } catch {
+      // 작업 폴더 밖이거나 없는 탭은 에이전트에 알리지 않는다.
+    }
+  }
+  let active: string | null = null;
+  try {
+    if (typeof body.active === "string") active = await resolveInWorkspace(root, body.active);
+  } catch {
+    active = null;
+  }
+  const prompt = buildPrompt(root, { message: body.message, tabs, active });
+  res.writeHead(200, {
+    "content-type": "application/x-ndjson; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  const abort = new AbortController();
+  res.on("close", () => abort.abort());
+  // 경로 확인이 비동기라 순서가 뒤바뀌지 않도록 이벤트를 한 줄로 이어서 보낸다.
+  let queue: Promise<void> = Promise.resolve();
+  const send = async (e: ChatEvent): Promise<void> => {
+    if (e.type === "tool_result") {
+      // 작업 폴더 안의 문서 파일만 상대 경로로 바꿔 알린다.
+      const rel: string[] = [];
+      for (const p of e.paths) {
+        try {
+          rel.push(await resolveInWorkspace(root, p));
+        } catch {
+          // 작업 폴더 밖·문서가 아닌 경로는 무시한다.
+        }
+      }
+      // 파일이 바뀌었을 수 있으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
+      for (const r of rel) sessionKeys.delete(r);
+      e = { ...e, paths: rel };
+    }
+    if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
+  };
+  await runAgent({
+    command: opts.agentCmd || defaultAgentCommand(),
+    cwd: root,
+    prompt,
+    signal: abort.signal,
+    emit: (e) => {
+      queue = queue.then(() => send(e));
+    },
+  });
+  await queue;
+  res.end();
 }
 
 async function resolveQuery(

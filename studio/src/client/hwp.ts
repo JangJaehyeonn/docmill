@@ -96,3 +96,14 @@ export function beginSave(path: string): boolean {
 export function endSave(path: string): void {
   saving.delete(path);
 }
+
+/** 열린 한글 편집기에 저장하지 않은 편집이 있는지. 상태를 알 수 없으면 안전하게 있다고 본다. */
+export async function hasUnsavedHwpEdits(path: string): Promise<boolean> {
+  const editor = open.get(path);
+  if (!editor) return false;
+  try {
+    return (await editor.getDocumentState()).dirty;
+  } catch {
+    return true;
+  }
+}
