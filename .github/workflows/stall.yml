@@ -39,7 +39,7 @@ jobs:
           while read -r n sha; do
             # 이 커밋에 이미 알렸으면 건너뛴다.
             if gh api --paginate "repos/$REPO/issues/$n/comments?per_page=100" --jq '.[].body' \
-                | grep -q "docmill-resolve:$sha"; then continue; fi
+                | grep -F "docmill-resolve:$sha" >/dev/null; then continue; fi
             # 마지막 커밋 뒤로 RESOLVE_MINUTES가 지났는지.
             committed=$(gh api "repos/$REPO/commits/$sha" --jq '.commit.committer.date')
             age=$(( (now - $(date -u -d "$committed" +%s)) / 60 ))
@@ -52,16 +52,22 @@ jobs:
                            (.conclusion as $c | ["success","skipped","neutral"] | index($c) | not))] | length')
             [ "$bad" = "0" ] || continue
             # 열린 CodeRabbit 스레드가 있고, 모두 "반영했습니다" 답글이 달렸는지 (반박 답글만 있는 스레드는 제외).
-            threads=$(gh api graphql -f owner="$owner" -f name="$name" -F n="$n" -f query='
-              query($owner:String!,$name:String!,$n:Int!){repository(owner:$owner,name:$name){
-                pullRequest(number:$n){reviewThreads(first:100){nodes{isResolved
-                  comments(first:20){nodes{author{login} url body}}}}}}}' \
-              --jq '[.data.repository.pullRequest.reviewThreads.nodes[]
+            # 스레드는 --paginate로 모든 페이지를 받는다. 스레드 하나의 댓글은 최대 100개까지 본다
+            # (CodeRabbit 스레드가 100개를 넘으면 알리지 않고 90분 정체 알림에 맡긴다).
+            threads=$(gh api graphql --paginate -f owner="$owner" -f name="$name" -F n="$n" -f query='
+              query($owner:String!,$name:String!,$n:Int!,$endCursor:String){repository(owner:$owner,name:$name){
+                pullRequest(number:$n){reviewThreads(first:50,after:$endCursor){
+                  pageInfo{hasNextPage endCursor}
+                  nodes{isResolved comments(first:100){totalCount nodes{author{login} url body}}}}}}}' \
+              --jq '.data.repository.pullRequest.reviewThreads.nodes[]
                      | select(.isResolved | not)
-                     | select(.comments.nodes[0].author.login | startswith("coderabbitai"))]')
+                     | select((.comments.nodes[0].author.login // "") | startswith("coderabbitai"))' \
+              | jq -s '.') || continue
+            # 댓글이 100개를 넘는 스레드가 있으면 판단하지 않는다.
+            [ "$(printf '%s' "$threads" | jq '[.[] | select(.comments.totalCount > 100)] | length')" = "0" ] || continue
             open=$(printf '%s' "$threads" | jq 'length')
             unanswered=$(printf '%s' "$threads" | jq '[.[] | select(
-              [.comments.nodes[1:][] | select((.author.login | startswith("coderabbitai")) | not)
+              [.comments.nodes[1:][] | select(((.author.login // "") | startswith("coderabbitai")) | not)
                | select(.body | contains("반영했습니다"))] | length == 0)] | length')
             [ "$open" -gt 0 ] && [ "$unanswered" = "0" ] || continue
             links=$(printf '%s' "$threads" | jq -r '.[] | "- " + .comments.nodes[0].url')
