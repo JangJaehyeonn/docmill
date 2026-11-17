@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 MAX_SUGGESTIONS = 3
+MAX_XML_BYTES = 20 * 1024 * 1024
 _TASK_LINE = re.compile(r"할 일\s*[:：]")
 
 
@@ -24,8 +25,11 @@ def _suggestion(label: str, tool: str, message: str) -> dict[str, str]:
 def _docx_text(path: Path) -> str:
     """docx 본문의 문단 텍스트를 줄 단위로 읽는다. 읽지 못하면 빈 문자열."""
     try:
-        with zipfile.ZipFile(path) as archive:
-            xml = archive.read("word/document.xml").decode("utf-8", "replace")
+        with zipfile.ZipFile(path) as archive, archive.open("word/document.xml") as member:
+            raw = member.read(MAX_XML_BYTES + 1)
+        if len(raw) > MAX_XML_BYTES:
+            return ""
+        xml = raw.decode("utf-8", "replace")
     except (OSError, KeyError, zipfile.BadZipFile):
         return ""
     xml = xml.replace("</w:p>", "\n")
@@ -90,5 +94,8 @@ def suggest_actions(input: str) -> str:
     if not path.is_file():
         result = {"error": f"파일을 찾을 수 없습니다: {input}", "step": "open"}
     else:
-        result = {"suggestions": build_suggestions(path)}
+        try:
+            result = {"suggestions": build_suggestions(path)}
+        except Exception as exc:  # corrupt archives raise zlib.error, RuntimeError, ...
+            result = {"error": f"제안을 만들지 못했습니다: {exc}", "step": "suggest"}
     return json.dumps(result, ensure_ascii=False)
