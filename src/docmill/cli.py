@@ -49,6 +49,14 @@ def mcp(
 
 
 @app.command()
+def suggest(path: str = typer.Argument(..., help="제안을 받을 문서 경로")) -> None:
+    """열린 문서로 할 수 있는 작업 제안을 JSON으로 출력합니다 (studio가 쓴다). FR-30."""
+    from docmill.tools.suggest import suggest_actions
+
+    typer.echo(suggest_actions(path))
+
+
+@app.command()
 def setup() -> None:
     """고정된 버전의 엔진(GridCraft·DeckCraft·WordCraft)을 설치하고 버전을 출력합니다. FR-04."""
     from docmill.engines.install import ENGINES, EngineInstallError, ensure_installed

@@ -17,6 +17,7 @@ from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
 from docmill.tools.report import excel_to_report_ppt
+from docmill.tools.suggest import suggest_actions
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
 from docmill.tools.verify import verify_numbers
@@ -58,6 +59,11 @@ def _register_template(server: MCPServer) -> None:
     server.tool()(apply_template)
 
 
+def _register_suggest(server: MCPServer) -> None:
+    """`suggest_actions` 업무 도구(FR-30)를 등록한다."""
+    server.tool()(suggest_actions)
+
+
 def _register_guard(server: MCPServer) -> None:
     """`guarded_edit` 업무 도구(FR-31)를 등록한다."""
     server.tool()(guarded_edit)
@@ -69,6 +75,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_tasks,
     _register_template,
     _register_verify,
+    _register_suggest,
     _register_guard,
 )
 

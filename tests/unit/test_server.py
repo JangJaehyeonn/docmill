@@ -14,6 +14,7 @@ def test_every_registrar_is_applied_and_only_business_tools_exposed() -> None:
         "verify_numbers",
         "save_recipe",
         "run_recipe",
+        "suggest_actions",
         "guarded_edit",
     }
     names = {tool.name for tool in asyncio.run(server_module.build_server().list_tools())}
