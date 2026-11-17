@@ -17,6 +17,7 @@ from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
 from docmill.tools.report import excel_to_report_ppt
+from docmill.tools.review import review_map
 from docmill.tools.suggest import suggest_actions
 from docmill.tools.tasks import doc_to_task_table
 from docmill.tools.template import apply_template
@@ -69,6 +70,11 @@ def _register_guard(server: MCPServer) -> None:
     server.tool()(guarded_edit)
 
 
+def _register_review(server: MCPServer) -> None:
+    """`review_map` 업무 도구(FR-33)를 등록한다."""
+    server.tool()(review_map)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -77,6 +83,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_verify,
     _register_suggest,
     _register_guard,
+    _register_review,
 )
 
 
