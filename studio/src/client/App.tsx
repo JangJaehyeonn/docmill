@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { HwpEditor } from "./HwpEditor";
+import { exportHwp, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
@@ -28,6 +30,7 @@ export function App() {
   const [loadFailed, setLoadFailed] = useState(false);
   const [choices, setChoices] = useState<string[]>([]);
   const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
+  const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
@@ -114,9 +117,29 @@ export function App() {
 
   const active = tabState.tabs.find((t) => t.path === tabState.active);
   const activeOffice = active ? /\.(xlsx|pptx|docx)$/i.test(active.path) : false;
+  const activeHwp = active ? isHwpPath(active.path) : false;
+  const activeEditing = activeOffice || activeHwp;
   const activeState = active ? editorStates[active.path] : undefined;
 
+  const saveHwp = async (path: string): Promise<void> => {
+    setSaveMessage("저장 중…");
+    try {
+      const bytes = await exportHwp(path);
+      const res = await fetch(`/api/hwp?path=${encodeURIComponent(path)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/octet-stream" },
+        body: bytes as BodyInit,
+      });
+      if (!res.ok) throw new Error("save");
+      await notifyHwpSaved(path);
+      setSaveMessage("저장했어요. 작업 폴더 파일에 반영됐어요.");
+    } catch {
+      setSaveMessage("저장하지 못했어요.");
+    }
+  };
+
   const save = async (path: string): Promise<void> => {
+    if (isHwpPath(path)) return saveHwp(path);
     setSaveMessage("저장 요청 중…");
     try {
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
@@ -143,7 +166,7 @@ export function App() {
               </button>
               <button
                 className="close"
-                aria-label={`${t.name} 닫기`}
+                aria-label={`탭 닫기: ${t.name}`}
                 onClick={() => setTabState((s) => closeTab(s, t.path))}
               >
                 ×
@@ -217,11 +240,34 @@ export function App() {
         </aside>
 
         <main
-          className={activeOffice ? "main editing" : "main"}
+          className={activeEditing ? "main editing" : "main"}
           role="tabpanel"
-          data-editor-state={activeOffice ? activeState : undefined}
+          data-editor-state={activeEditing ? activeState : undefined}
         >
-          {active && activeOffice ? (
+          {active && activeHwp ? (
+            <>
+              <div className="editor-bar">
+                <button type="button" onClick={() => void save(active.path)}>
+                  저장
+                </button>
+                {pageCounts[active.path] !== undefined && (
+                  <span>쪽 수: {pageCounts[active.path]}쪽</span>
+                )}
+                {saveMessage && <span className="hint">{saveMessage}</span>}
+              </div>
+              {activeState === "unavailable" && (
+                <p role="status" className="alert">
+                  한글 편집기를 불러오지 못했어요. rhwp 편집기 빌드(RHWP_STUDIO_DIST)를 확인한 뒤 다시 열어 주세요.
+                </p>
+              )}
+              <HwpEditor
+                key={active.path}
+                path={active.path}
+                onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
+                onPages={(n) => setPageCounts((m) => ({ ...m, [active.path]: n }))}
+              />
+            </>
+          ) : active && activeOffice ? (
             <>
               <div className="editor-bar">
                 <button type="button" onClick={() => void save(active.path)}>

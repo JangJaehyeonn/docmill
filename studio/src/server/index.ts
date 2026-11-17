@@ -20,6 +20,7 @@ function main(): void {
     clientDir: path.join(here, "client"),
     onlyofficeUrl: process.env.DOCMILL_ONLYOFFICE_URL,
     publicHost,
+    rhwpDist: process.env.RHWP_STUDIO_DIST || undefined,
   });
   // 기본은 루프백에서만 받는다 (Docker Desktop은 host.docker.internal 요청을 호스트 루프백으로 넘긴다).
   // 문서 서버가 루프백에 닿지 않는 환경이면 DOCMILL_STUDIO_BIND=0.0.0.0 으로 연다.
