@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import sys
 from pathlib import Path
 
@@ -23,6 +24,19 @@ BUSINESS_TOOLS = {
     "save_recipe",
     "run_recipe",
 }
+REQUIREMENTS = REPO_ROOT / "docs" / "requirements" / "issues.toml"
+
+
+def _required_tools() -> set[str]:
+    """요구사항이 정한 업무 도구 이름 (처음 6개 + issues.toml에서 "도구 `이름`"으로 적은 것)."""
+    text = REQUIREMENTS.read_text(encoding="utf-8")
+    names: set[str] = set()
+    # 예: 도구 `preflight`, 도구 `mask_text`/`unmask_text`, 도구 `a`·`b`
+    for group in re.findall(r"도구\s*((?:`[a-z][a-z0-9_]*`\s*[/·,]?\s*)+)", text):
+        names.update(re.findall(r"`([a-z][a-z0-9_]*)`", group))
+    return BUSINESS_TOOLS | names
+
+
 # 엔진의 저수준 도구 이름 (Phase 0 기록 기준)
 ENGINE_LOW_LEVEL_TOOLS = {
     "new_workbook",
@@ -76,8 +90,8 @@ def test_mcp_server_starts_and_lists_tools(tmp_path: Path) -> None:
 def test_engine_low_level_tools_are_not_exposed(tmp_path: Path) -> None:
     names = asyncio.run(asyncio.wait_for(_list_tool_names(tmp_path), timeout=30))
     assert not (names & ENGINE_LOW_LEVEL_TOOLS)
-    # 연결 확인용 ping 외에는 업무 도구 6개 안에서만 노출된다
-    assert names <= BUSINESS_TOOLS | {"ping"}
+    # 연결 확인용 ping 외에는 요구사항이 정한 업무 도구 안에서만 노출된다 (CLAUDE.md 설계 원칙)
+    assert names <= _required_tools() | {"ping"}
 
 
 @pytest.mark.fr("FR-01")

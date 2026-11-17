@@ -20,6 +20,7 @@ import shutil
 import sys
 import textwrap
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -52,7 +53,11 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _suggest(home: Path, sample: str) -> dict[str, Any]:
     args = {"input": str(FIXTURES / sample)}
-    return asyncio.run(asyncio.wait_for(_call(home, "suggest_actions", args), 90))
+    # Playwright 동기 API가 이벤트 루프를 돌리는 테스트에서도 부를 수 있게 별도 스레드에서 실행한다.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(
+            asyncio.run, asyncio.wait_for(_call(home, "suggest_actions", args), 90)
+        ).result()
 
 
 @pytest.mark.fr("FR-30")
