@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { clearOfficePending, setOfficePending } from "./officeSync";
 
 interface EditorInit {
   server: string;
@@ -58,7 +59,11 @@ export function OfficeEditor(props: {
           ...init.config,
           width: "100%",
           height: "100%",
-          events: { onDocumentReady: () => !cancelled && notify.current("ready") },
+          events: {
+            onDocumentReady: () => !cancelled && notify.current("ready"),
+            // true: 아직 서버로 보내지 않은 편집이 있음, false: 편집을 서버로 보냄 (저장 전 대기에 쓴다).
+            onDocumentStateChange: (e: { data: boolean }) => setOfficePending(path, e.data),
+          },
         });
       } catch {
         if (!cancelled) notify.current("unavailable");
@@ -66,6 +71,7 @@ export function OfficeEditor(props: {
     })();
     return () => {
       cancelled = true;
+      clearOfficePending(path);
       editor?.destroyEditor?.();
     };
   }, [path]);

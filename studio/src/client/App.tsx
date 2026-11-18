@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
+import { waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
@@ -186,6 +187,8 @@ export function App() {
     if (isHwpPath(path)) return (await saveHwp(path)) ? "saved" : "failed";
     setSaveMessage("저장 중…");
     try {
+      // 방금 입력한 내용이 문서 서버에 닿을 때까지 잠깐 기다린다 (닿지 않은 편집은 강제 저장에 빠진다).
+      await waitOfficeSynced(path, 15_000);
       // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다.
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
