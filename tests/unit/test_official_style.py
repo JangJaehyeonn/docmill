@@ -137,3 +137,24 @@ def test_fix_handles_date_split_across_runs(tmp_path: Path) -> None:
     assert source.read_bytes() == original
     again = json.loads(check_official_style(out["path"]))
     assert again["violations"] == []
+
+
+def test_text_box_amount_reported_once_and_saved_as_reported(tmp_path: Path) -> None:
+    body = (
+        "<w:p/><w:p><w:r><w:t>10</w:t></w:r><w:r><w:pict><w:txbxContent>"
+        "<w:p><w:r><w:t>150원</w:t></w:r></w:p></w:txbxContent></w:pict></w:r></w:p>"
+        "<w:p><w:r><w:t>끝.</w:t></w:r></w:p>"
+    )
+    xml = f'<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>'
+    source = tmp_path / "box.docx"
+    with zipfile.ZipFile(source, "w") as z:
+        z.writestr("word/document.xml", xml)
+    out = json.loads(check_official_style(str(source), fix=True, out_dir=str(tmp_path / "out")))
+    amounts = [v for v in out["violations"] if v["rule"] == AMOUNT]
+    assert len(amounts) == 1
+    assert amounts[0]["location"]["paragraph"] == 3
+    assert amounts[0]["after"] == "금150원(금백오십원)"
+    fixed = _docx_text(Path(out["path"]))
+    assert f"{amounts[0]['after']}</w:t>" in fixed
+    assert "<w:t>10</w:t>" in fixed
+    assert json.loads(check_official_style(out["path"]))["violations"] == []

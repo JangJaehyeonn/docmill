@@ -18,11 +18,12 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.hwp import is_hwp
 from docmill.tools.ooxml import Package
-from docmill.tools.review import ReviewError, Segment, _docx_segments, read_segments
+from docmill.tools.review import ReviewError, Segment, read_segments
 
 DATE = "날짜 표기"
 TIME = "시간 표기"
@@ -269,7 +270,7 @@ def find_violations(segments: list[Segment]) -> list[dict[str, Any]]:
 # ── docx 고치기 ─────────────────────────────────────────────────────────
 
 _W_TOKEN = re.compile(
-    r"<w:p(?:\s[^>]*?)?(?<!/)>|</w:p>|(<w:t(?:\s[^>]*)?>)([^<]*)(</w:t>)|<w:(?:tab|br)\b[^>]*>"
+    r"<w:p(?:\s[^>]*)?/?>|</w:p>|(<w:t(?:\s[^>]*)?>)([^<]*)(</w:t>)|<w:(?:tab|br)\b[^>]*>"
 )
 
 
@@ -289,30 +290,46 @@ def _preserve_space(open_tag: str) -> str:
     return open_tag[:-1] + ' xml:space="preserve">'
 
 
-def _paragraph_groups(xml: str) -> list[tuple[str, list[_Node]]]:
-    """문단마다 자기가 가진 글자(탭·줄바꿈은 공백, 리더와 같음)와 조각 목록.
+def _paragraph_groups(xml: str) -> list[tuple[int, str, list[_Node]]]:
+    """문단마다 (번호, 자기가 가진 글자, 조각 목록). 탭·줄바꿈은 공백(리더와 같음).
 
-    텍스트 상자처럼 중첩된 문단은 바깥 문단에 합치지 않고 따로 낸다. 결과는 문서 순서다.
+    텍스트 상자처럼 중첩된 문단의 글자는 그 문단에만 속하고 바깥 문단에 합치지 않는다.
+    번호는 문단이 열린 순서(빈 <w:p/> 포함)로 매기며, 결과도 그 순서다.
     """
-    groups: list[tuple[str, list[_Node]]] = []
-    stack: list[tuple[list[str], list[_Node]]] = []
+    groups: list[tuple[int, str, list[_Node]]] = []
+    stack: list[tuple[int, list[str], list[_Node]]] = []
+    count = 0
     for m in _W_TOKEN.finditer(xml):
         token = m.group(0)
-        if token.startswith("<w:p") and m.group(1) is None and not token.startswith("<w:pPr"):
-            stack.append(([], []))
+        if token.startswith("<w:p") and m.group(1) is None:
+            count += 1
+            if token.endswith("/>"):
+                groups.append((count, "", []))
+            else:
+                stack.append((count, [], []))
         elif token == "</w:p>":
             if stack:
-                chars, nodes = stack.pop()
-                groups.append(("".join(chars), nodes))
+                number, chars, nodes = stack.pop()
+                groups.append((number, "".join(chars), nodes))
         elif stack:
-            chars, nodes = stack[-1]
+            _, chars, nodes = stack[-1]
             if m.group(1) is None:
                 chars.append(" ")
                 continue
             piece = html.unescape(m.group(2))
             nodes.append(_Node(m, sum(len(c) for c in chars), piece, piece))
             chars.append(piece)
+    groups.sort(key=lambda g: g[0])
     return groups
+
+
+def docx_text_segments(xml: str) -> list[Segment]:
+    """검사용 문단 세그먼트. 교정(fix_docx_xml)과 같은 문단 소유권 규칙을 쓴다."""
+    segments: list[Segment] = []
+    for number, text, _ in _paragraph_groups(xml):
+        if text.strip():
+            segments.append(Segment("text", text.strip(), {"paragraph": number}))
+    return segments
 
 
 def _apply_to_nodes(nodes: list[_Node], edit: Edit) -> bool:
@@ -342,7 +359,7 @@ def fix_docx_xml(xml: str, add_end_mark: bool) -> tuple[str, int]:
     """
     applied = 0
     all_nodes: list[_Node] = []
-    for text, nodes in _paragraph_groups(xml):
+    for _, text, nodes in _paragraph_groups(xml):
         for edit in sorted(text_edits(text), key=lambda e: e.start, reverse=True):
             applied += _apply_to_nodes(nodes, edit)
         all_nodes.extend(nodes)
@@ -395,7 +412,9 @@ def _read_docx(document: Path, fix: bool) -> tuple[Package | None, list[Segment]
         data = document.read_bytes()
         package = Package.read(data) if fix else None
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            segments = _docx_segments(archive)
+            xml = archive.read("word/document.xml").decode("utf-8")
+        ET.fromstring(xml)  # reject malformed XML like the review reader does
+        segments = docx_text_segments(xml)
     except (zipfile.BadZipFile, KeyError, OSError, ValueError, SyntaxError) as exc:
         raise ReviewError("read", f"문서를 읽지 못했습니다: {exc}") from exc
     return package, segments
