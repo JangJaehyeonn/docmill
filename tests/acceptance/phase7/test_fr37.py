@@ -23,6 +23,7 @@ import shutil
 import sys
 import zipfile
 from collections.abc import Callable
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -61,7 +62,9 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _sync(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
-    return asyncio.run(asyncio.wait_for(_call(home, name, args), 90))
+    # Playwright 동기 API(page 픽스처)가 이벤트 루프를 돌리는 테스트에서도 부를 수 있게 별도 스레드에서 실행한다.
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, asyncio.wait_for(_call(home, name, args), 90)).result()
 
 
 def _make_report(home: Path, source: Path) -> Path:
@@ -229,7 +232,10 @@ def test_change_list_has_old_and_new_and_only_changed_numbers(tmp_path: Path) ->
         assert ch["location"] and "old" in ch and "new" in ch
     old_new = sorted((float(c["old"]), float(c["new"])) for c in changes)
     want = sorted((float(n["value"]), _reaggregate(n["source"], cells)) for n in expected)
-    assert old_new == pytest.approx(want, abs=0.06)
+    # pytest.approx는 중첩 구조(튜플 목록)를 비교하지 못하므로 (old, new) 쌍을 펼쳐 비교한다.
+    assert [x for pair in old_new for x in pair] == pytest.approx(
+        [x for pair in want for x in pair], abs=0.06
+    )
 
 
 @pytest.mark.fr("FR-37")
