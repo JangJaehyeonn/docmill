@@ -63,6 +63,7 @@ export function App() {
   const [linkAlerts, setLinkAlerts] = useState<Record<string, LinkSource[]>>({});
   const [linkResult, setLinkResult] = useState<LinkResult | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const refreshingRef = useRef(false);
   const handledLinks = useRef<Handled>({});
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
@@ -270,11 +271,17 @@ export function App() {
 
   // 원본의 최신 값으로 문서 숫자를 고친다. 열린 편집기의 편집을 먼저 파일에 저장해 잃지 않게 한다.
   const refreshLinks = async (doc: string): Promise<void> => {
+    if (refreshingRef.current) return; // 한 번에 하나만: 같은 문서를 겹쳐 고치지 않는다.
+    refreshingRef.current = true;
     setRefreshing(doc);
     try {
-      if (/\.(xlsx|pptx|docx)$/i.test(doc) && (await save(doc)) === "failed") {
-        setLinkResult({ doc, text: "열린 문서를 먼저 저장하지 못해 숫자를 고치지 않았어요.", lines: [] });
-        return;
+      if (/\.(xlsx|pptx|docx)$/i.test(doc)) {
+        // 편집이 문서 서버에 다 닿았다고 확인되고 저장도 끝나야 숫자를 고친다 (편집기 교체로 편집이 사라지지 않게).
+        const synced = await waitOfficeSynced(doc, 15_000);
+        if (!synced || (await save(doc)) === "failed") {
+          setLinkResult({ doc, text: "열린 문서를 먼저 저장하지 못해 숫자를 고치지 않았어요.", lines: [] });
+          return;
+        }
       }
       const res = await fetch("/api/links/refresh", {
         method: "POST",
@@ -299,6 +306,7 @@ export function App() {
     } catch {
       setLinkResult({ doc, text: "새 숫자로 고치지 못했어요.", lines: [] });
     } finally {
+      refreshingRef.current = false;
       setRefreshing(null);
     }
   };
@@ -347,7 +355,7 @@ export function App() {
             {baseName(doc)}: 원본이 바뀌었어요 ({sources.map((s) => baseName(s.path)).join(", ")}).
             새 숫자로 고칠까요?
           </span>
-          <button type="button" disabled={refreshing === doc} onClick={() => void refreshLinks(doc)}>
+          <button type="button" disabled={refreshing !== null} onClick={() => void refreshLinks(doc)}>
             새 숫자로 고치기
           </button>
           <button type="button" disabled={refreshing === doc} onClick={() => dismissLinks(doc)}>

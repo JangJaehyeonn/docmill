@@ -247,3 +247,81 @@ def test_cli_refresh_links_prints_json(tmp_path: Path, monkeypatch: pytest.Monke
     result = CliRunner().invoke(app, ["refresh-links", str(doc)])
     assert result.exit_code == 0
     assert json.loads(result.stdout)["changes"] == []
+
+
+def test_negative_totals_round_trip_over_two_refreshes(tmp_path: Path) -> None:
+    source, doc = make_doc(tmp_path)
+    write_xlsx(source, [("가팀", -60), ("나팀", 300), ("가팀", -40), (None, None)])
+    first = _run(doc)
+    assert "-100" in _part(doc, "ppt/slides/slide2.xml")
+    assert first["changes"]
+    write_xlsx(source, [("가팀", 120), ("나팀", 300), ("가팀", 80), (None, None)])
+    second = _run(doc)
+    assert "error" not in second, second
+    assert "가팀: 200 (" in _part(doc, "ppt/slides/slide2.xml")
+
+
+def test_phonetic_guide_is_not_part_of_cell_text(tmp_path: Path) -> None:
+    path = tmp_path / "s.xlsx"
+    write_xlsx(path, [("営業", 5)])
+    with zipfile.ZipFile(path) as z:
+        parts = {n: z.read(n) for n in z.namelist()}
+    sheet = parts["xl/worksheets/sheet2.xml"].decode("utf-8")
+    sheet = sheet.replace(
+        "<is><t>営業</t></is>", '<is><t>営業</t><rPh sb="0" eb="2"><t>えいぎょう</t></rPh></is>'
+    )
+    parts["xl/worksheets/sheet2.xml"] = sheet.encode("utf-8")
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    assert read_cells(path, "매출")["A2"] == "営業"
+
+
+def test_name_digits_are_not_taken_for_the_total(tmp_path: Path) -> None:
+    source = tmp_path / "sales.xlsx"
+    write_xlsx(source, [("2024 사업부", 2024), ("나팀", 6000)])
+    doc = tmp_path / "report.pptx"
+    write_pptx(doc, ["2024 사업부: 2,024 (25.0%)"])
+    numbers = [
+        _text(2024, _src(source, "sumif", criteria="2024 사업부", digits=0)),
+        _text(25.0, _src(source, "share", criteria="2024 사업부")),
+    ]
+    provenance_path(doc).write_bytes(dump(numbers))
+    write_xlsx(source, [("2024 사업부", 2025), ("나팀", 6000)])
+    out = _run(doc)
+    assert "error" not in out, out
+    assert "2024 사업부: 2,025 (" in _part(doc, "ppt/slides/slide2.xml")
+
+
+def test_small_displayed_change_on_large_total_is_a_change(tmp_path: Path) -> None:
+    source = tmp_path / "sales.xlsx"
+    write_xlsx(source, [("가팀", 1_000_000_000)])
+    doc = tmp_path / "report.pptx"
+    write_pptx(doc, ["매출 합계: 1,000,000,000"])
+    provenance_path(doc).write_bytes(dump([_text(1_000_000_000, _src(source, "sum", digits=0))]))
+    write_xlsx(source, [("가팀", 1_000_000_001)])
+    out = _run(doc)
+    assert len(out["changes"]) == 1
+    assert "1,000,000,001" in _part(doc, "ppt/slides/slide2.xml")
+
+
+def test_failed_sidecar_write_restores_document(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import docmill.tools.refresh as refresh
+
+    source, doc = make_doc(tmp_path)
+    before, prov = doc.read_bytes(), provenance_path(doc).read_bytes()
+    write_xlsx(source, [("가팀", 70), ("나팀", 300), ("가팀", 40), (None, None)])
+    real = refresh._publish
+
+    def flaky(data: bytes, final: Path) -> None:
+        if final.name.endswith(".provenance.json"):
+            raise OSError("disk full")
+        real(data, final)
+
+    monkeypatch.setattr(refresh, "_publish", flaky)
+    out = _run(doc)
+    assert out["step"] == "unexpected"
+    assert doc.read_bytes() == before
+    assert provenance_path(doc).read_bytes() == prov

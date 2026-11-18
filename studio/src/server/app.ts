@@ -27,7 +27,7 @@ import {
   registerPreview,
   type PendingPreview,
 } from "./preview.js";
-import { linkStatus, runRefresh } from "./links.js";
+import { linkStatus, runRefresh, sourcesInside } from "./links.js";
 import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
@@ -59,6 +59,23 @@ const MAX_HWP_BYTES = 256 * 1024 * 1024;
 
 /** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
 const sessionKeys = new Map<string, string>();
+const fileLocks = new Map<string, Promise<void>>();
+
+/** 같은 문서에 대한 저장 반영과 숫자 갱신을 한 번에 하나씩 차례로 실행한다. */
+async function withFileLock<T>(rel: string, fn: () => Promise<T>): Promise<T> {
+  const prev = fileLocks.get(rel) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((r) => (release = r));
+  const tail = prev.then(() => mine);
+  fileLocks.set(rel, tail);
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (fileLocks.get(rel) === tail) fileLocks.delete(rel);
+  }
+}
 
 /**
  * 강제 저장 요청별 대기자 (요청 토큰 → 결과 알림). 토큰은 forcesave 명령의 userdata로 보내고,
@@ -247,9 +264,17 @@ async function refreshLinks(
   const body = (await readBody(req)) as { path?: unknown };
   const file = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.path ?? "") }));
   if (!file) return;
-  const result = await runRefresh(file.abs);
-  // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
-  if (!result.error && result.changes.length > 0) sessionKeys.delete(file.rel);
+  const root = await fs.realpath(opts.workspace);
+  // CLI 가 읽을 원본이 모두 작업 폴더 안에 있을 때만 고친다.
+  if (!(await sourcesInside(root, file.abs))) {
+    return sendJson(res, 403, { error: "작업 폴더 밖이거나 없는 원본이 연결돼 있어 숫자를 고치지 않았어요." });
+  }
+  const result = await withFileLock(file.rel, async () => {
+    const r = await runRefresh(file.abs, root);
+    // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
+    if (!r.error && r.changes.length > 0) sessionKeys.delete(file.rel);
+    return r;
+  });
   sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
 }
 
@@ -454,10 +479,16 @@ async function saveCallback(
     try {
       const download = await fetch(rebaseDownloadUrl(body.url, server));
       if (!download.ok) throw new Error(`내려받기 실패 (${download.status})`);
-      await replaceFile(file.abs, Buffer.from(await download.arrayBuffer()));
-      // 상태 2 = 최종 저장: 세션이 끝났으니 다음에 열 때 새 키를 발급한다.
-      if (body.status === 2) sessionKeys.delete(file.rel);
-      notifySaveWaiter(body.userdata, true);
+      const bytes = Buffer.from(await download.arrayBuffer());
+      const kept = await withFileLock(file.rel, async () => {
+        // 내려받는 사이 갱신 등으로 세션이 끝났다면 이 저장은 버린다 (갱신 결과를 덮지 않는다).
+        if (sessionKeys.get(file.rel) !== body.key) return false;
+        await replaceFile(file.abs, bytes);
+        // 상태 2 = 최종 저장: 세션이 끝났으니 다음에 열 때 새 키를 발급한다.
+        if (body.status === 2) sessionKeys.delete(file.rel);
+        return true;
+      });
+      notifySaveWaiter(body.userdata, kept);
     } catch (err) {
       console.error("저장 콜백 처리 실패:", err);
       notifySaveWaiter(body.userdata, false);

@@ -12,13 +12,20 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import os
 import re
+import shutil
+import sys
+import tempfile
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
+from xml.sax.saxutils import escape
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.ooxml import OoxmlError, Package, element_spans, ordered_targets
@@ -27,8 +34,8 @@ from docmill.tools.scope import shape_key
 
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _RANGE = re.compile(r"\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)")
-# A number shown in text: not glued to a word (`영업1팀`), a decimal point or a char reference.
-_NUMBER = re.compile(r"(?<![\w.#])\d[\d,]*(?:\.\d+)?")
+# A number shown in text (with sign): not glued to a word (`영업1팀`), a decimal point, a char ref.
+_NUMBER = re.compile(r"(?<![\w.#])-?\d[\d,]*(?:\.\d+)?")
 _V = re.compile(r"(<(?:[\w.-]+:)?v>)([^<]*)(</(?:[\w.-]+:)?v>)")
 _IDX = re.compile(r"^<[^>]*?\sidx=\"(\d+)\"")
 _TOLERANCE = 1e-9
@@ -59,11 +66,22 @@ class Table:
 # ---------------------------------------------------------------- reading xlsx
 
 
+def _rich_text(node: ET.Element) -> str:
+    """`si`·`is` 요소의 글자: 직접 자식 `t`와 서식 런 `r/t`만 읽고 발음 안내(`rPh`)는 뺀다."""
+    parts: list[str] = []
+    for child in node:
+        if child.tag == f"{_S}t":
+            parts.append(child.text or "")
+        elif child.tag == f"{_S}r":
+            parts.extend(t.text or "" for t in child.findall(f"{_S}t"))
+    return "".join(parts)
+
+
 def _cell_value(cell: ET.Element, shared: list[str]) -> Any:
     kind = cell.get("t", "n")
     if kind == "inlineStr":
         inline = cell.find(f"{_S}is")
-        return "".join(t.text or "" for t in inline.iter(f"{_S}t")) if inline is not None else ""
+        return _rich_text(inline) if inline is not None else ""
     v = cell.find(f"{_S}v")
     if v is None or v.text is None:
         return None
@@ -80,10 +98,7 @@ def _shared_strings(parts: dict[str, bytes]) -> list[str]:
     if "xl/sharedStrings.xml" not in parts:
         return []
     root = ET.fromstring(parts["xl/sharedStrings.xml"])
-    return [
-        "".join(t.text or "" for t in si.iter(f"{_S}t") if f"{_S}rPh" not in t.tag)
-        for si in root.iter(f"{_S}si")
-    ]
+    return [_rich_text(si) for si in root.iter(f"{_S}si")]
 
 
 def read_cells(xlsx: Path, sheet: str) -> dict[str, Any]:
@@ -258,12 +273,32 @@ def _tokens(slide: str, start: int, end: int) -> list[tuple[int, int, float]]:
     return found
 
 
+def _without_names(
+    tokens: list[tuple[int, int, float]],
+    slide: str,
+    start: int,
+    end: int,
+    items: list[tuple[dict[str, Any], str | None]],
+) -> list[tuple[int, int, float]]:
+    """항목명 안의 숫자(`2024 사업부`)는 집계값 후보에서 뺀다."""
+    names = {_criteria(item) for item, _ in items if _criteria(item)}
+    skipped: list[tuple[int, int]] = []
+    for name in sorted(names):
+        if not re.search(r"\d", name):
+            continue
+        pattern = rf"(?<![\d,.]){re.escape(escape(name))}(?![\d,]|\.\d)"
+        skipped += [m.span() for m in re.finditer(pattern, slide[start:end])]
+    return [
+        t for t in tokens if not any(a <= t[0] - start and t[1] - start <= b for a, b in skipped)
+    ]
+
+
 def _shape_edits(
     slide: str, label: str, shape: str, items: list[tuple[dict[str, Any], str | None]]
 ) -> list[tuple[int, int, str]]:
     """도형 하나의 숫자를 provenance 순서대로 짝지어, 바뀐 숫자의 글자 교체 목록을 만든다."""
     start, end = _shape_span(slide, shape, label)
-    tokens = _tokens(slide, start, end)
+    tokens = _without_names(_tokens(slide, start, end), slide, start, end, items)
     edits: list[tuple[int, int, str]] = []
     cursor = 0
     for item, new_text in items:
@@ -473,14 +508,64 @@ def _xml(parts: dict[str, bytes], part: str) -> str:
 
 
 def _publish(data: bytes, final: Path) -> None:
-    """같은 폴더의 임시 파일에 쓴 뒤 원자적으로 교체한다. 실패하면 임시 파일을 지운다."""
-    partial = final.with_name(f".{final.name}.part")
+    """같은 폴더의 호출별 임시 파일에 쓴 뒤 원자적으로 교체한다. 실패하면 그 임시 파일만 지운다."""
+    handle, name = tempfile.mkstemp(dir=final.parent, prefix=f".{final.name}.", suffix=".part")
+    partial = Path(name)
     try:
-        partial.write_bytes(data)
+        with os.fdopen(handle, "wb") as out:
+            out.write(data)
+        if final.exists():
+            shutil.copymode(final, partial)
         os.replace(partial, final)
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
+
+
+@contextlib.contextmanager
+def _document_lock(document: Path) -> Iterator[None]:
+    """같은 문서를 동시에 새로 고치지 않도록 프로세스 사이 잠금을 건다 (잠금 파일은 임시 폴더)."""
+    digest = hashlib.sha256(str(document.resolve()).encode("utf-8")).hexdigest()[:24]
+    with open(Path(tempfile.gettempdir()) / f"docmill-refresh-{digest}.lock", "a+b") as handle:
+        if sys.platform == "win32":
+            import msvcrt
+
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            try:
+                yield
+            finally:
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+            try:
+                yield
+            finally:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _commit(
+    document: Path, new_document: bytes | None, original: bytes, sidecar: bytes | None
+) -> None:
+    """문서와 출처 파일을 저장한다. 두 번째 저장이 실패하면 문서를 이전 바이트로 되돌린다."""
+    if new_document is not None:
+        _publish(new_document, document)
+    if sidecar is None:
+        return
+    try:
+        _publish(sidecar, provenance_path(document))
+    except BaseException:
+        if new_document is not None:
+            _publish(original, document)
+        raise
+
+
+def _differs(shown: float, old: float) -> bool:
+    """보이는 값이 달라졌는지 (반올림한 값끼리 정확히 비교한다)."""
+    return abs(shown - old) > _TOLERANCE
 
 
 def _refresh(document: Path, run_id: str) -> dict[str, Any]:
@@ -492,7 +577,7 @@ def _refresh(document: Path, run_id: str) -> dict[str, Any]:
     for item in numbers:
         new_item, shown, text = _renewed(item, sources)
         renewed.append(new_item)
-        moved = not _same(shown, float(item["value"]))
+        moved = _differs(shown, float(item["value"]))
         texts.append(text if moved else None)
         if moved:
             changes.append(
@@ -504,15 +589,16 @@ def _refresh(document: Path, run_id: str) -> dict[str, Any]:
                     "new": new_item["value"],
                 }
             )
+    original = document.read_bytes()
+    new_document: bytes | None = None
     if changes:
         try:
-            package = Package.read(document.read_bytes())
+            package = Package.read(original)
             changed = _edit_document(package.parts, numbers, texts)
+            new_document = package.write({**package.parts, **changed})
         except (OoxmlError, ValueError, KeyError) as exc:
             raise RefreshError("locate", f"문서를 고치지 못했다: {exc}") from exc
-        _publish(package.write({**package.parts, **changed}), document)
-    if renewed != numbers:
-        _publish(dump(renewed), provenance_path(document))
+    _commit(document, new_document, original, dump(renewed) if renewed != numbers else None)
     summary = (
         f"숫자 {len(changes)}곳을 새 원본 값으로 고쳤다"
         if changes
@@ -541,7 +627,8 @@ def refresh_links(document: str) -> str:
     """
     run_id = current_run_id() or new_run_id()
     try:
-        result = _refresh(Path(document), run_id)
+        with _document_lock(Path(document)):
+            result = _refresh(Path(document), run_id)
     except RefreshError as exc:
         result = {"error": exc.message, "step": exc.step, "run_id": run_id}
     except Exception as exc:  # file failures must not kill the server
