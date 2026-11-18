@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from docmill.engines import rhwp
 from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
 from docmill.tools.review import ReviewError, read_segments
 
@@ -36,3 +37,15 @@ def test_unreadable_hwp_raises(tmp_path: Path) -> None:
 def test_segments_skip_empty_lines() -> None:
     segments = read_segments(FIXTURE)
     assert segments and all(s.text for s in segments)
+
+
+def test_relative_core_override_is_resolved_to_absolute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core = tmp_path / "core"
+    core.mkdir()
+    (core / "rhwp.js").write_text("")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("DOCMILL_RHWP_CORE", "core")
+    found = rhwp._core_dir()
+    assert found is not None and found.is_absolute() and found == core.resolve()

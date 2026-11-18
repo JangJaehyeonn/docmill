@@ -28,7 +28,8 @@ def _core_dir() -> Path | None:
         candidates.append(parent / "studio" / "node_modules" / "@rhwp" / "core")
     for candidate in candidates:
         if (candidate / "rhwp.js").is_file():
-            return candidate
+            # Node runs inside the job temp folder, so a relative override must be absolute.
+            return candidate.resolve()
     return None
 
 
