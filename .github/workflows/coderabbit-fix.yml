@@ -96,6 +96,7 @@ jobs:
                코멘트ID는 1번에서 읽은 CodeRabbit 코멘트 중 in_reply_to_id가 없는 것(스레드 첫 코멘트)의 id입니다. 짧은 SHA는 `git log -1 --format=%h`로 확인하세요.
           claude_args: >-
             --max-turns 40
+            --disallowedTools "Monitor"
             --model ${{ steps.attempt.outputs.n == '3' && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
             --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git push origin ${{ github.event.pull_request.head.ref }}),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr comment:*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments*),Bash(gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/reviews*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*),Bash(npm --prefix studio:*),Bash(npm ci:*),Bash(npm install:*),Bash(npm run:*),Bash(npx:*),Bash(node:*),Bash(uv run playwright:*)"
       # setup-studio 안의 actions/setup-node는 잡 끝에 post 단계를 돌린다. 위에서 .pipeline을 지웠으므로
