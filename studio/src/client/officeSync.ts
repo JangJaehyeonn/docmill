@@ -6,20 +6,21 @@
  * 저장 전에 false 가 될 때까지 기다린다.
  */
 const pending = new Map<string, boolean>();
-const waiters = new Map<string, Set<() => void>>();
+const waiters = new Map<string, Set<(ok: boolean) => void>>();
 
 /** 편집기가 알린 상태를 기록한다. false 가 되면 기다리던 저장을 깨운다. */
 export function setOfficePending(path: string, value: boolean): void {
   pending.set(path, value);
   if (!value) {
-    for (const wake of [...(waiters.get(path) ?? [])]) wake();
+    for (const wake of [...(waiters.get(path) ?? [])]) wake(true);
   }
 }
 
 /** 편집기를 닫을 때 상태를 지우고 기다리던 쪽을 깨운다. */
 export function clearOfficePending(path: string): void {
   pending.delete(path);
-  for (const wake of [...(waiters.get(path) ?? [])]) wake();
+  // 편집기가 닫힌 것이지 동기화가 끝난 것이 아니므로 false 로 깨운다.
+  for (const wake of [...(waiters.get(path) ?? [])]) wake(false);
 }
 
 /**
@@ -29,7 +30,7 @@ export function clearOfficePending(path: string): void {
 export function waitOfficeSynced(path: string, ms: number): Promise<boolean> {
   if (pending.get(path) !== true) return Promise.resolve(true);
   return new Promise((resolve) => {
-    const set = waiters.get(path) ?? new Set<() => void>();
+    const set = waiters.get(path) ?? new Set<(ok: boolean) => void>();
     waiters.set(path, set);
     const finish = (ok: boolean): void => {
       clearTimeout(timer);
@@ -37,7 +38,7 @@ export function waitOfficeSynced(path: string, ms: number): Promise<boolean> {
       if (set.size === 0) waiters.delete(path);
       resolve(ok);
     };
-    const wake = (): void => finish(true);
+    const wake = (ok: boolean): void => finish(ok);
     const timer = setTimeout(() => finish(false), ms);
     set.add(wake);
   });

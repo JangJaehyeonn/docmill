@@ -20,6 +20,6 @@ describe("officeSync", () => {
     expect(await waitOfficeSynced("c.xlsx", 30)).toBe(false);
     const waiting = waitOfficeSynced("c.xlsx", 1000);
     clearOfficePending("c.xlsx");
-    expect(await waiting).toBe(true);
+    expect(await waiting).toBe(false);
   });
 });

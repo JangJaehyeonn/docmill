@@ -188,11 +188,15 @@ export function App() {
     setSaveMessage("저장 중…");
     try {
       // 방금 입력한 내용이 문서 서버에 닿을 때까지 잠깐 기다린다 (닿지 않은 편집은 강제 저장에 빠진다).
-      await waitOfficeSynced(path, 15_000);
+      const synced = await waitOfficeSynced(path, 15_000);
       // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다.
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
-      setSaveMessage(res.ok ? "저장했어요. 작업 폴더 파일에 반영됐어요." : (body.error ?? "저장하지 못했어요."));
+      if (res.ok && !synced) {
+        setSaveMessage("저장했지만 최근 편집이 문서 서버에 다 닿지 않아 파일에 빠졌을 수 있어요. 잠시 뒤 다시 저장해 주세요.");
+      } else {
+        setSaveMessage(res.ok ? "저장했어요. 작업 폴더 파일에 반영됐어요." : (body.error ?? "저장하지 못했어요."));
+      }
       if (res.ok) return "saved";
       return res.status === 409 ? "no-editor" : "failed";
     } catch {
