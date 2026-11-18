@@ -410,8 +410,10 @@ async function forceSave(
       await new Promise((r) => setTimeout(r, 1000));
       code = await commandForceSave(server, key);
     }
-    if (code !== 0 && code !== 4) throw new Error(`문서 서버 오류 ${code}`);
-    sendJson(res, 200, { ok: true, unchanged: code === 4 });
+    // error 1 = 이 키의 편집 세션이 아직 없음(연 뒤 편집 전). 이때도 반영할 변경이 없다고 본다.
+    const unchanged = code === 1 || code === 4;
+    if (code !== 0 && !unchanged) throw new Error(`문서 서버 오류 ${code}`);
+    sendJson(res, 200, { ok: true, unchanged });
   } catch (err) {
     console.error("저장 요청 실패:", err);
     sendJson(res, 502, { error: "문서 서버에 저장을 요청하지 못했습니다." });

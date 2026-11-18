@@ -1,5 +1,6 @@
 import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -98,6 +99,39 @@ describe("createApp", () => {
       body: JSON.stringify({ status: 6, key: cfg.config.document.key, url: "http://localhost/x" }),
     });
     expect(forged.status).toBe(403);
+  });
+
+  it.each([
+    [1, 200, true],
+    [0, 200, false],
+    [3, 502, undefined],
+  ])("강제 저장 결과 error %i에 %i를 돌려준다", async (code, status, unchanged) => {
+    // 가짜 문서 서버: CommandService가 정해진 error 코드를 돌려준다.
+    const fake = http.createServer((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ error: code }));
+    });
+    const fakePort = await new Promise<number>((resolve) =>
+      fake.listen(0, "127.0.0.1", () => resolve((fake.address() as AddressInfo).port)),
+    );
+    try {
+      server = makeApp({ onlyofficeUrl: `http://127.0.0.1:${fakePort}` });
+      const port = await listen(server);
+      const base = `http://127.0.0.1:${port}`;
+      await fetch(`${base}/api/editor-config?path=a.xlsx`);
+      const r = await fetch(`${base}/api/save?path=a.xlsx`, { method: "POST" });
+      expect(r.status).toBe(status);
+      if (status === 200) expect(await r.json()).toEqual({ ok: true, unchanged });
+    } finally {
+      fake.close();
+    }
+  });
+
+  it("편집기가 열리지 않은 파일의 저장 요청은 409를 돌려준다", async () => {
+    server = makeApp({ onlyofficeUrl: "http://127.0.0.1:1" });
+    const port = await listen(server);
+    const r = await fetch(`http://127.0.0.1:${port}/api/save?path=never-opened.xlsx`, { method: "POST" });
+    expect(r.status).toBe(409);
   });
 
   it("루프백 주소만 앱 화면과 API를 쓸 수 있다", () => {

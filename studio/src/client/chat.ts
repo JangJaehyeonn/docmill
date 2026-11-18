@@ -115,6 +115,34 @@ export function formatPreflight(body: PreflightBody): string {
   return ["보내기 전 점검 결과", ...lines].join("\n");
 }
 
+export const PREFLIGHT_UNSAVED_NOTE = "저장하지 못해 마지막으로 저장된 파일을 점검했어요.";
+export const PREFLIGHT_FAILED = "저장하지 못했거나 점검을 실행하지 못했어요. 저장한 뒤 다시 시도해 주세요.";
+
+/**
+ * 먼저 저장을 시도하고, 저장 결과와 상관없이 디스크 파일로 점검해 채팅 글자를 만든다.
+ * 저장에 실패하면 결과 위에 안내 한 줄을 붙이고, 점검 요청 자체가 실패할 때만 오류 문구를 쓴다.
+ */
+export async function preflightText(
+  path: string,
+  save: (path: string) => Promise<boolean>,
+  fetchFn: typeof fetch = fetch,
+): Promise<string> {
+  let saved: boolean;
+  try {
+    saved = await save(path);
+  } catch {
+    saved = false;
+  }
+  let body: string;
+  try {
+    const res = await fetchFn(`/api/preflight?path=${encodeURIComponent(path)}`);
+    body = formatPreflight((await res.json()) as PreflightBody);
+  } catch {
+    return PREFLIGHT_FAILED;
+  }
+  return saved ? body : `${PREFLIGHT_UNSAVED_NOTE}\n${body}`;
+}
+
 /** 미리보기 카드의 상태를 바꾼다. */
 export function setPreviewStatus(
   items: ChatItem[],
