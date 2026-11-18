@@ -27,6 +27,8 @@ DB_NAME = "docmill.db"
 MAX_VALUE_LEN = 200
 MAX_SUMMARY_LEN = 2000
 REDACTED = "***"
+# 개인정보를 다루는 도구는 인자·결과의 내용을 로그에 남기지 않고 길이만 남긴다 (FR-39).
+SENSITIVE_TOOLS = frozenset({"mask_text", "unmask_text"})
 
 _SECRET_KEY = re.compile(r"key|token|secret|passw|credential|auth|cookie", re.IGNORECASE)
 _SECRET_VALUE = re.compile(
@@ -247,6 +249,9 @@ def logged(fn: _F, *, ai_used: bool = True) -> _F:
         status: str,
     ) -> None:
         recipe = call_args.get("recipe") if name == "run_recipe" else None
+        if name in SENSITIVE_TOOLS:
+            call_args = {k: f"<{len(str(v))}자>" for k, v in call_args.items()}
+            result = f"<{len(result)}자>" if status == "ok" else "error"
         _safe_record(
             recipe=recipe if isinstance(recipe, str) else None,
             run_id=run_id,

@@ -28,6 +28,7 @@ import {
   type PendingPreview,
 } from "./preview.js";
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
+import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
@@ -278,6 +279,9 @@ async function refreshLinks(
   sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
 }
 
+/** 자리표 → 원래 값 대응표. 서버 메모리에만 두고 로그·파일에 쓰지 않는다 (FR-39). */
+let maskTable: MaskTable = {};
+
 /** 채팅 한 턴: 에이전트를 실행하고 이벤트를 줄 단위 JSON(NDJSON)으로 흘려보낸다. */
 async function chat(
   opts: AppOptions,
@@ -306,7 +310,22 @@ async function chat(
   } catch {
     active = null;
   }
-  const prompt = buildPrompt(root, { message: body.message, tabs, active });
+  // 개인정보를 가린 문서 내용만 에이전트에 넘긴다. 가리지 못하면 원문을 보내지 않고 멈춘다.
+  const masked = await maskInput({
+    paths: tabs.map((t) => path.join(root, ...t.split("/"))),
+    message: body.message,
+    names: registeredNames(process.env),
+    table: maskTable,
+  });
+  if (!masked) return sendJson(res, 502, { error: "개인정보를 가리지 못해 에이전트에 보내지 않았어요." });
+  maskTable = masked.table;
+  const table = maskTable;
+  const prompt = buildPrompt(root, {
+    message: masked.message,
+    tabs,
+    active,
+    documents: masked.documents.map((d, i) => ({ path: tabs[i] ?? d.path, text: d.text })),
+  });
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
     "cache-control": "no-store",
@@ -333,9 +352,15 @@ async function chat(
         }
       }
       // 파일이 바뀌었을 수 있으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
-      for (const r of rel) sessionKeys.delete(r);
+      for (const r of rel) {
+        sessionKeys.delete(r);
+        // 에이전트가 문서에 쓴 자리표는 원래 값으로 되돌린다.
+        await unmaskFile(path.join(root, ...r.split("/")), table);
+      }
       e = { ...e, paths: rel };
     }
+    if (e.type === "assistant") e = { ...e, text: unmaskText(e.text, table) };
+    else if (e.type === "tool_result") e = { ...e, text: unmaskText(e.text, table) };
     if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
   };
   await runAgent({
