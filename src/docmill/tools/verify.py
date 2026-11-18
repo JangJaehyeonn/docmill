@@ -15,12 +15,14 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
 from docmill.tools.provenance import load_chart_sources
 from docmill.tools.report import Group, ReportError, _read_sheet, aggregate
 
 _C_NS = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 _CHART_PART = re.compile(r"ppt/charts/chart\d+\.xml")
 _TOLERANCE = 1e-9
+_LABELED_NUMBER = re.compile(r"^(?P<label>.+?)[\s:：=\-]+(?P<num>-?\d[\d,]*(?:\.\d+)?)\s*$")
 
 
 def _points(parent: ET.Element | None) -> dict[int, str]:
@@ -52,6 +54,24 @@ def read_chart_points(pptx: Path) -> list[dict[str, Any]]:
                     }
                 )
     return series
+
+
+def read_hwp_points(lines: list[str], groups: list[Group]) -> list[dict[str, Any]]:
+    """한글 문단에서 `이름: 숫자` 꼴 줄을 읽어 그래프 계열과 같은 형식으로 돌려준다.
+
+    이름이 group 이름과 같은 줄만 대조 대상으로 삼는다(제목·날짜 같은 줄은 무시).
+    """
+    names = {g.name for g in groups}
+    categories: dict[int, str] = {}
+    values: dict[int, str] = {}
+    for line in lines:
+        match = _LABELED_NUMBER.match(line.strip())
+        if match is None or match["label"].strip() not in names:
+            continue
+        idx = len(categories)
+        categories[idx] = match["label"].strip()
+        values[idx] = match["num"].replace(",", "")
+    return [{"chart": "hwp", "series": 1, "categories": categories, "values": values}]
 
 
 def _close(actual: float, expected: float) -> bool:
@@ -96,18 +116,23 @@ def compare(
 
 def _verify(document: str, source: str, group_by: str, value: str) -> dict[str, Any]:
     doc, src = Path(document), Path(source)
-    if doc.suffix.lower() != ".pptx" or not doc.is_file():
-        raise ReportError("document", f"읽을 수 있는 .pptx 파일이 아니다: {document}")
+    hwp = is_hwp(doc)
+    if (doc.suffix.lower() != ".pptx" and not hwp) or not doc.is_file():
+        raise ReportError("document", f"읽을 수 있는 .pptx·.hwp·.hwpx 파일이 아니다: {document}")
     if src.suffix.lower() != ".xlsx" or not src.is_file():
         raise ReportError("source", f"읽을 수 있는 .xlsx 파일이 아니다: {source}")
     with tempfile.TemporaryDirectory(prefix="docmill-verify-") as tmp:
         groups = aggregate(_read_sheet(src, Path(tmp).resolve()), group_by, value)
     try:
-        series = read_chart_points(doc)
+        series = read_hwp_points(read_hwp_lines(doc), groups) if hwp else read_chart_points(doc)
+    except HwpError as exc:
+        raise ReportError("read", f"한글 문서를 읽지 못했다: {exc}") from exc
     except (zipfile.BadZipFile, ET.ParseError) as exc:
         raise ReportError("document", f"문서를 읽지 못했다: {exc}") from exc
     if not any(ser["values"] or ser["categories"] for ser in series):
-        raise ReportError("extract", "문서에서 대조할 그래프 숫자를 찾지 못했다")
+        raise ReportError("extract", "문서에서 대조할 숫자를 찾지 못했다")
+    if hwp:
+        return compare(series, groups)
     try:
         sources = load_chart_sources(doc)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
