@@ -22,7 +22,11 @@ from docmill.tools.report import Group, ReportError, _read_sheet, aggregate
 _C_NS = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 _CHART_PART = re.compile(r"ppt/charts/chart\d+\.xml")
 _TOLERANCE = 1e-9
-_LABELED_NUMBER = re.compile(r"^(?P<label>.+?)[\s:：=\-]+(?P<num>-?\d[\d,]*(?:\.\d+)?)\s*$")
+# Separator and sign are separate: a dash counts as a separator only when spaced (`A - 10`)
+# or glued to the label (`A-10`); `A: -10` and `A -10` keep the minus sign on the number.
+_LABELED_NUMBER = re.compile(
+    r"^(?P<label>.+?)(?P<sep>\s*[:：=]\s*|\s+-\s+|\s+|-)(?P<num>-?\d[\d,]*(?:\.\d+)?)\s*$"
+)
 
 
 def _points(parent: ET.Element | None) -> dict[int, str]:
@@ -59,19 +63,37 @@ def read_chart_points(pptx: Path) -> list[dict[str, Any]]:
 def read_hwp_points(lines: list[str], groups: list[Group]) -> list[dict[str, Any]]:
     """한글 문단에서 `이름: 숫자` 꼴 줄을 읽어 그래프 계열과 같은 형식으로 돌려준다.
 
-    이름이 group 이름과 같은 줄만 대조 대상으로 삼는다(제목·날짜 같은 줄은 무시).
+    대조 대상 규칙:
+    - 이름이 group 이름과 같은 줄은 구분자와 상관없이 대조한다.
+    - `:`·`：`·`=`로 이름과 숫자를 나눈 줄은 group에 없는 이름이어도 대조한다(불일치로 드러남).
+    - 그 밖의 줄(공백·하이픈으로만 나뉜 `주간 보고 2026` 같은 제목·날짜 줄)은 대조하지 않고
+      계열의 `ignored`에 원문 그대로 남긴다.
     """
     names = {g.name for g in groups}
     categories: dict[int, str] = {}
     values: dict[int, str] = {}
+    ignored: list[str] = []
     for line in lines:
-        match = _LABELED_NUMBER.match(line.strip())
-        if match is None or match["label"].strip() not in names:
+        text = line.strip()
+        match = _LABELED_NUMBER.match(text)
+        if match is None:
+            continue
+        label = match["label"].strip()
+        if label not in names and not re.search(r"[:：=]", match["sep"]):
+            ignored.append(text)
             continue
         idx = len(categories)
-        categories[idx] = match["label"].strip()
+        categories[idx] = label
         values[idx] = match["num"].replace(",", "")
-    return [{"chart": "hwp", "series": 1, "categories": categories, "values": values}]
+    return [
+        {
+            "chart": "hwp",
+            "series": 1,
+            "categories": categories,
+            "values": values,
+            "ignored": ignored,
+        }
+    ]
 
 
 def _close(actual: float, expected: float) -> bool:
@@ -132,7 +154,9 @@ def _verify(document: str, source: str, group_by: str, value: str) -> dict[str, 
     if not any(ser["values"] or ser["categories"] for ser in series):
         raise ReportError("extract", "문서에서 대조할 숫자를 찾지 못했다")
     if hwp:
-        return compare(series, groups)
+        result = compare(series, groups)
+        result["ignored"] = [text for ser in series for text in ser.get("ignored", [])]
+        return result
     try:
         sources = load_chart_sources(doc)
     except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
@@ -148,7 +172,8 @@ def verify_numbers(document: str, source: str, group_by: str, value: str) -> str
     source 엑셀의 group_by 열 기준 value 합계를 계산해 document의 그래프 값과 비교한다.
     결과는 JSON 문자열이며 checked(대조 개수), matched(일치 개수), mismatches(location·
     expected·actual)를 담는다. 문서 옆에 `<문서 이름>.provenance.json`이 있으면 불일치
-    항목에 그 숫자의 원본 출처(source)도 담는다. 실패하면 error와 실패한 단계(step)를 담는다.
+    항목에 그 숫자의 원본 출처(source)도 담는다. 한글(hwp·hwpx) 문서면 대조하지 않은 제목·날짜
+    줄을 ignored에 담는다. 실패하면 error와 실패한 단계(step)를 담는다.
     """
     run_id = current_run_id() or new_run_id()
     try:

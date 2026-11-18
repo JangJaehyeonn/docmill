@@ -95,8 +95,33 @@ def test_invalid_inputs_report_step(tmp_path: Path) -> None:
 
 
 def test_hwp_points_match_group_totals_like_chart() -> None:
-    series = verify.read_hwp_points(["주간 보고 2026", "A: 10", "B 20", "C: 5"], GROUPS)
+    series = verify.read_hwp_points(["주간 보고 2026", "A: 10", "B 20"], GROUPS)
     assert compare(series, GROUPS) == {"checked": 2, "matched": 2, "mismatches": []}
+    assert series[0]["ignored"] == ["주간 보고 2026"]
+
+
+def test_hwp_unknown_label_with_separator_is_mismatch() -> None:
+    result = compare(verify.read_hwp_points(["A: 10", "C: 20"], GROUPS), GROUPS)
+    assert result["checked"] == 2 and result["matched"] == 1
+    assert result["mismatches"] == [{"location": "hwp 계열1 'C'", "expected": None, "actual": "20"}]
+
+
+@pytest.mark.parametrize(
+    ("line", "number"),
+    [("A: -10", "-10"), ("A -10", "-10"), ("A = -10", "-10"), ("A - 10", "10"), ("A-10", "10")],
+)
+def test_hwp_minus_sign_is_kept_and_dash_separator_allowed(line: str, number: str) -> None:
+    series = verify.read_hwp_points([line], GROUPS)
+    assert series[0]["categories"] == {0: "A"} and series[0]["values"] == {0: number}
+
+
+def test_hwp_negative_value_matches_only_negative_total() -> None:
+    negative = [Group("A", -10.0, 100.0)]
+    positive = [Group("A", 10.0, 100.0)]
+    lines = ["A: -10"]
+    assert compare(verify.read_hwp_points(lines, negative), negative)["matched"] == 1
+    mismatch = compare(verify.read_hwp_points(lines, positive), positive)
+    assert mismatch["matched"] == 0 and mismatch["mismatches"][0]["actual"] == "-10"
 
 
 def test_hwp_wrong_value_is_mismatch() -> None:
@@ -118,7 +143,7 @@ def test_hwp_input_reaches_verification(tmp_path: Path, monkeypatch: pytest.Monk
     xlsx.write_bytes(b"")
     hwp.write_bytes(b"x")
     out = json.loads(verify_numbers(str(hwp), str(xlsx), "g", "v"))
-    assert out["checked"] == 2 and out["matched"] == 2
+    assert out["checked"] == 2 and out["matched"] == 2 and out["ignored"] == []
 
 
 def test_broken_hwp_is_reported_and_server_survives(
