@@ -1,5 +1,6 @@
-import { mkdtempSync, mkdirSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import http from "node:http";
 import net from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,7 +9,9 @@ import { createApp, isLoopback } from "./app";
 
 let lastWorkspace = "";
 
-function makeApp(extra: { onlyofficeUrl?: string } = {}): ReturnType<typeof createApp> {
+function makeApp(
+  extra: { onlyofficeUrl?: string; saveWaitMs?: number; forceSaveRetryOneSec?: number } = {},
+): ReturnType<typeof createApp> {
   const base = mkdtempSync(path.join(tmpdir(), "studio-app-"));
   const workspace = path.join(base, "ws");
   lastWorkspace = workspace;
@@ -98,6 +101,116 @@ describe("createApp", () => {
       body: JSON.stringify({ status: 6, key: cfg.config.document.key, url: "http://localhost/x" }),
     });
     expect(forged.status).toBe(403);
+  });
+
+  it.each([
+    [1, 200, true],
+    [3, 502, undefined],
+  ])("강제 저장 결과 error %i에 %i를 돌려준다", async (code, status, unchanged) => {
+    // 가짜 문서 서버: CommandService가 정해진 error 코드를 돌려준다.
+    const fake = http.createServer((_req, res) => {
+      res.setHeader("content-type", "application/json");
+      res.end(JSON.stringify({ error: code }));
+    });
+    const fakePort = await new Promise<number>((resolve) =>
+      fake.listen(0, "127.0.0.1", () => resolve((fake.address() as AddressInfo).port)),
+    );
+    try {
+      server = makeApp({ onlyofficeUrl: `http://127.0.0.1:${fakePort}`, forceSaveRetryOneSec: 1 });
+      const port = await listen(server);
+      const base = `http://127.0.0.1:${port}`;
+      await fetch(`${base}/api/editor-config?path=a.xlsx`);
+      const r = await fetch(`${base}/api/save?path=a.xlsx`, { method: "POST" });
+      expect(r.status).toBe(status);
+      if (status === 200) expect(await r.json()).toEqual({ ok: true, unchanged });
+    } finally {
+      fake.close();
+    }
+  });
+
+  /** 가짜 문서 서버: 강제 저장을 받으면 error 0을 돌려주고, mode에 따라 저장 콜백을 보낸다. */
+  async function fakeDocServer(
+    mode: "callback" | "silent" | "bad-download" | "late-session" | "stale-callback",
+    callbackUrl: () => string,
+    key: () => string,
+  ): Promise<{ url: string; close: () => void }> {
+    let port = 0;
+    let calls = 0;
+    const fake = http.createServer((req, res) => {
+      if (req.url?.startsWith("/coauthoring/CommandService.ashx")) {
+        let raw = "";
+        req.on("data", (c: Buffer) => (raw += c.toString()));
+        req.on("end", () => {
+          const { userdata } = JSON.parse(raw) as { userdata?: string };
+          res.setHeader("content-type", "application/json");
+          // late-session: 방금 한 편집이 아직 문서 서버에 안 닿아 처음엔 error 1(세션 없음)을 돌려준다.
+          if (mode === "late-session" && calls++ === 0) return void res.end(JSON.stringify({ error: 1 }));
+          res.end(JSON.stringify({ error: 0 }));
+          if (mode === "silent") return;
+          // 실제 문서 서버처럼 접수 응답 뒤 조금 있다가 그 요청의 userdata를 담아 콜백을 보낸다.
+          // stale-callback: 앞선 다른 저장의 콜백만 온다 (이 요청을 끝내면 안 된다).
+          setTimeout(() => {
+            const file = mode === "bad-download" ? "/missing.xlsx" : "/saved.xlsx";
+            void fetch(callbackUrl(), {
+              method: "POST",
+              body: JSON.stringify({
+                status: 6,
+                key: key(),
+                url: `http://127.0.0.1:${port}${file}`,
+                userdata: mode === "stale-callback" ? "earlier-request" : userdata,
+              }),
+            });
+          }, 200);
+        });
+        return;
+      }
+      if (req.url === "/saved.xlsx") return void res.end("saved-content");
+      res.statusCode = 404;
+      res.end();
+    });
+    port = await new Promise<number>((resolve) =>
+      fake.listen(0, "127.0.0.1", () => resolve((fake.address() as AddressInfo).port)),
+    );
+    return { url: `http://127.0.0.1:${port}`, close: () => fake.close() };
+  }
+
+  it.each([
+    ["callback", 200],
+    ["late-session", 200],
+    ["silent", 504],
+    ["stale-callback", 504],
+    ["bad-download", 502],
+  ] as const)("강제 저장 접수 뒤 콜백 결과(%s)를 기다려 %i를 돌려준다", async (mode, status) => {
+    let cfg: { document: { key: string }; editorConfig: { callbackUrl: string } } | undefined;
+    let base = "";
+    const fake = await fakeDocServer(
+      mode,
+      () => `${base}/onlyoffice/callback${new URL(cfg?.editorConfig.callbackUrl ?? "http://x").search}`,
+      () => cfg?.document.key ?? "",
+    );
+    try {
+      server = makeApp({ onlyofficeUrl: fake.url, saveWaitMs: 2000, forceSaveRetryOneSec: 3 });
+      const port = await listen(server);
+      base = `http://127.0.0.1:${port}`;
+      const r0 = await fetch(`${base}/api/editor-config?path=a.xlsx`);
+      cfg = ((await r0.json()) as { config: typeof cfg }).config;
+      const r = await fetch(`${base}/api/save?path=a.xlsx`, { method: "POST" });
+      expect(r.status).toBe(status);
+      if (status === 200) {
+        expect(await r.json()).toEqual({ ok: true, unchanged: false });
+        // 응답을 받은 시점에 이미 파일이 바뀌어 있어야 한다 (저장 직후 점검이 최신 내용을 읽도록).
+        expect(readFileSync(path.join(lastWorkspace, "a.xlsx"), "utf8")).toBe("saved-content");
+      }
+    } finally {
+      fake.close();
+    }
+  });
+
+  it("편집기가 열리지 않은 파일의 저장 요청은 409를 돌려준다", async () => {
+    server = makeApp({ onlyofficeUrl: "http://127.0.0.1:1" });
+    const port = await listen(server);
+    const r = await fetch(`http://127.0.0.1:${port}/api/save?path=never-opened.xlsx`, { method: "POST" });
+    expect(r.status).toBe(409);
   });
 
   it("루프백 주소만 앱 화면과 API를 쓸 수 있다", () => {

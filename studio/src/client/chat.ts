@@ -100,6 +100,61 @@ export async function sendChat(
   }
 }
 
+/** `/api/preflight` 응답 모양. */
+export interface PreflightBody {
+  checks: { name: string; status: string; count: number }[];
+  error?: string;
+}
+
+/** 점검 결과를 채팅에 보일 줄 단위 글자로 만든다 (항목: 상태 · 위치 n곳). */
+export function formatPreflight(body: PreflightBody): string {
+  if (body.error) return `보내기 전 점검 실패: ${body.error}`;
+  const lines = body.checks.map(
+    (c) => `${c.name}: ${c.status}${c.count > 0 ? ` (${c.count}곳)` : ""}`,
+  );
+  return ["보내기 전 점검 결과", ...lines].join("\n");
+}
+
+/**
+ * 저장 결과.
+ * - saved: 편집 내용이 작업 폴더 파일에 반영됐다 (문서 서버 콜백까지 끝남).
+ * - no-editor: 저장할 편집 세션이 없다 (편집기가 안 열림). 디스크 파일이 곧 최신이다.
+ * - failed: 저장 요청·콜백이 실패했거나 시간 안에 끝나지 않았다. 디스크 파일이 낡았을 수 있다.
+ */
+export type SaveResult = "saved" | "no-editor" | "failed";
+
+export const PREFLIGHT_NO_EDITOR_NOTE = "편집기가 열려 있지 않아 저장된 파일을 점검했어요.";
+export const PREFLIGHT_UNSAVED_NOTE =
+  "⚠ 저장하지 못해 마지막으로 저장된 파일을 점검했어요. 편집기에서 고친 내용은 이 결과에 없어요.";
+export const PREFLIGHT_FAILED = "점검을 실행하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
+
+/**
+ * 먼저 저장하고(서버는 문서 서버 콜백이 파일을 다 쓴 뒤 응답한다), 디스크 파일로 점검해 채팅 글자를 만든다.
+ * 저장하지 못했으면 점검은 하되, 결과 위에 편집 내용이 빠졌다는 경고 한 줄을 붙인다 (재현 요청).
+ * 편집 세션이 없으면 디스크 파일이 최신이므로 안내 한 줄을 붙인다.
+ */
+export async function preflightText(
+  path: string,
+  save: (path: string) => Promise<SaveResult>,
+  fetchFn: typeof fetch = fetch,
+): Promise<string> {
+  let saved: SaveResult;
+  try {
+    saved = await save(path);
+  } catch {
+    saved = "failed";
+  }
+  let body: string;
+  try {
+    const res = await fetchFn(`/api/preflight?path=${encodeURIComponent(path)}`);
+    body = formatPreflight((await res.json()) as PreflightBody);
+  } catch {
+    return PREFLIGHT_FAILED;
+  }
+  if (saved === "saved") return body;
+  return `${saved === "no-editor" ? PREFLIGHT_NO_EDITOR_NOTE : PREFLIGHT_UNSAVED_NOTE}\n${body}`;
+}
+
 /** 미리보기 카드의 상태를 바꾼다. */
 export function setPreviewStatus(
   items: ChatItem[],

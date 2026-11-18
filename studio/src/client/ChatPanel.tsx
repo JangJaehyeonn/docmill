@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { applyEvent, decidePreview, sendChat, setPreviewStatus, type ChatEvent, type ChatItem } from "./chat";
+import {
+  applyEvent,
+  decidePreview,
+  preflightText,
+  type SaveResult,
+  sendChat,
+  setPreviewStatus,
+  type ChatEvent,
+  type ChatItem,
+} from "./chat";
 
 interface Suggestion {
   label: string;
@@ -12,6 +21,7 @@ export function ChatPanel(props: {
   tabs: string[];
   active: string | null;
   onPaths: (paths: string[]) => void;
+  onSave: (path: string) => Promise<SaveResult>;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [text, setText] = useState("");
@@ -73,6 +83,19 @@ export function ChatPanel(props: {
     setBusy(false);
   };
 
+  // 에이전트 없이 preflight 도구를 바로 불러 항목별 결과를 채팅에 보여준다.
+  const runPreflightCheck = async (): Promise<void> => {
+    const path = props.active;
+    if (!path || busy) return;
+    setError(null);
+    setBusy(true);
+    setItems((s) => [...s, { kind: "user", id: ++counter.current, text: "보내기 전 점검" }]);
+    // 저장하지 않은 편집도 점검되도록 먼저 저장하고, 저장이 끝난 파일로 점검한다.
+    const text = await preflightText(path, props.onSave);
+    setItems((s) => [...s, { kind: "assistant", id: ++counter.current, text }]);
+    setBusy(false);
+  };
+
   return (
     <aside className="chat" aria-label="AI 채팅">
       <h2>AI 채팅</h2>
@@ -91,6 +114,11 @@ export function ChatPanel(props: {
           ))}
         </div>
       )}
+      <div className="suggestions">
+        <button type="button" disabled={busy || !props.active} onClick={() => void runPreflightCheck()}>
+          보내기 전 점검
+        </button>
+      </div>
       <div className="chat-log" role="log" aria-live="polite">
         {items.map((it) =>
           it.kind === "user" ? (
