@@ -65,6 +65,15 @@ def preflight_command(path: str = typer.Argument(..., help="점검할 문서 경
     typer.echo(logged(preflight, ai_used=False)(path))
 
 
+@app.command("refresh-links")
+def refresh_links_command(path: str = typer.Argument(..., help="새 숫자로 고칠 문서 경로")) -> None:
+    """연결된 원본 엑셀의 최신 값으로 문서 숫자를 고치고 결과를 JSON으로 출력합니다. FR-37."""
+    from docmill.runlog import logged
+    from docmill.tools.refresh import refresh_links
+
+    typer.echo(logged(refresh_links, ai_used=False)(path))
+
+
 @app.command()
 def setup() -> None:
     """고정된 버전의 엔진(GridCraft·DeckCraft·WordCraft)을 설치하고 버전을 출력합니다. FR-04."""

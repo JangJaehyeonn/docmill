@@ -17,6 +17,7 @@ from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
 from docmill.tools.preflight import preflight
+from docmill.tools.refresh import refresh_links
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.review import review_map
 from docmill.tools.suggest import suggest_actions
@@ -81,6 +82,11 @@ def _register_preflight(server: MCPServer) -> None:
     server.tool()(preflight)
 
 
+def _register_refresh(server: MCPServer) -> None:
+    """`refresh_links` 업무 도구(FR-37)를 등록한다."""
+    server.tool()(refresh_links)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -91,6 +97,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_guard,
     _register_review,
     _register_preflight,
+    _register_refresh,
 )
 
 

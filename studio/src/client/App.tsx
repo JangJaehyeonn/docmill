@@ -5,6 +5,15 @@ import { waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
+import {
+  baseName,
+  changedSources,
+  changeLine,
+  markHandled,
+  type Handled,
+  type LinkChange,
+  type LinkSource,
+} from "./links";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
@@ -22,7 +31,17 @@ function realPathOf(file: File): string | null {
   return bridge?.pathForFile?.(file) || null;
 }
 
-const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
+/** 연결된 원본이 저장됐는지 확인하는 간격 (ms). */
+const LINK_POLL_MS = 2000;
+
+/** 새 숫자로 고친 결과 안내: 문서, 요약 또는 실패 문구, 바뀐 위치·주의 줄. */
+interface LinkResult {
+  doc: string;
+  text: string;
+  lines: string[];
+}
+
+const LOAD_ERROR ="작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
 
 /** studio 화면: 위쪽 탭, 왼쪽 작업 폴더 파일 목록, 가운데 시작 화면(최근 파일). */
 export function App() {
@@ -41,6 +60,10 @@ export function App() {
   const [savingPaths, setSavingPaths] = useState<Record<string, boolean>>({});
   const [conflicts, setConflicts] = useState<string[]>([]);
   const [reloads, setReloads] = useState<Record<string, number>>({});
+  const [linkAlerts, setLinkAlerts] = useState<Record<string, LinkSource[]>>({});
+  const [linkResult, setLinkResult] = useState<LinkResult | null>(null);
+  const [refreshing, setRefreshing] = useState<string | null>(null);
+  const handledLinks = useRef<Handled>({});
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
   const pendingOpen = useRef<string | null>(readOpenParam(window.location.search));
@@ -114,6 +137,46 @@ export function App() {
     },
     [openPath, reloadTab],
   );
+
+  // 열린 문서와 연결된 원본(provenance)이 저장되면 [새 숫자로 고치기]를 제안한다 (FR-37).
+  const tabPaths = tabState.tabs.map((t) => t.path).join("\n");
+  useEffect(() => {
+    const docs = tabPaths ? tabPaths.split("\n") : [];
+    let stopped = false;
+    let busy = false;
+    const check = async (): Promise<void> => {
+      if (busy) return;
+      busy = true;
+      const next: Record<string, LinkSource[]> = {};
+      for (const doc of docs) {
+        try {
+          const url = `/api/links?path=${encodeURIComponent(doc)}`;
+          const body = await getJson<{ sources?: LinkSource[] }>(url);
+          const changed = changedSources(doc, body.sources ?? [], handledLinks.current);
+          if (changed.length > 0) next[doc] = changed;
+        } catch {
+          // 다음 확인 때 다시 본다.
+        }
+      }
+      busy = false;
+      if (!stopped) setLinkAlerts(next);
+    };
+    void check();
+    const timer = setInterval(() => void check(), LINK_POLL_MS);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [tabPaths]);
+
+  const dismissLinks = (doc: string): void => {
+    handledLinks.current = markHandled(doc, linkAlerts[doc] ?? [], handledLinks.current);
+    setLinkAlerts((m) => {
+      const next = { ...m };
+      delete next[doc];
+      return next;
+    });
+  };
 
   // 목록을 (다시) 불러오고, 아직 처리하지 못한 시작 open 이 있을 때만 그 파일을 연다.
   const load = useCallback(async () => {
@@ -205,6 +268,41 @@ export function App() {
     }
   };
 
+  // 원본의 최신 값으로 문서 숫자를 고친다. 열린 편집기의 편집을 먼저 파일에 저장해 잃지 않게 한다.
+  const refreshLinks = async (doc: string): Promise<void> => {
+    setRefreshing(doc);
+    try {
+      if (/\.(xlsx|pptx|docx)$/i.test(doc) && (await save(doc)) === "failed") {
+        setLinkResult({ doc, text: "열린 문서를 먼저 저장하지 못해 숫자를 고치지 않았어요.", lines: [] });
+        return;
+      }
+      const res = await fetch("/api/links/refresh", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: doc }),
+      });
+      const body = (await res.json()) as {
+        summary?: string;
+        changes?: LinkChange[];
+        warnings?: string[];
+        error?: string;
+      };
+      if (!res.ok || body.error) {
+        setLinkResult({ doc, text: body.error ?? "새 숫자로 고치지 못했어요.", lines: [] });
+        return;
+      }
+      const changes = body.changes ?? [];
+      dismissLinks(doc);
+      if (changes.length > 0) reloadTab(doc);
+      const lines = [...changes.map(changeLine), ...(body.warnings ?? [])];
+      setLinkResult({ doc, text: body.summary ?? "", lines });
+    } catch {
+      setLinkResult({ doc, text: "새 숫자로 고치지 못했어요.", lines: [] });
+    } finally {
+      setRefreshing(null);
+    }
+  };
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <header className="topbar">
@@ -241,6 +339,39 @@ export function App() {
             </button>
           )}
         </div>
+      )}
+
+      {Object.entries(linkAlerts).map(([doc, sources]) => (
+        <section key={doc} role="region" aria-label={`원본 변경 알림: ${baseName(doc)}`} className="alert">
+          <span>
+            {baseName(doc)}: 원본이 바뀌었어요 ({sources.map((s) => baseName(s.path)).join(", ")}).
+            새 숫자로 고칠까요?
+          </span>
+          <button type="button" disabled={refreshing === doc} onClick={() => void refreshLinks(doc)}>
+            새 숫자로 고치기
+          </button>
+          <button type="button" disabled={refreshing === doc} onClick={() => dismissLinks(doc)}>
+            나중에
+          </button>
+        </section>
+      ))}
+
+      {linkResult && (
+        <section role="status" aria-label="새 숫자로 고친 결과" className="alert">
+          <p>
+            {baseName(linkResult.doc)}: {linkResult.text}
+          </p>
+          {linkResult.lines.length > 0 && (
+            <ul>
+              {linkResult.lines.map((line, i) => (
+                <li key={i}>{line}</li>
+              ))}
+            </ul>
+          )}
+          <button type="button" onClick={() => setLinkResult(null)}>
+            닫기
+          </button>
+        </section>
       )}
 
       {choices.length > 0 && (

@@ -27,6 +27,7 @@ import {
   registerPreview,
   type PendingPreview,
 } from "./preview.js";
+import { linkStatus, runRefresh } from "./links.js";
 import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
@@ -183,6 +184,13 @@ async function handleApi(
     if (!file) return;
     return sendJson(res, 200, await runPreflight(file.abs));
   }
+  if (req.method === "GET" && pathname === "/api/links") {
+    const file = await resolveQuery(opts, res, query);
+    if (!file) return;
+    const root = await fs.realpath(opts.workspace);
+    return sendJson(res, 200, { sources: await linkStatus(root, file.abs) });
+  }
+  if (req.method === "POST" && pathname === "/api/links/refresh") return refreshLinks(opts, req, res);
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (req.method === "POST" && pathname === "/api/preview/apply") {
     return decide(opts, req, res, "apply");
@@ -225,6 +233,24 @@ async function decide(
     console.error("미리보기 처리 실패:", err);
     sendJson(res, 500, { error: "미리보기를 처리하지 못했어요." });
   }
+}
+
+/** 연결된 원본의 최신 값으로 문서 숫자를 고친다 (docmill 도구 refresh_links, AI 없음). */
+async function refreshLinks(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+  }
+  const body = (await readBody(req)) as { path?: unknown };
+  const file = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.path ?? "") }));
+  if (!file) return;
+  const result = await runRefresh(file.abs);
+  // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
+  if (!result.error && result.changes.length > 0) sessionKeys.delete(file.rel);
+  sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
 }
 
 /** 채팅 한 턴: 에이전트를 실행하고 이벤트를 줄 단위 JSON(NDJSON)으로 흘려보낸다. */
