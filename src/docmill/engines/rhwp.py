@@ -1,6 +1,7 @@
 """rhwp(`@rhwp/core`, Node) 한글 문서 읽기 어댑터 (FR-35, ADR 0025).
 
-`DocumentTool` 규약을 따른다. 읽기 전용이라 `execute("get_text")`만 지원하고,
+`DocumentTool` 규약을 따른다. 읽기 전용이라 `execute("get_text")`(줄 목록)와
+`execute("get_paragraphs")`(문단별 스타일·글자)만 지원하고,
 실패는 예외 대신 `EngineResult`로 돌려준다.
 """
 
@@ -55,12 +56,13 @@ class RhwpTool:
         return EngineResult(ok=True)
 
     def execute(self, command: str, args: dict[str, Any]) -> EngineResult:
-        """`get_text`: 문단 목록을 `output`(list[str])으로 돌려준다."""
-        if command != "get_text":
+        """`get_text`는 줄 목록(list[str]), `get_paragraphs`는 문단 목록(list[dict])을 돌려준다."""
+        modes = {"get_text": "lines", "get_paragraphs": "paragraphs"}
+        if command not in modes:
             return EngineResult(ok=False, message=f"지원하지 않는 명령: {command}")
         if self._staged is None:
             return EngineResult(ok=False, message="문서가 열려 있지 않다")
-        return self._read(self._staged)
+        return self._read(self._staged, modes[command])
 
     def save(self, path: Path) -> EngineResult:
         """읽기 전용이라 저장하지 않는다."""
@@ -70,7 +72,7 @@ class RhwpTool:
         """미리보기를 지원하지 않는다."""
         return EngineResult(ok=False, message="한글 문서 미리보기는 지원하지 않는다")
 
-    def _read(self, staged: Path) -> EngineResult:
+    def _read(self, staged: Path, mode: str = "lines") -> EngineResult:
         node = shutil.which("node")
         core = _core_dir()
         if node is None:
@@ -83,7 +85,7 @@ class RhwpTool:
         started = time.monotonic()
         try:
             done = subprocess.run(
-                [node, str(_SCRIPT), str(core), str(staged)],
+                [node, str(_SCRIPT), str(core), str(staged), mode],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
@@ -100,15 +102,26 @@ class RhwpTool:
             reason = done.stderr.strip() or f"종료 코드 {done.returncode}"
             return EngineResult(ok=False, message=f"한글 문서를 읽지 못했다: {reason}")
         try:
-            lines = json.loads(done.stdout)
+            data = json.loads(done.stdout)
         except json.JSONDecodeError:
             return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
-        return EngineResult(ok=True, output=[str(x) for x in lines], duration_ms=millis)
+        if mode == "paragraphs":
+            return EngineResult(ok=True, output=[dict(x) for x in data], duration_ms=millis)
+        return EngineResult(ok=True, output=[str(x) for x in data], duration_ms=millis)
 
 
-def read_lines(path: Path, timeout: float = 60) -> EngineResult:
-    """임시 작업 폴더에서 hwp·hwpx 문단을 읽는다."""
+def _run(path: Path, command: str, timeout: float) -> EngineResult:
     with tempfile.TemporaryDirectory(prefix="docmill-hwp-") as tmp:
         tool = RhwpTool(Path(tmp).resolve(), timeout)
         opened = tool.open(path)
-        return opened if not opened.ok else tool.execute("get_text", {})
+        return opened if not opened.ok else tool.execute(command, {})
+
+
+def read_lines(path: Path, timeout: float = 60) -> EngineResult:
+    """임시 작업 폴더에서 hwp·hwpx 문단 글자를 줄 목록으로 읽는다."""
+    return _run(path, "get_text", timeout)
+
+
+def read_paragraphs(path: Path, timeout: float = 60) -> EngineResult:
+    """임시 작업 폴더에서 hwp·hwpx 문단을 스타일 이름과 함께 읽는다 (구역·문단 번호는 1부터)."""
+    return _run(path, "get_paragraphs", timeout)

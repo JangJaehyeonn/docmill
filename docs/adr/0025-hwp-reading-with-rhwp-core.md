@@ -21,4 +21,4 @@ ADR 0020에서 `@rhwp/core`가 Node에서 hwp 텍스트를 추출함을 확인�
 | rhwp CLI | 단순 | 별도 Rust 빌드·배포 | CI에 이미 npm 경로가 있음 |
 
 ## 결과
-hwp·hwpx를 docx와 같은 문단 규칙으로 검토한다. 감수하는 점: 한글 읽기에는 Node와 studio 의존성 설치가 필요하다. 표 서식·제목 스타일 점검은 hwp에서 하지 않는다.
+hwp·hwpx를 docx와 같은 문단 규칙으로 검토한다. 감수하는 점: 한글 읽기에는 Node와 studio 의존성 설치가 필요하다. 표 서식 점검은 hwp에서 하지 않는다. 빈 제목 점검은 `@rhwp/core`의 `getStyleAt`·`getStyleList`로 문단 스타일을 읽어, `개요 N`(Outline N)·`제목` 계열 스타일인데 글자가 없는 문단을 찾는다.

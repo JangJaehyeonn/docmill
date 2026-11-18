@@ -6,8 +6,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
-from docmill.engines.rhwp import read_lines
+from docmill.engines.rhwp import read_lines, read_paragraphs
 
 HWP_SUFFIXES = (".hwp", ".hwpx")
 
@@ -24,6 +25,17 @@ def is_hwp(path: Path) -> bool:
 def read_hwp_lines(path: Path) -> list[str]:
     """hwp·hwpx 파일의 문단(줄) 목록을 문서 순서대로 읽는다. 읽을 수 없으면 HwpError."""
     result = read_lines(path)
+    if not result.ok:
+        raise HwpError(result.message)
+    return list(result.output)
+
+
+def read_hwp_paragraphs(path: Path) -> list[dict[str, Any]]:
+    """hwp·hwpx 문단을 {section, paragraph, style, styleEnglish, text}로 읽는다.
+
+    읽을 수 없으면 HwpError.
+    """
+    result = read_paragraphs(path)
     if not result.ok:
         raise HwpError(result.message)
     return list(result.output)
