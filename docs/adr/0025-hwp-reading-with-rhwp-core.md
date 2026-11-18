@@ -11,7 +11,8 @@ ADR 0020에서 `@rhwp/core`가 Node에서 hwp 텍스트를 추출함을 확인�
 ## 결정
 `studio/package.json`에 `@rhwp/core` 0.9.0을 추가하고(rhwp 편집기와 같은 버전), 작은 Node 스크립트
 `src/docmill/tools/hwp_text.mjs`가 문단 목록을 JSON으로 내보낸다. Python은 `tools/hwp.py`에서 이를 시간 제한(60초)과 함께 호출하고
-실패는 `HwpError`로 바꿔 각 도구가 단계(step)와 이유로 돌려준다. 폴더는 `DOCMILL_RHWP_CORE`로 바꿀 수 있다.
+`DocumentTool` 어댑터(`engines/rhwp.py`의 `RhwpTool`)가 원본을 작업 폴더로 복사해 읽고, 글자는 CP949 밖 문자를 보존하는 `getTextFileUnicode()`로 얻는다.
+실패는 `EngineResult`로 돌려받아 `HwpError`로 바꿔 각 도구가 단계(step)와 이유로 돌려준다. 폴더는 `DOCMILL_RHWP_CORE`로 바꿀 수 있다.
 
 ## 검토한 대안
 | 대안 | 장점 | 단점 | 버린 이유 |

@@ -11,8 +11,9 @@ try {
   // rhwp asks the host for text metrics while laying out; a fixed width is enough to read text.
   globalThis.measureTextWidth = () => 8;
   const doc = new core.HwpDocument(new Uint8Array(readFileSync(file)));
-  let text = doc.getTextFileText();
-  // getTextFileText returns a JSON-encoded string.
+  // getTextFileUnicode keeps characters CP949 cannot hold (getTextFileText turns them into &#N;).
+  let text = doc.getTextFileUnicode();
+  // The result is a JSON-encoded string.
   if (typeof text === "string" && text.startsWith('"')) text = JSON.parse(text);
   process.stdout.write(JSON.stringify(String(text).split(/\r\n|\r|\n/)));
 } catch (err) {
