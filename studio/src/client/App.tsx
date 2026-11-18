@@ -25,12 +25,14 @@ const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시
 
 /** studio 화면: 위쪽 탭, 왼쪽 작업 폴더 파일 목록, 가운데 시작 화면(최근 파일). */
 export function App() {
-  const [files, setFiles] = useState<string[]>([]);
+  // 서버가 HTML에 넣어 준 첫 파일 목록으로 시작해 로드 직후부터 목록이 보이게 한다.
+  const [files, setFiles] = useState<string[]>(
+    () => (window as unknown as { __DOCMILL_FILES__?: string[] }).__DOCMILL_FILES__ ?? [],
+  );
   const [recent, setRecent] = useState<string[]>([]);
   const [tabState, setTabState] = useState<TabState>({ tabs: [], active: null });
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
-  const [listLoaded, setListLoaded] = useState(false);
   const [choices, setChoices] = useState<string[]>([]);
   const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
   const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
@@ -61,8 +63,6 @@ export function App() {
       setLoadFailed(true);
       setError(LOAD_ERROR);
       return false;
-    } finally {
-      setListLoaded(true);
     }
   }, [refresh]);
 
@@ -259,12 +259,9 @@ export function App() {
 
       <div className="body">
         <aside className="sidebar">
-          {/* 파일 목록과 함께 나타나도록 첫 조회가 끝난 뒤에 보여 준다. */}
-          {listLoaded && (
-            <button className="primary" onClick={() => picker.current?.click()}>
-              파일 열기
-            </button>
-          )}
+          <button className="primary" onClick={() => picker.current?.click()}>
+            파일 열기
+          </button>
           <input
             ref={picker}
             type="file"
