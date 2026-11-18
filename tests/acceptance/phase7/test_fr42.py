@@ -82,7 +82,9 @@ def _slide_pics(pptx: Path) -> dict[int, int]:
         for name in z.namelist():
             m = re.fullmatch(r"ppt/slides/slide(\d+)\.xml", name)
             if m:
-                counts[int(m.group(1))] = len(re.findall(r"<p:pic[ >]", z.read(name).decode("utf-8")))
+                counts[int(m.group(1))] = len(
+                    re.findall(r"<p:pic[ >]", z.read(name).decode("utf-8"))
+                )
     return counts
 
 
@@ -104,7 +106,9 @@ def test_pptx_slide_three_gets_one_image_and_other_slides_are_untouched(tmp_path
     assert result != src and result.exists()
     after = _slide_pics(result)
     assert after[3] == before_pics[3] + 1
-    assert {k: v for k, v in after.items() if k != 3} == {k: v for k, v in before_pics.items() if k != 3}
+    assert {k: v for k, v in after.items() if k != 3} == {
+        k: v for k, v in before_pics.items() if k != 3
+    }
     old_xml, new_xml = _slide_xml(src), _slide_xml(result)
     for name, data in old_xml.items():
         if not name.endswith("slide3.xml"):

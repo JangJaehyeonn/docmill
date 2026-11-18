@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -25,7 +26,6 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-import asyncio
 import pytest
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -185,7 +185,9 @@ def test_studio_agent_input_has_no_personal_data_and_logs_are_clean(
     assert "[주민번호1]" in seen
     captured = capfd.readouterr()
     for secret in [*SECRETS, NAME]:
-        assert secret not in captured.err and secret not in captured.out, f"로그에 {secret}가 남았다"
+        assert secret not in captured.err and secret not in captured.out, (
+            f"로그에 {secret}가 남았다"
+        )
     for p in ws.rglob("*"):
         if p.is_file() and p.name != "contact.docx":
             assert RRN.encode() not in p.read_bytes(), f"{p.name}에 원래 값이 남았다"

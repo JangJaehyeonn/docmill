@@ -56,8 +56,14 @@ def _write_docx(path: Path, paras: list[str]) -> Path:
     )
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", ct)
-        z.writestr("_rels/.rels", f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="word/document.xml"/></Relationships>')
-        z.writestr("word/document.xml", f'{_HEAD}<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>')
+        z.writestr(
+            "_rels/.rels",
+            f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="word/document.xml"/></Relationships>',
+        )
+        z.writestr(
+            "word/document.xml",
+            f'{_HEAD}<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>',
+        )
     return path
 
 
@@ -67,15 +73,32 @@ def _write_pptx(path: Path, paras: list[str]) -> Path:
     ct = (
         f'{_HEAD}<Types xmlns="{_CT}">{_RELS_CT}'
         '<Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/>'
-        + "".join(f'<Override PartName="/ppt/slides/slide{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>' for i in range(1, n + 1))
+        + "".join(
+            f'<Override PartName="/ppt/slides/slide{i}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+            for i in range(1, n + 1)
+        )
         + "</Types>"
     )
     ids = "".join(f'<p:sldId id="{255 + i}" r:id="rId{i}"/>' for i in range(1, n + 1))
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", ct)
-        z.writestr("_rels/.rels", f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="ppt/presentation.xml"/></Relationships>')
-        z.writestr("ppt/presentation.xml", f'{_HEAD}<p:presentation xmlns:p="{_P}" xmlns:r="{_REL}" xmlns:a="{_A}"><p:sldIdLst>{ids}</p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/></p:presentation>')
-        z.writestr("ppt/_rels/presentation.xml.rels", f'{_HEAD}<Relationships xmlns="{_PKG}">' + "".join(f'<Relationship Id="rId{i}" Type="{_REL}/slide" Target="slides/slide{i}.xml"/>' for i in range(1, n + 1)) + "</Relationships>")
+        z.writestr(
+            "_rels/.rels",
+            f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="ppt/presentation.xml"/></Relationships>',
+        )
+        z.writestr(
+            "ppt/presentation.xml",
+            f'{_HEAD}<p:presentation xmlns:p="{_P}" xmlns:r="{_REL}" xmlns:a="{_A}"><p:sldIdLst>{ids}</p:sldIdLst><p:sldSz cx="9144000" cy="6858000"/></p:presentation>',
+        )
+        z.writestr(
+            "ppt/_rels/presentation.xml.rels",
+            f'{_HEAD}<Relationships xmlns="{_PKG}">'
+            + "".join(
+                f'<Relationship Id="rId{i}" Type="{_REL}/slide" Target="slides/slide{i}.xml"/>'
+                for i in range(1, n + 1)
+            )
+            + "</Relationships>",
+        )
         for i, p in enumerate(paras, start=1):
             z.writestr(
                 f"ppt/slides/slide{i}.xml",
@@ -87,7 +110,10 @@ def _write_pptx(path: Path, paras: list[str]) -> Path:
 
 def _write_xlsx(path: Path, paras: list[str]) -> Path:
     """문단마다 A열 한 행(문자열 셀)."""
-    rows = "".join(f'<row r="{i}"><c r="A{i}" t="inlineStr"><is><t>{p}</t></is></c></row>' for i, p in enumerate(paras, start=1))
+    rows = "".join(
+        f'<row r="{i}"><c r="A{i}" t="inlineStr"><is><t>{p}</t></is></c></row>'
+        for i, p in enumerate(paras, start=1)
+    )
     ct = (
         f'{_HEAD}<Types xmlns="{_CT}">{_RELS_CT}'
         '<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
@@ -95,10 +121,22 @@ def _write_xlsx(path: Path, paras: list[str]) -> Path:
     )
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", ct)
-        z.writestr("_rels/.rels", f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>')
-        z.writestr("xl/workbook.xml", f'{_HEAD}<workbook xmlns="{_S}" xmlns:r="{_REL}"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>')
-        z.writestr("xl/_rels/workbook.xml.rels", f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>')
-        z.writestr("xl/worksheets/sheet1.xml", f'{_HEAD}<worksheet xmlns="{_S}"><sheetData>{rows}</sheetData></worksheet>')
+        z.writestr(
+            "_rels/.rels",
+            f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>',
+        )
+        z.writestr(
+            "xl/workbook.xml",
+            f'{_HEAD}<workbook xmlns="{_S}" xmlns:r="{_REL}"><sheets><sheet name="Sheet1" sheetId="1" r:id="rId1"/></sheets></workbook>',
+        )
+        z.writestr(
+            "xl/_rels/workbook.xml.rels",
+            f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/worksheet" Target="worksheets/sheet1.xml"/></Relationships>',
+        )
+        z.writestr(
+            "xl/worksheets/sheet1.xml",
+            f'{_HEAD}<worksheet xmlns="{_S}"><sheetData>{rows}</sheetData></worksheet>',
+        )
     return path
 
 
@@ -118,7 +156,9 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 def _compare(home: Path, before: Path, after: Path) -> list[dict[str, Any]]:
     args = {"before": str(before), "after": str(after)}
-    return list(asyncio.run(asyncio.wait_for(_call(home, "compare_versions", args), 120))["changes"])
+    return list(
+        asyncio.run(asyncio.wait_for(_call(home, "compare_versions", args), 120))["changes"]
+    )
 
 
 def _check_three(changes: list[dict[str, Any]]) -> None:
@@ -129,7 +169,9 @@ def _check_three(changes: list[dict[str, Any]]) -> None:
     for old, new in (("1200", "1500"), ("8", "10")):
         assert any(old in o and new in n for o, n in pairs), (old, new, pairs)
     assert "예산" in joined and "인력" in joined
-    assert sum(1 for c in changes if c["kind"] == "문장") >= 1 or any("논의" in str(c["old"]) for c in changes)
+    assert sum(1 for c in changes if c["kind"] == "문장") >= 1 or any(
+        "논의" in str(c["old"]) for c in changes
+    )
 
 
 _WRITERS = {"docx": _write_docx, "pptx": _write_pptx, "xlsx": _write_xlsx}

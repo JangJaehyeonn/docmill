@@ -60,9 +60,7 @@ def _make_docx(path: Path, blocks: list[str | list[list[str]]]) -> Path:
         '<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
         "</Types>"
     )
-    rels = (
-        f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="word/document.xml"/></Relationships>'
-    )
+    rels = f'{_HEAD}<Relationships xmlns="{_PKG}"><Relationship Id="rId1" Type="{_REL}/officeDocument" Target="word/document.xml"/></Relationships>'
     with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as z:
         z.writestr("[Content_Types].xml", ct)
         z.writestr("_rels/.rels", rels)
@@ -130,13 +128,27 @@ async def _call(home: Path, name: str, args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _find(home: Path, doc: Path) -> list[dict[str, Any]]:
-    out = asyncio.run(asyncio.wait_for(_call(home, "find_contradictions", {"document": str(doc)}), 90))
+    out = asyncio.run(
+        asyncio.wait_for(_call(home, "find_contradictions", {"document": str(doc)}), 90)
+    )
     return list(out["contradictions"])
 
 
 # 항목 합 = 100 + 200 + 300 = 600
-GOOD_TABLE = [["부서", "매출"], ["영업1팀", "100"], ["영업2팀", "200"], ["마케팅팀", "300"], ["합계", "600"]]
-BAD_TABLE = [["부서", "매출"], ["영업1팀", "100"], ["영업2팀", "200"], ["마케팅팀", "300"], ["합계", "650"]]
+GOOD_TABLE = [
+    ["부서", "매출"],
+    ["영업1팀", "100"],
+    ["영업2팀", "200"],
+    ["마케팅팀", "300"],
+    ["합계", "600"],
+]
+BAD_TABLE = [
+    ["부서", "매출"],
+    ["영업1팀", "100"],
+    ["영업2팀", "200"],
+    ["마케팅팀", "300"],
+    ["합계", "650"],
+]
 # 전분기 → 이번 분기: 200 → 250 이면 25% 증가
 GROWTH_TABLE = [["구분", "전분기", "이번 분기"], ["매출", "200", "250"]]
 
@@ -153,7 +165,9 @@ def test_wrong_total_cell_is_reported_with_calculated_value(tmp_path: Path) -> N
 
 @pytest.mark.fr("FR-40")
 def test_prose_percent_that_disagrees_with_table_is_found(tmp_path: Path) -> None:
-    doc = _make_docx(tmp_path / "b.docx", ["이번 분기 매출은 전분기보다 30% 증가했다.", GROWTH_TABLE])
+    doc = _make_docx(
+        tmp_path / "b.docx", ["이번 분기 매출은 전분기보다 30% 증가했다.", GROWTH_TABLE]
+    )
     found = [c for c in _find(tmp_path, doc) if c["kind"] == "비율 불일치"]
     assert len(found) == 1, found
     assert float(str(found[0]["expected"]).replace("%", "")) == pytest.approx(25)
@@ -161,7 +175,9 @@ def test_prose_percent_that_disagrees_with_table_is_found(tmp_path: Path) -> Non
 
 
 @pytest.mark.fr("FR-40")
-def test_same_item_with_different_numbers_on_two_slides_returns_both_locations(tmp_path: Path) -> None:
+def test_same_item_with_different_numbers_on_two_slides_returns_both_locations(
+    tmp_path: Path,
+) -> None:
     doc = _make_pptx(
         tmp_path / "c.pptx",
         [["영업1팀 매출은 1,200만원이다."], ["다른 이야기"], ["영업1팀 매출은 1,350만원이다."]],
@@ -175,7 +191,8 @@ def test_same_item_with_different_numbers_on_two_slides_returns_both_locations(t
 @pytest.mark.fr("FR-40")
 def test_consistent_samples_give_empty_list(tmp_path: Path) -> None:
     docx = _make_docx(
-        tmp_path / "ok.docx", ["이번 분기 매출은 전분기보다 25% 증가했다.", GROWTH_TABLE, GOOD_TABLE]
+        tmp_path / "ok.docx",
+        ["이번 분기 매출은 전분기보다 25% 증가했다.", GROWTH_TABLE, GOOD_TABLE],
     )
     pptx = _make_pptx(
         tmp_path / "ok.pptx", [["영업1팀 매출은 1,200만원이다."], ["영업1팀 매출은 1,200만원이다."]]

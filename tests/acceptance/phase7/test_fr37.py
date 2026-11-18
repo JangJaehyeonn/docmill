@@ -131,7 +131,9 @@ def _reaggregate(src: dict[str, Any], cells: dict[str, str]) -> float:
     if agg == "sum":
         return total
     keys = [cells.get(a, "") for a in _range(src["criteria_range"])]
-    picked = sum(n for n, k in zip(nums, keys, strict=True) if n is not None and k == src["criteria"])
+    picked = sum(
+        n for n, k in zip(nums, keys, strict=True) if n is not None and k == src["criteria"]
+    )
     return picked if agg == "sumif" else picked / total * 100
 
 

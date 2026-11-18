@@ -107,7 +107,11 @@ def test_length_comments_store_a_length_rule(tmp_path: Path) -> None:
 
 @pytest.mark.fr("FR-43")
 def test_longer_document_gets_length_exceeded_with_current_size(tmp_path: Path) -> None:
-    _sync(tmp_path, "register_reviewer", {"name": "김부장", "comments": ["너무 길다", "한 장으로 줄여"]})
+    _sync(
+        tmp_path,
+        "register_reviewer",
+        {"name": "김부장", "comments": ["너무 길다", "한 장으로 줄여"]},
+    )
     report = _report(tmp_path, slides=5)
     # 등록은 별도 MCP 세션이었으므로 저장소에 남은 기준을 쓰는지도 함께 확인된다.
     out = _sync(tmp_path, "rehearse_review", {"reviewer": "김부장", "document": str(report)})
