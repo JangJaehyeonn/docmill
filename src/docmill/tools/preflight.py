@@ -18,6 +18,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.tools.hwp import is_hwp
 from docmill.tools.provenance import slide_parts
 from docmill.tools.review import (
     _A,
@@ -184,6 +185,8 @@ def _pptx_empty_titles(archive: zipfile.ZipFile) -> list[dict[str, Any]]:
 
 def check_empty_titles(document: Path) -> dict[str, Any]:
     """제목 서식인데 글자가 없는 문단·제목 상자를 찾는다."""
+    if is_hwp(document):  # hwp has no title-style markup to check; the file was read already
+        return _check(EMPTY_TITLE, PASS, [])
     finder = _docx_empty_titles if document.suffix.lower() == ".docx" else _pptx_empty_titles
     try:
         with zipfile.ZipFile(document) as archive:

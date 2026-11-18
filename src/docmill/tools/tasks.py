@@ -20,6 +20,7 @@ from typing import Any
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.runlog import current_run_id, get_home, new_run_id
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
 
 HEADERS = ["할 일", "담당자", "마감일", "상태"]
 DEFAULT_STATUS = "대기"
@@ -107,6 +108,11 @@ def split_tasks(tasks: list[Task]) -> tuple[list[Task], list[dict[str, str]]]:
 
 
 def _read_text(source: Path, workdir: Path) -> str:
+    if is_hwp(source):
+        try:
+            return "\n".join(read_hwp_lines(source))
+        except HwpError as exc:
+            raise TaskError("read", str(exc)) from exc
     staged = workdir / "input.docx"
     shutil.copyfile(source, staged)
     with get_tool(staged, workdir) as word:
@@ -137,8 +143,8 @@ def _publish(built: Path, final: Path) -> None:
 
 def _generate(input: str, out_dir: str | None, run_id: str) -> dict[str, Any]:
     source = Path(input)
-    if source.suffix.lower() != ".docx" or not source.is_file():
-        raise TaskError("input", f"읽을 수 있는 .docx 파일이 아니다: {input}")
+    if (source.suffix.lower() != ".docx" and not is_hwp(source)) or not source.is_file():
+        raise TaskError("input", f"읽을 수 있는 .docx·.hwp·.hwpx 파일이 아니다: {input}")
     with tempfile.TemporaryDirectory(prefix="docmill-tasks-") as tmp:
         workdir = Path(tmp).resolve()
         tasks = parse_tasks(_read_text(source, workdir))

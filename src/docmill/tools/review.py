@@ -23,6 +23,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
 from docmill.tools.provenance import _points, _rels, provenance_path, slide_parts
 
 UNSOURCED = "출처 없음"
@@ -171,16 +172,32 @@ def _docx_segments(archive: zipfile.ZipFile) -> list[Segment]:
     return segments
 
 
+def _hwp_segments(document: Path) -> list[Segment]:
+    try:
+        lines = read_hwp_lines(document)
+    except HwpError as exc:
+        raise ReviewError("read", str(exc)) from exc
+    return [
+        Segment("text", line.strip(), {"paragraph": no})
+        for no, line in enumerate(lines, start=1)
+        if line.strip()
+    ]
+
+
 _READERS = {".pptx": _pptx_segments, ".docx": _docx_segments}
 
 
 def read_segments(document: Path) -> list[Segment]:
     """문서의 문단·그래프 값을 문서 순서대로 읽는다."""
+    hwp = is_hwp(document)
     reader = _READERS.get(document.suffix.lower())
-    if reader is None:
-        raise ReviewError("open", f"지원하지 않는 형식입니다(pptx·docx만): {document}")
+    if reader is None and not hwp:
+        raise ReviewError("open", f"지원하지 않는 형식입니다(pptx·docx·hwp·hwpx만): {document}")
     if not document.is_file():
         raise ReviewError("open", f"파일을 찾을 수 없습니다: {document}")
+    if hwp:
+        return _hwp_segments(document)
+    assert reader is not None
     try:
         with zipfile.ZipFile(document) as archive:
             return reader(archive)
