@@ -2,7 +2,7 @@
 
 기존 `tests/fixtures/`의 `sales_q3.xlsx`·`company_intro.pptx`(3장)·`meeting_1111.docx`·`meeting_1111.hwp`는 그대로 쓴다.
 나머지 docx·pptx·xlsx는 테스트가 표준 라이브러리 `zipfile`로 직접 만든다.
-새로 필요한 고정 샘플은 hwp 두 개다 (hwp는 테스트에서 만들 수 없다).
+새로 필요한 고정 샘플은 hwp 두 개다 (hwp는 테스트에서 만들 수 없다). 두 파일 모두 `tests/fixtures/`에 넣었다 (만든 방법은 `tests/fixtures/README.md`).
 
 | 파일 | 쓰는 곳 | 내용·만드는 방법 |
 | --- | --- | --- |

@@ -1,6 +1,6 @@
 """FR-38 공문서 작성 규칙 검사·교정 (check_official_style) 인수 테스트 (초안).
 
-필요한 샘플: tests/acceptance_draft/phase7/FIXTURES.md 의 `official_style.hwp`
+필요한 샘플: tests/acceptance/phase7/FIXTURES.md 의 `official_style.hwp`
 (docx 테스트와 같은 문단을 담은 한글 파일). docx는 테스트가 직접 만든다.
 가정(구현 방법이 정해지면 맞춰 고친다):
 - MCP 도구 `check_official_style` 인자: `document`(docx·hwp·hwpx), 선택 `fix`(기본 false).

@@ -26,3 +26,17 @@ rhwp-studio 0.9.0에서 새 문서를 만들어 같은 문장을 입력하고 `e
 `meeting_1111.hwp`에서 3번째 문단("논의 내용")을 `개요 1` 스타일로 바꾸고, 5번째 문단("할 일")의 글자를 지운 뒤
 `개요 1` 스타일을 준 파일이다 (FR-35 hwp 빈 제목 점검). `@rhwp/core` 0.9.0의 `applyStyle`·`deleteText`·`exportHwp`로 만들었다.
 빈 제목은 구역 1의 문단 5 한 곳이고, 문단 3은 글자가 있는 제목이라 빈 제목이 아니다.
+
+## official_style.hwp
+
+공문서 작성 규칙 검사(FR-38)용 한글 파일. 문단 6개는 `tests/acceptance/phase7/test_fr38.py`의 `PARAGRAPHS`와 같다.
+`meeting_1111.hwp`를 `@rhwp/core` 0.9.0으로 열어 남는 문단을 `deleteParagraph`로 지우고, 각 문단 글자를 `deleteText`·`insertText`로 바꾼 뒤 `exportHwp`로 저장했다.
+
+## meeting_1111_v2.hwp
+
+버전 비교(FR-41)용. `meeting_1111.hwp`에서 세 곳만 바꿨다 (문단 수 11개 그대로).
+- 문단 4: `일정을 점검했다.` → `진행 상황을 점검했다.` (문장)
+- 문단 6: 마감 `2026-11-20` → `2026-11-21` (숫자)
+- 문단 7: 마감 `2026-11-15` → `2026-11-14` (숫자)
+`@rhwp/core` 0.9.0의 `deleteText`·`insertText`·`exportHwp`로 만들었다.
+
