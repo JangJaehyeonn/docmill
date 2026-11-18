@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import json
+import zipfile
+from pathlib import Path
+
 from docmill.tools.official_style import (
     AMOUNT,
     BULLET,
@@ -9,6 +13,7 @@ from docmill.tools.official_style import (
     END_MARK,
     TIME,
     apply_edits,
+    check_official_style,
     find_violations,
     fix_docx_xml,
     korean_numeral,
@@ -70,7 +75,55 @@ def test_violations_cover_all_text_rules() -> None:
 
 def test_fix_docx_xml_edits_runs_and_adds_end_mark() -> None:
     xml = "<w:body><w:p><w:r><w:t>2026-11-16 &amp; 끝</w:t></w:r></w:p></w:body>"
-    out = fix_docx_xml(xml, add_end_mark=True)
+    out, applied = fix_docx_xml(xml, add_end_mark=True)
+    assert applied == 2
     assert 'xml:space="preserve"' in out
     assert "2026. 11. 16. &amp; 끝  끝.</w:t>" in out
-    assert "끝." not in fix_docx_xml(xml, add_end_mark=False)
+    assert "끝." not in fix_docx_xml(xml, add_end_mark=False)[0]
+
+
+def test_amount_keeps_unrelated_note_and_big_amount_does_not_crash() -> None:
+    assert _fixed("10,150원(금요일 마감, 담당 김원)") == (
+        "금10,150원(금일만백오십원)(금요일 마감, 담당 김원)"
+    )
+    big = find_violations(_segments(["100,000,000,000,000,000,000원 2026-11-16"]))
+    assert [v["rule"] for v in big] == [AMOUNT, DATE, END_MARK]
+    assert "after" not in big[0]
+
+
+def test_ampm_colon_time() -> None:
+    assert _fixed("오후 2:30") == "14:30"
+    assert _fixed("오전 9:05") == "09:05"
+
+
+def test_same_level_bullets_out_of_order() -> None:
+    found = find_violations(_segments(["2. 둘째", "1. 첫째", "끝."]))
+    assert [v["rule"] for v in found] == [BULLET]
+    restart = find_violations(_segments(["1. 가", "가. 나", "2. 다", "가. 라", "끝."]))
+    assert restart == []
+
+
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+
+
+def _docx_text(path: Path) -> str:
+    with zipfile.ZipFile(path) as z:
+        return z.read("word/document.xml").decode("utf-8")
+
+
+def test_fix_handles_date_split_across_runs(tmp_path: Path) -> None:
+    body = "<w:p><w:r><w:t>회의 2026-</w:t></w:r><w:r><w:t>11-16 개최</w:t></w:r></w:p>"
+    xml = f'<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>'
+    source = tmp_path / "a.docx"
+    with zipfile.ZipFile(source, "w") as z:
+        z.writestr("word/document.xml", xml)
+    original = source.read_bytes()
+    out = json.loads(check_official_style(str(source), fix=True, out_dir=str(tmp_path / "out")))
+    assert [v["rule"] for v in out["violations"]] == [DATE, END_MARK]
+    assert out["fixed"] == 2
+    fixed = _docx_text(Path(out["path"]))
+    assert "회의 2026. 11. 16.</w:t>" in fixed
+    assert "> 개최  끝.</w:t>" in fixed
+    assert source.read_bytes() == original
+    again = json.loads(check_official_style(out["path"]))
+    assert again["violations"] == []

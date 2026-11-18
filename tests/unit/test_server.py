@@ -24,6 +24,7 @@ def test_every_registrar_is_applied_and_only_business_tools_exposed() -> None:
     names = {tool.name for tool in asyncio.run(server_module.build_server().list_tools())}
     assert server_module.TOOL_REGISTRARS
     assert names <= allowed
+    assert "check_official_style" in names
 
 
 def test_server_exposes_ping_tool() -> None:
