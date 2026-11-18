@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { linkedFiles, linkStatus, parseRefresh } from "./links.js";
+import { linkedFiles, linkStatus, parseRefresh, sourcesInside } from "./links.js";
 
 const prov = (files: string[]) =>
   JSON.stringify({ numbers: files.map((file) => ({ value: 1, source: { file } })) });
@@ -41,6 +41,20 @@ describe("linkStatus", () => {
     const after = await linkStatus(root, doc);
     expect(after[0]).toMatchObject({ path: "sales.xlsx", newer: true });
     expect(after[0]?.version).not.toBe(before[0]?.version);
+  });
+
+  it("does not guess between same-named sources in the workspace and the document folder", async () => {
+    await fs.mkdir(path.join(root, "team"));
+    const doc = path.join(root, "team", "report.pptx");
+    await fs.writeFile(path.join(root, "sales.xlsx"), "top");
+    await fs.writeFile(path.join(root, "team", "sales.xlsx"), "team");
+    await fs.writeFile(doc, "p");
+    await fs.writeFile(`${doc}.provenance.json`, prov(["sales.xlsx"]));
+    expect(await linkStatus(root, doc)).toEqual([]);
+    expect(await sourcesInside(root, doc)).toBe(false);
+    await fs.rm(path.join(root, "sales.xlsx"));
+    expect(await linkStatus(root, doc)).toMatchObject([{ path: "team/sales.xlsx" }]);
+    expect(await sourcesInside(root, doc)).toBe(true);
   });
 
   it("returns empty without a provenance file", async () => {

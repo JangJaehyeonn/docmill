@@ -13,19 +13,19 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
+import html
 import json
 import os
 import re
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
-from xml.sax.saxutils import escape
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.ooxml import OoxmlError, Package, element_spans, ordered_targets
@@ -38,7 +38,9 @@ _RANGE = re.compile(r"\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)")
 _NUMBER = re.compile(r"(?<![\w.#])-?\d[\d,]*(?:\.\d+)?")
 _V = re.compile(r"(<(?:[\w.-]+:)?v>)([^<]*)(</(?:[\w.-]+:)?v>)")
 _IDX = re.compile(r"^<[^>]*?\sidx=\"(\d+)\"")
+_ENTITY = re.compile(r"&[^;<]+;|.", re.S)
 _TOLERANCE = 1e-9
+LOCK_TIMEOUT = 60.0  # 같은 문서 잠금을 기다리는 최대 시간(초)
 _ITEM_KEYS = frozenset({"value", "kind", "location", "source"})
 _SOURCE_KEYS = frozenset({"file", "sheet", "aggregation", "range"})
 
@@ -257,40 +259,63 @@ def _shape_span(slide: str, shape: str, label: str) -> tuple[int, int]:
     raise RefreshError("locate", f"{label}을(를) 문서에서 찾지 못했다")
 
 
-def _tokens(slide: str, start: int, end: int) -> list[tuple[int, int, float]]:
-    """도형 안 글자(`a:t`)의 숫자 위치와 값을 문서 순서로 돌려준다."""
+Token = tuple[int, int, float, int, int]  # (xml start, xml end, value, text start, text end)
+
+
+def _shape_text(slide: str, start: int, end: int) -> tuple[str, list[Token]]:
+    """도형 안 글자(`a:t`)를 문단마다 줄바꿈으로 이은 글자와, 숫자 위치·값을 문서 순서로 돌려준다.
+
+    런(`a:r`)이 나뉘어도 항목명을 찾을 수 있게 글자를 잇고, 숫자는 `a:t` 하나 안에서만 찾는다.
+    """
     fragment = slide[start:end]
-    found: list[tuple[int, int, float]] = []
-    for t in element_spans(fragment, lambda n, p: n == "t" and p[-1:] in (("r",), ("fld",))):
+    paragraphs = element_spans(fragment, lambda n, p: n == "p")
+    runs = element_spans(fragment, lambda n, p: n == "t" and p[-1:] in (("r",), ("fld",)))
+    text: list[str] = []
+    tokens: list[Token] = []
+    current: int | None = None
+    for t in runs:
         inner = fragment[t.start : t.end]
-        open_end = inner.index(">") + 1
         if inner.endswith("/>"):
             continue
-        body_end = inner.rindex("</")
-        for m in _NUMBER.finditer(inner, open_end, body_end):
-            at = start + t.start + m.start()
-            found.append((at, at + len(m.group(0)), float(m.group(0).replace(",", ""))))
+        para = next((i for i, p in enumerate(paragraphs) if p.start <= t.start < p.end), None)
+        if text and para != current:
+            text.append("\n")
+        current = para
+        open_end, body_end = inner.index(">") + 1, inner.rindex("</")
+        offset = sum(len(piece) for piece in text)
+        plain: list[str] = []
+        where: list[int] = []  # plain char index -> position in `inner`
+        for m in _ENTITY.finditer(inner, open_end, body_end):
+            for char in html.unescape(m.group(0)):
+                plain.append(char)
+                where.append(m.start())
+        body = "".join(plain)
+        for m in _NUMBER.finditer(body):
+            at = start + t.start + where[m.start()]
+            stop = start + t.start + (where[m.end()] if m.end() < len(where) else body_end)
+            value = float(m.group(0).replace(",", ""))
+            tokens.append((at, stop, value, offset + m.start(), offset + m.end()))
+        text.append(body)
+    return "".join(text), tokens
+
+
+def _name_fields(text: str, names: set[str]) -> list[tuple[int, int]]:
+    """보고서 문장에서 항목명 자리(`이름: 값`의 이름, `최대: 이름 값`의 이름)만 찾는다."""
+    found: list[tuple[int, int]] = []
+    for name in sorted(names):
+        quoted = re.escape(name)
+        for pattern in (rf"(?:^|\n)[ \t]*({quoted}):", rf"최대:[ \t]*({quoted})[ \t]"):
+            found += [m.span(1) for m in re.finditer(pattern, text)]
     return found
 
 
 def _without_names(
-    tokens: list[tuple[int, int, float]],
-    slide: str,
-    start: int,
-    end: int,
-    items: list[tuple[dict[str, Any], str | None]],
-) -> list[tuple[int, int, float]]:
-    """항목명 안의 숫자(`2024 사업부`)는 집계값 후보에서 뺀다."""
-    names = {_criteria(item) for item, _ in items if _criteria(item)}
-    skipped: list[tuple[int, int]] = []
-    for name in sorted(names):
-        if not re.search(r"\d", name):
-            continue
-        pattern = rf"(?<![\d,.]){re.escape(escape(name))}(?![\d,]|\.\d)"
-        skipped += [m.span() for m in re.finditer(pattern, slide[start:end])]
-    return [
-        t for t in tokens if not any(a <= t[0] - start and t[1] - start <= b for a, b in skipped)
-    ]
+    tokens: list[Token], text: str, items: list[tuple[dict[str, Any], str | None]]
+) -> list[Token]:
+    """항목명 자리에 있는 숫자(`2024 사업부`, `100: 100`의 앞 `100`)는 집계값 후보에서 뺀다."""
+    names = {_criteria(item) for item, _ in items if re.search(r"\d", _criteria(item))}
+    fields = _name_fields(text, names)
+    return [t for t in tokens if not any(a < t[4] and t[3] < b for a, b in fields)]
 
 
 def _shape_edits(
@@ -298,7 +323,8 @@ def _shape_edits(
 ) -> list[tuple[int, int, str]]:
     """도형 하나의 숫자를 provenance 순서대로 짝지어, 바뀐 숫자의 글자 교체 목록을 만든다."""
     start, end = _shape_span(slide, shape, label)
-    tokens = _without_names(_tokens(slide, start, end), slide, start, end, items)
+    text, found = _shape_text(slide, start, end)
+    tokens = _without_names(found, text, items)
     edits: list[tuple[int, int, str]] = []
     cursor = 0
     for item, new_text in items:
@@ -355,28 +381,59 @@ def _label(item: dict[str, Any]) -> str:
     return f"{where} · {what}"
 
 
-def _source_path(file: str, document: Path) -> Path:
+def _inside(path: Path, workspace: Path | None, step: str, what: str) -> Path:
+    """실제 경로(링크를 따라간 경로)를 구해, 작업 폴더가 주어졌으면 그 안인지 확인한다.
+
+    확인한 실제 경로를 돌려주므로 읽기는 이 경로로 한다 (검사한 파일과 읽는 파일이 같다).
+    """
+    real = path.resolve()
+    if workspace is not None and not real.is_relative_to(workspace.resolve()):
+        raise RefreshError(step, f"{what}이(가) 작업 폴더 밖에 있다: {path}")
+    return real
+
+
+def _source_path(file: str, document: Path, workspace: Path | None) -> Path:
+    """출처의 원본 경로를 푼다: 절대 경로는 그대로, 상대 경로는 현재 폴더와 문서 폴더 기준.
+
+    두 기준에 서로 다른 파일이 모두 있으면 어느 쪽이 원본인지 정할 수 없으므로 고르지 않는다.
+    """
     path = Path(file)
-    if not path.is_absolute() and not path.is_file():
-        path = document.parent / path
-    if not path.is_file():
+    bases = [path] if path.is_absolute() else [path, document.parent / path]
+    found: list[Path] = []
+    for candidate in bases:
+        if candidate.is_file() and candidate.resolve() not in found:
+            found.append(candidate.resolve())
+    if not found:
         raise RefreshError("source", f"원본 파일이 없다: {file}")
-    return path
+    if len(found) > 1:
+        raise RefreshError(
+            "source",
+            f"원본 '{file}'이(가) 작업 폴더와 문서 폴더에 모두 있어 어느 쪽인지 정할 수 없다. "
+            "원본 엑셀에서 문서를 다시 만들어 연결을 다시 지정하세요",
+        )
+    return _inside(found[0], workspace, "source", "원본 파일")
 
 
 class _Sources:
     """원본 셀과 다시 집계한 표를 파일·시트·범위별로 한 번씩만 읽고 계산한다."""
 
-    def __init__(self, document: Path, numbers: list[dict[str, Any]]) -> None:
+    def __init__(
+        self, document: Path, numbers: list[dict[str, Any]], workspace: Path | None = None
+    ) -> None:
         self._document = document
+        self._workspace = workspace
         self._pairs = _pairs(numbers)
+        self.read_at_ns = 0  # 읽은 원본 중 가장 늦은 수정 시각 (읽기 전에 잰다)
         self._cells: dict[tuple[str, str], dict[str, Any]] = {}
         self._tables: dict[Pair, Table] = {}
 
     def cells(self, file: str, sheet: str) -> dict[str, Any]:
         key = (file, sheet)
         if key not in self._cells:
-            self._cells[key] = read_cells(_source_path(file, self._document), sheet)
+            path = _source_path(file, self._document, self._workspace)
+            with contextlib.suppress(OSError):
+                self.read_at_ns = max(self.read_at_ns, path.stat().st_mtime_ns)
+            self._cells[key] = read_cells(path, sheet)
         return self._cells[key]
 
     def table(self, src: dict[str, Any]) -> Table | None:
@@ -440,12 +497,18 @@ def _criteria(item: dict[str, Any]) -> str:
     return str(item["source"].get("criteria", "")).strip()
 
 
-def _load(document: Path) -> list[dict[str, Any]]:
+def _check_input(document: Path) -> None:
     if document.suffix.lower() != ".pptx" or not document.is_file():
         raise RefreshError("input", f"읽을 수 있는 .pptx 파일이 아니다: {document}")
+
+
+def _load(document: Path, workspace: Path | None) -> list[dict[str, Any]]:
+    _check_input(document)
+    _inside(document, workspace, "input", "문서")
     path = provenance_path(document)
     if not path.is_file():
         raise RefreshError("provenance", f"원본 연결(출처 파일)이 없다: {path.name}")
+    path = _inside(path, workspace, "provenance", "출처 파일")
     try:
         numbers = json.loads(path.read_text(encoding="utf-8"))["numbers"]
     except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -507,70 +570,138 @@ def _xml(parts: dict[str, bytes], part: str) -> str:
     return parts[part].decode("utf-8")
 
 
-def _publish(data: bytes, final: Path) -> None:
-    """같은 폴더의 호출별 임시 파일에 쓴 뒤 원자적으로 교체한다. 실패하면 그 임시 파일만 지운다."""
-    handle, name = tempfile.mkstemp(dir=final.parent, prefix=f".{final.name}.", suffix=".part")
+def _stage(data: bytes, final: Path) -> Path:
+    """`final`과 같은 폴더의 호출별 임시 파일에 끝까지 쓴다. 실패하면 그 임시 파일만 지운다."""
+    handle, name = tempfile.mkstemp(dir=final.parent, prefix=".docmill-", suffix=".part")
     partial = Path(name)
     try:
         with os.fdopen(handle, "wb") as out:
             out.write(data)
         if final.exists():
             shutil.copymode(final, partial)
-        os.replace(partial, final)
     except BaseException:
         partial.unlink(missing_ok=True)
         raise
+    return partial
+
+
+def _lock_path(document: Path) -> Path:
+    """같은 문서를 고치는 모든 호출이 같은 잠금 파일을 쓰도록 문서 폴더에 둔다 (환경과 무관)."""
+    real = document.resolve()
+    return real.parent / f".{real.name}.docmill-lock"
 
 
 @contextlib.contextmanager
-def _document_lock(document: Path) -> Iterator[None]:
-    """같은 문서를 동시에 새로 고치지 않도록 프로세스 사이 잠금을 건다 (잠금 파일은 임시 폴더)."""
-    digest = hashlib.sha256(str(document.resolve()).encode("utf-8")).hexdigest()[:24]
-    with open(Path(tempfile.gettempdir()) / f"docmill-refresh-{digest}.lock", "a+b") as handle:
-        if sys.platform == "win32":
-            import msvcrt
+def _document_lock(document: Path, timeout: float = LOCK_TIMEOUT) -> Iterator[None]:
+    """같은 문서를 동시에 새로 고치지 않도록 프로세스 사이 잠금을 건다.
 
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            try:
-                yield
-            finally:
-                handle.seek(0)
-                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-        else:
-            import fcntl
+    잠금을 기다리는 시간에 제한을 둔다. 제한 시간 안에 얻지 못하면 `lock` 단계 실패다.
+    """
+    try:
+        handle = open(_lock_path(document), "a+b")  # noqa: SIM115 - closed in finally
+    except OSError as exc:
+        raise RefreshError("lock", f"문서 잠금 파일을 만들지 못했다: {exc}") from exc
+    deadline = time.monotonic() + timeout
+    try:
+        while not _try_lock(handle):
+            if time.monotonic() >= deadline:
+                raise RefreshError("lock", "같은 문서를 고치는 다른 작업이 끝나지 않았다")
+            time.sleep(0.05)
+        try:
+            yield
+        finally:
+            _unlock(handle)
+    finally:
+        handle.close()
 
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-            try:
-                yield
-            finally:
-                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+def _try_lock(handle: Any) -> bool:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        try:
+            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            return False
+        return True
+    import fcntl
+
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        return False
+    return True
+
+
+def _unlock(handle: Any) -> None:
+    if sys.platform == "win32":
+        import msvcrt
+
+        handle.seek(0)
+        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        return
+    import fcntl
+
+    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _commit(
     document: Path, new_document: bytes | None, original: bytes, sidecar: bytes | None
 ) -> None:
-    """문서와 출처 파일을 저장한다. 두 번째 저장이 실패하면 문서를 이전 바이트로 되돌린다."""
-    if new_document is not None:
-        _publish(new_document, document)
-    if sidecar is None:
-        return
+    """문서와 출처 파일을 저장한다.
+
+    새 문서·새 출처 파일·원래 문서의 복원본을 모두 임시 파일로 끝까지 써 둔 뒤 이름 바꾸기만 한다.
+    쓰기 중에 실패하면(디스크 부족 등) 아무 파일도 바뀌지 않는다. 문서를 바꾼 뒤 출처 파일
+    교체가 실패하면 미리 써 둔 복원본을 이름 바꾸기로 되돌린다 (새로 쓰지 않아 공간이 필요 없다).
+    """
+    staged: list[Path] = []
     try:
-        _publish(sidecar, provenance_path(document))
-    except BaseException:
-        if new_document is not None:
-            _publish(original, document)
-        raise
+        new_doc = _stage(new_document, document) if new_document is not None else None
+        staged += [new_doc] if new_doc else []
+        new_side = _stage(sidecar, provenance_path(document)) if sidecar is not None else None
+        staged += [new_side] if new_side else []
+        backup = _stage(original, document) if new_doc and new_side else None
+        staged += [backup] if backup else []
+        if new_doc is not None:
+            os.replace(new_doc, document)
+        if new_side is not None:
+            try:
+                os.replace(new_side, provenance_path(document))
+            except BaseException:
+                if backup is not None:
+                    os.replace(backup, document)
+                raise
+    finally:
+        for path in staged:
+            path.unlink(missing_ok=True)
+
+
+def _mark_read(document: Path, read_at_ns: int) -> None:
+    """출처 파일의 수정 시각을 이번에 읽은 원본 판(가장 늦은 원본 수정 시각)으로 맞춘다.
+
+    studio는 원본 수정 시각이 출처 파일보다 늦으면 새로 고침을 제안한다. 원본을 읽은 뒤에
+    다시 저장된 원본은 이 시각보다 늦으므로 제안이 다시 뜬다. 내용은 바꾸지 않는다.
+    """
+    path = provenance_path(document)
+    if read_at_ns <= 0 or not path.is_file():
+        return
+    with contextlib.suppress(OSError):
+        os.utime(path, ns=(path.stat().st_atime_ns, read_at_ns))
 
 
 def _differs(shown: float, old: float) -> bool:
-    """보이는 값이 달라졌는지 (반올림한 값끼리 정확히 비교한다)."""
-    return abs(shown - old) > _TOLERANCE
+    """값이 달라졌는지 정확히 비교한다.
+
+    본문 값은 보고서와 같은 자릿수로 반올림한 값, 그래프 값은 저장할 숫자 그대로다.
+    아주 작은 차이(그래프 `0 → 0.0000000005`)도 변경이다.
+    """
+    return shown != old
 
 
-def _refresh(document: Path, run_id: str) -> dict[str, Any]:
-    numbers = _load(document)
-    sources = _Sources(document, numbers)
+def _refresh(document: Path, run_id: str, workspace: Path | None = None) -> dict[str, Any]:
+    numbers = _load(document, workspace)
+    sources = _Sources(document, numbers, workspace)
     renewed: list[dict[str, Any]] = []
     texts: list[str | None] = []
     changes: list[dict[str, Any]] = []
@@ -599,6 +730,7 @@ def _refresh(document: Path, run_id: str) -> dict[str, Any]:
         except (OoxmlError, ValueError, KeyError) as exc:
             raise RefreshError("locate", f"문서를 고치지 못했다: {exc}") from exc
     _commit(document, new_document, original, dump(renewed) if renewed != numbers else None)
+    _mark_read(document, sources.read_at_ns)
     summary = (
         f"숫자 {len(changes)}곳을 새 원본 값으로 고쳤다"
         if changes
@@ -625,10 +757,21 @@ def refresh_links(document: str) -> str:
     숫자만 바꿔서는 맞출 수 없는 곳(요약의 최대 항목 변경, 원본에 새로 생긴 항목)은
     warnings에 담는다. 실패하면 error와 실패한 단계(step)를 담는다.
     """
+    return refresh_links_within(document, None)
+
+
+def refresh_links_within(document: str, workspace: str | None) -> str:
+    """`refresh_links`와 같지만, workspace가 있으면 문서·출처 파일·원본이 그 폴더 안일 때만 읽는다.
+
+    studio가 `docmill refresh-links --workspace`로 부른다. 링크를 따라간 실제 경로를 검사하고,
+    검사한 그 경로로 읽는다.
+    """
     run_id = current_run_id() or new_run_id()
+    root = Path(workspace) if workspace else None
     try:
+        _check_input(Path(document))
         with _document_lock(Path(document)):
-            result = _refresh(Path(document), run_id)
+            result = _refresh(Path(document), run_id, root)
     except RefreshError as exc:
         result = {"error": exc.message, "step": exc.step, "run_id": run_id}
     except Exception as exc:  # file failures must not kill the server

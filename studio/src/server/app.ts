@@ -489,6 +489,8 @@ async function saveCallback(
         return true;
       });
       notifySaveWaiter(body.userdata, kept);
+      // 파일에 쓰지 않은 저장은 문서 서버에도 성공으로 알리지 않는다.
+      if (!kept) return sendJson(res, 200, { error: 1 });
     } catch (err) {
       console.error("저장 콜백 처리 실패:", err);
       notifySaveWaiter(body.userdata, false);

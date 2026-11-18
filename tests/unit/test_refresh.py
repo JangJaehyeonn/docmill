@@ -305,7 +305,74 @@ def test_small_displayed_change_on_large_total_is_a_change(tmp_path: Path) -> No
     assert "1,000,000,001" in _part(doc, "ppt/slides/slide2.xml")
 
 
-def test_failed_sidecar_write_restores_document(
+def _numbers(doc: Path) -> list[dict[str, Any]]:
+    return list(json.loads(provenance_path(doc).read_text())["numbers"])
+
+
+def _write_runs(path: Path, runs: list[str]) -> None:
+    """한 문단을 여러 런(`a:r`)으로 나눈 슬라이드를 쓴다."""
+    body = "<a:p>" + "".join(f"<a:r><a:rPr/><a:t>{r}</a:t></a:r>" for r in runs) + "</a:p>"
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("ppt/presentation.xml", "<p:presentation/>")
+        z.writestr("ppt/slides/slide2.xml", _SLIDE.format(body=body))
+        z.writestr("ppt/charts/chart1.xml", _CHART.format(a="100", b="300"))
+
+
+def test_name_split_over_runs_is_not_taken_for_the_total(tmp_path: Path) -> None:
+    source = tmp_path / "sales.xlsx"
+    write_xlsx(source, [("2024 사업부", 2024), ("나팀", 6072)])
+    doc = tmp_path / "report.pptx"
+    _write_runs(doc, ["20", "24 사업부: ", "2,024 (25.0%)"])
+    numbers = [
+        _text(2024, _src(source, "sumif", criteria="2024 사업부", digits=0)),
+        _text(25.0, _src(source, "share", criteria="2024 사업부")),
+    ]
+    provenance_path(doc).write_bytes(dump(numbers))
+    write_xlsx(source, [("2024 사업부", 2025), ("나팀", 6072)])
+    out = _run(doc)
+    assert "error" not in out, out
+    slide = _part(doc, "ppt/slides/slide2.xml")
+    assert "<a:t>20</a:t>" in slide and "<a:t>24 사업부: </a:t>" in slide  # 항목명 그대로
+    assert "<a:t>2,025 (25.0%)</a:t>" in slide  # 합계만 바뀜
+    assert [(c["old"], c["new"]) for c in out["changes"]] == [(2024, 2025)]
+    assert [n["value"] for n in _numbers(doc)] == [2025, 25.0]
+
+
+def test_numeric_name_equal_to_total_keeps_the_total(tmp_path: Path) -> None:
+    source = tmp_path / "sales.xlsx"
+    write_xlsx(source, [("100", 100), ("나팀", 300)])
+    doc = tmp_path / "report.pptx"
+    write_pptx(doc, ["최대: 나팀 300 (75.0%)", "100: 100 (25.0%)"])
+    numbers = [
+        _text(300, _src(source, "sumif", criteria="나팀", digits=0)),
+        _text(75.0, _src(source, "share", criteria="나팀")),
+        _text(100, _src(source, "sumif", criteria="100", digits=0), "detail"),
+        _text(25.0, _src(source, "share", criteria="100"), "detail"),
+    ]
+    provenance_path(doc).write_bytes(dump(numbers))
+    write_xlsx(source, [("100", 120), ("나팀", 300)])
+    out = _run(doc)
+    assert "error" not in out, out
+    slide = _part(doc, "ppt/slides/slide2.xml")
+    assert "<a:t>100: 120 (28.6%)</a:t>" in slide
+    assert "<a:t>최대: 나팀 300 (71.4%)</a:t>" in slide
+    assert [n["value"] for n in _numbers(doc)] == [300, 71.4, 120, 28.6]
+
+
+def test_tiny_chart_change_is_a_change(tmp_path: Path) -> None:
+    source = tmp_path / "sales.xlsx"
+    write_xlsx(source, [("가팀", 0), ("나팀", 300)])
+    doc = tmp_path / "report.pptx"
+    write_pptx(doc, ["없음"], a="0")
+    provenance_path(doc).write_bytes(dump([_point(0, 0, _src(source, "sumif", criteria="가팀"))]))
+    write_xlsx(source, [("가팀", 5e-10), ("나팀", 300)])
+    out = _run(doc)
+    assert len(out["changes"]) == 1
+    assert '<c:pt idx="0"><c:v>5e-10</c:v>' in _part(doc, "ppt/charts/chart1.xml")
+    assert _run(doc)["changes"] == []
+
+
+def test_failed_sidecar_write_changes_nothing(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import docmill.tools.refresh as refresh
@@ -313,15 +380,106 @@ def test_failed_sidecar_write_restores_document(
     source, doc = make_doc(tmp_path)
     before, prov = doc.read_bytes(), provenance_path(doc).read_bytes()
     write_xlsx(source, [("가팀", 70), ("나팀", 300), ("가팀", 40), (None, None)])
-    real = refresh._publish
+    real = refresh._stage
 
-    def flaky(data: bytes, final: Path) -> None:
+    def full_disk(data: bytes, final: Path) -> Path:
         if final.name.endswith(".provenance.json"):
             raise OSError("disk full")
-        real(data, final)
+        return real(data, final)
 
-    monkeypatch.setattr(refresh, "_publish", flaky)
+    monkeypatch.setattr(refresh, "_stage", full_disk)
     out = _run(doc)
     assert out["step"] == "unexpected"
     assert doc.read_bytes() == before
     assert provenance_path(doc).read_bytes() == prov
+    assert not list(tmp_path.glob(".docmill-*.part"))
+
+
+def test_failed_sidecar_replace_restores_document_by_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import docmill.tools.refresh as refresh
+
+    source, doc = make_doc(tmp_path)
+    before, prov = doc.read_bytes(), provenance_path(doc).read_bytes()
+    write_xlsx(source, [("가팀", 70), ("나팀", 300), ("가팀", 40), (None, None)])
+    real = refresh.os.replace
+
+    def flaky(src: Any, dst: Any) -> None:
+        if str(dst).endswith(".provenance.json"):
+            raise OSError("rename failed")
+        real(src, dst)
+
+    monkeypatch.setattr(refresh.os, "replace", flaky)
+    out = _run(doc)
+    assert out["step"] == "unexpected"
+    assert doc.read_bytes() == before
+    assert provenance_path(doc).read_bytes() == prov
+    assert not list(tmp_path.glob(".docmill-*.part"))
+
+
+def test_workspace_boundary_blocks_outside_source_and_provenance(tmp_path: Path) -> None:
+    from docmill.tools.refresh import refresh_links_within
+
+    outside, root = tmp_path / "outside", tmp_path / "ws"
+    outside.mkdir()
+    root.mkdir()
+    source, doc = make_doc(outside)
+    inner = root / "report.pptx"
+    inner.write_bytes(doc.read_bytes())
+    provenance_path(inner).write_bytes(provenance_path(doc).read_bytes())  # 원본이 밖에 있다
+    out = json.loads(refresh_links_within(str(inner), str(root)))
+    assert out["step"] == "source"
+    provenance_path(inner).unlink()
+    (root / "sales.xlsx").write_bytes(source.read_bytes())
+    numbers = [{**n, "source": {**n["source"], "file": "sales.xlsx"}} for n in _numbers(doc)]
+    provenance_path(doc).write_bytes(dump(numbers))
+    provenance_path(inner).symlink_to(provenance_path(doc))  # 출처 파일이 밖을 가리키는 링크
+    out = json.loads(refresh_links_within(str(inner), str(root)))
+    assert out["step"] == "provenance"
+    provenance_path(inner).unlink()
+    provenance_path(inner).write_bytes(dump(numbers))
+    out = json.loads(refresh_links_within(str(inner), str(root)))
+    assert "error" not in out, out
+
+
+def test_same_named_sources_in_two_folders_are_not_guessed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    team = tmp_path / "team"
+    team.mkdir()
+    _, doc = make_doc(team)
+    write_xlsx(tmp_path / "sales.xlsx", [("가팀", 1), ("나팀", 2)])
+    numbers = [{**n, "source": {**n["source"], "file": "sales.xlsx"}} for n in _numbers(doc)]
+    provenance_path(doc).write_bytes(dump(numbers))
+    monkeypatch.chdir(tmp_path)
+    out = _run(doc)
+    assert out["step"] == "source"
+    assert "연결을 다시" in out["error"]
+    monkeypatch.chdir(team)
+    assert "error" not in _run(doc)
+
+
+def test_lock_wait_is_bounded(tmp_path: Path) -> None:
+    import docmill.tools.refresh as refresh
+
+    _, doc = make_doc(tmp_path)
+    with (
+        refresh._document_lock(doc),
+        pytest.raises(refresh.RefreshError) as err,
+        refresh._document_lock(doc, timeout=0.2),
+    ):
+        pass
+    assert err.value.step == "lock"
+    with refresh._document_lock(doc, timeout=0.2):
+        pass
+
+
+def test_provenance_time_marks_the_source_version_read(tmp_path: Path) -> None:
+    import os
+
+    source, doc = make_doc(tmp_path)
+    write_xlsx(source, [("가팀", 70), ("나팀", 300), ("가팀", 40), (None, None)])
+    os.utime(source, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
+    _run(doc)
+    assert provenance_path(doc).stat().st_mtime_ns == source.stat().st_mtime_ns

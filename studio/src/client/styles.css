@@ -31,3 +31,18 @@ body { margin: 0; font-family: system-ui, "Noto Sans KR", sans-serif; color: #1f
 .chat-form { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
 .chat-form label { display: flex; flex-direction: column; gap: 4px; }
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
+
+/* 새 숫자로 고치는 동안 편집기 입력을 막는 덮개 (FR-37) */
+.main.editing {
+  position: relative;
+}
+.editor-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(255 255 255 / 0.6);
+  font-weight: 600;
+}

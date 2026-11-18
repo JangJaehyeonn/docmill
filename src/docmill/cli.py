@@ -66,10 +66,18 @@ def preflight_command(path: str = typer.Argument(..., help="점검할 문서 경
 
 
 @app.command("refresh-links")
-def refresh_links_command(path: str = typer.Argument(..., help="새 숫자로 고칠 문서 경로")) -> None:
+def refresh_links_command(
+    path: str = typer.Argument(..., help="새 숫자로 고칠 문서 경로"),
+    workspace: str | None = typer.Option(
+        None, "--workspace", help="이 폴더 안의 문서·출처 파일·원본만 읽습니다 (studio가 쓴다)."
+    ),
+) -> None:
     """연결된 원본 엑셀의 최신 값으로 문서 숫자를 고치고 결과를 JSON으로 출력합니다. FR-37."""
     from docmill.runlog import logged
-    from docmill.tools.refresh import refresh_links
+    from docmill.tools.refresh import refresh_links_within
+
+    def refresh_links(document: str) -> str:
+        return refresh_links_within(document, workspace)
 
     typer.echo(logged(refresh_links, ai_used=False)(path))
 
