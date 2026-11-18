@@ -103,7 +103,7 @@ def _setup(tmp_path: Path, start_studio: Callable[..., str], page: Any) -> tuple
     page.get_by_role("listitem").filter(has_text=NAME).first.click()
     page.get_by_role("tab", name=NAME).wait_for()
     page.get_by_label("메시지").fill("한 줄 덧붙여줘")
-    page.get_by_role("button", name="보내기").click()
+    page.get_by_role("button", name="보내기", exact=True).click()
     page.locator('[data-role="preview-card"]').wait_for()
     return ws, original, copy
 
