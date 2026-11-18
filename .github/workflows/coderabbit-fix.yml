@@ -88,6 +88,9 @@ jobs:
                `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/<코멘트ID>/replies -f body=...`로 근거를 답하세요.
             3. 고칠 것이 없으면 코드를 바꾸지 말고 이유를 PR 코멘트로 남긴 뒤 끝내세요.
             4. 품질 검사를 모두 통과시킨 뒤 `git push origin ${{ github.event.pull_request.head.ref }}`로 푸시하세요. 새 PR을 만들지 마세요.
+            5. 푸시한 뒤 고친 지적 스레드마다 빠짐없이 답글을 다세요. 답글이 없으면 CodeRabbit이 스레드를 해결 처리하지 않아 승인이 안 나고 머지가 멈춥니다.
+               `gh api repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/comments/<코멘트ID>/replies -f body="@coderabbitai 반영했습니다 (커밋 <짧은 SHA>). <무엇을 어떻게 고쳤는지 한두 문장>. 확인되면 이 스레드를 해결 처리해 주세요."`
+               코멘트ID는 1번에서 읽은 CodeRabbit 코멘트 중 in_reply_to_id가 없는 것(스레드 첫 코멘트)의 id입니다. 짧은 SHA는 `git log -1 --format=%h`로 확인하세요.
           claude_args: >-
             --max-turns 40
             --model ${{ steps.attempt.outputs.n == '3' && 'claude-opus-5-5' || 'claude-sonnet-5-5' }}
