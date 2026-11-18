@@ -12,8 +12,16 @@ describe("buildPrompt", () => {
   it("활성 파일과 열린 탭을 절대 경로로 담는다", () => {
     const p = buildPrompt("/ws", { message: "안녕", tabs: ["a.xlsx", "d/b.docx"], active: "d/b.docx" });
     expect(p).toContain("활성 파일: /ws/d/b.docx");
-    expect(p).toContain("- /ws/a.xlsx");
+    expect(p).toContain("/ws/a.xlsx");
     expect(p).toContain("안녕");
+  });
+
+  it("열린 모든 탭의 이름과 경로를 담는다", () => {
+    const tabs = ["m.docx", "t.xlsx", "d/r.pptx"];
+    const p = buildPrompt("/ws", { message: "보고서", tabs, active: "m.docx" });
+    for (const t of tabs) {
+      expect(p).toContain(`${t.split("/").pop()} → /ws/${t}`);
+    }
   });
 });
 
