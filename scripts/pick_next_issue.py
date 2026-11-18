@@ -31,8 +31,9 @@ def emit(issue: str = "", fr: str = "", model: str = SONNET) -> None:
 
 
 def main() -> int:
-    open_prs = gh_json("pr", "list", "--state", "open", "--json", "headRefName")
-    if any(pr["headRefName"].startswith("claude/") for pr in open_prs):
+    open_prs = gh_json("pr", "list", "--state", "open", "--json", "headRefName,isDraft")
+    # 초안 PR(턴이 모자라 멈춘 미완성 작업)은 다음 구현이 이어받으므로 막지 않는다.
+    if any(pr["headRefName"].startswith("claude/") and not pr.get("isDraft") for pr in open_prs):
         print("Claude PR이 아직 열려 있어 이번에는 건너뜁니다.", file=sys.stderr)
         emit()
         return 0
