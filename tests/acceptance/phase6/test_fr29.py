@@ -99,7 +99,7 @@ def _open(page: Any, name: str) -> None:
 
 def _send(page: Any, text: str) -> None:
     page.get_by_label("메시지").fill(text)
-    page.get_by_role("button", name="보내기").click()
+    page.get_by_role("button", name="보내기", exact=True).click()
 
 
 @pytest.mark.fr("FR-29")

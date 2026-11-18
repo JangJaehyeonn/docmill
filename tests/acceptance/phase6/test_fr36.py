@@ -85,7 +85,7 @@ def test_agent_input_lists_names_and_paths_of_all_open_tabs(
     for name in names:
         _open(page, name)
     page.get_by_label("메시지").fill("할일 표로 주간 보고 만들어줘")
-    page.get_by_role("button", name="보내기").click()
+    page.get_by_role("button", name="보내기", exact=True).click()
     page.locator('[data-role="assistant"]').wait_for()
     seen = dump.read_text(encoding="utf-8")
     for name in names:
@@ -115,7 +115,7 @@ def test_chained_tool_calls_open_two_new_tabs_and_last_is_active(
     page.goto(start_studio(workspace=ws, env=env))
     _open(page, "meeting_1111.docx")
     page.get_by_label("메시지").fill("회의록으로 할일 표 만들고 주간 보고 만들어줘")
-    page.get_by_role("button", name="보내기").click()
+    page.get_by_role("button", name="보내기", exact=True).click()
     page.get_by_role("tab", name="weekly.pptx").wait_for()
     page.get_by_role("tab", name="tasks.xlsx").wait_for()
     assert page.get_by_role("tab").count() == 3
