@@ -41,7 +41,7 @@ interface LinkResult {
   lines: string[];
 }
 
-const LOAD_ERROR ="작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
+const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시 시도하세요.";
 
 /** studio 화면: 위쪽 탭, 왼쪽 작업 폴더 파일 목록, 가운데 시작 화면(최근 파일). */
 export function App() {
@@ -120,11 +120,13 @@ export function App() {
     setReloads((m) => ({ ...m, [p]: (m[p] ?? 0) + 1 }));
     setConflicts((c) => c.filter((x) => x !== p));
   }, []);
+  // 새 탭 열기는 한 줄로 이어서 해, 응답이 뒤바뀌어도 마지막 결과 파일이 활성 탭이 되게 한다.
+  const openChain = useRef<Promise<void>>(Promise.resolve());
   const onAgentPaths = useCallback(
     (paths: string[]) => {
       for (const p of paths) {
         if (!tabsRef.current.tabs.some((t) => t.path === p)) {
-          void openPath(p);
+          openChain.current = openChain.current.then(() => openPath(p)).catch(() => undefined);
         } else if (!isHwpPath(p)) {
           reloadTab(p);
         } else {
