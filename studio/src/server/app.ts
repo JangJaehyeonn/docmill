@@ -49,6 +49,8 @@ export interface AppOptions {
   rhwpDist?: string;
   /** 강제 저장 뒤 문서 서버 콜백이 파일을 쓸 때까지 기다리는 시간(ms). 기본 30초. */
   saveWaitMs?: number;
+  /** 강제 저장이 error 1(편집 세션 없음)을 돌려줄 때 다시 시도하는 시간(초). 기본 5초. */
+  forceSaveRetryOneSec?: number;
 }
 
 /** 한글 파일 저장 요청 본문의 최대 크기 (256MB). */
@@ -448,12 +450,14 @@ async function forceSave(
   const saved = waitForSaved(rel, opts.saveWaitMs ?? 30_000);
   try {
     // error 4 = 아직 반영할 변경이 없음. 편집 내용이 문서 서버에 닿을 시간을 주고 몇 번 다시 요청한다.
+    // error 1 = 이 키의 편집 세션이 아직 문서 서버에 없음. 방금 한 편집이 아직 닿지 않았을 수도 있으므로
+    // 잠깐(최대 retryOneSec초) 다시 요청하고, 그래도 1이면 편집이 없는 것으로 본다 (연 뒤 바로 점검하는 경우).
+    const retryOneSec = opts.forceSaveRetryOneSec ?? 5;
     let code = await commandForceSave(server, key);
-    for (let i = 0; i < 30 && code === 4; i++) {
+    for (let i = 0; i < 30 && (code === 4 || (code === 1 && i < retryOneSec)); i++) {
       await new Promise((r) => setTimeout(r, 1000));
       code = await commandForceSave(server, key);
     }
-    // error 1 = 이 키의 편집 세션이 아직 없음(연 뒤 편집 전). 이때도 반영할 변경이 없다고 본다.
     const unchanged = code === 1 || code === 4;
     if (code !== 0 && !unchanged) throw new Error(`문서 서버 오류 ${code}`);
     if (unchanged) {

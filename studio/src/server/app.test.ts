@@ -10,7 +10,7 @@ import { createApp, isLoopback } from "./app";
 let lastWorkspace = "";
 
 function makeApp(
-  extra: { onlyofficeUrl?: string; saveWaitMs?: number } = {},
+  extra: { onlyofficeUrl?: string; saveWaitMs?: number; forceSaveRetryOneSec?: number } = {},
 ): ReturnType<typeof createApp> {
   const base = mkdtempSync(path.join(tmpdir(), "studio-app-"));
   const workspace = path.join(base, "ws");
@@ -116,7 +116,7 @@ describe("createApp", () => {
       fake.listen(0, "127.0.0.1", () => resolve((fake.address() as AddressInfo).port)),
     );
     try {
-      server = makeApp({ onlyofficeUrl: `http://127.0.0.1:${fakePort}` });
+      server = makeApp({ onlyofficeUrl: `http://127.0.0.1:${fakePort}`, forceSaveRetryOneSec: 1 });
       const port = await listen(server);
       const base = `http://127.0.0.1:${port}`;
       await fetch(`${base}/api/editor-config?path=a.xlsx`);
@@ -130,19 +130,22 @@ describe("createApp", () => {
 
   /** 가짜 문서 서버: 강제 저장을 받으면 error 0을 돌려주고, mode에 따라 저장 콜백을 보낸다. */
   async function fakeDocServer(
-    mode: "callback" | "silent" | "bad-download",
+    mode: "callback" | "silent" | "bad-download" | "late-session",
     callbackUrl: () => string,
     key: () => string,
   ): Promise<{ url: string; close: () => void }> {
     let port = 0;
+    let calls = 0;
     const fake = http.createServer((req, res) => {
       if (req.url?.startsWith("/coauthoring/CommandService.ashx")) {
         res.setHeader("content-type", "application/json");
+        // late-session: 방금 한 편집이 아직 문서 서버에 안 닿아 처음엔 error 1(세션 없음)을 돌려준다.
+        if (mode === "late-session" && calls++ === 0) return void res.end(JSON.stringify({ error: 1 }));
         res.end(JSON.stringify({ error: 0 }));
         if (mode !== "silent") {
           // 실제 문서 서버처럼 접수 응답 뒤 조금 있다가 콜백을 보낸다.
           setTimeout(() => {
-            const file = mode === "callback" ? "/saved.xlsx" : "/missing.xlsx";
+            const file = mode === "bad-download" ? "/missing.xlsx" : "/saved.xlsx";
             void fetch(callbackUrl(), {
               method: "POST",
               body: JSON.stringify({ status: 6, key: key(), url: `http://127.0.0.1:${port}${file}` }),
@@ -163,6 +166,7 @@ describe("createApp", () => {
 
   it.each([
     ["callback", 200],
+    ["late-session", 200],
     ["silent", 504],
     ["bad-download", 502],
   ] as const)("강제 저장 접수 뒤 콜백 결과(%s)를 기다려 %i를 돌려준다", async (mode, status) => {
@@ -174,7 +178,7 @@ describe("createApp", () => {
       () => cfg?.document.key ?? "",
     );
     try {
-      server = makeApp({ onlyofficeUrl: fake.url, saveWaitMs: 2000 });
+      server = makeApp({ onlyofficeUrl: fake.url, saveWaitMs: 2000, forceSaveRetryOneSec: 3 });
       const port = await listen(server);
       base = `http://127.0.0.1:${port}`;
       const r0 = await fetch(`${base}/api/editor-config?path=a.xlsx`);
