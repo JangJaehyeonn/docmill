@@ -16,6 +16,7 @@ from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
+from docmill.tools.official_style import check_official_style
 from docmill.tools.preflight import preflight
 from docmill.tools.refresh import refresh_links
 from docmill.tools.report import excel_to_report_ppt
@@ -87,6 +88,11 @@ def _register_refresh(server: MCPServer) -> None:
     server.tool()(refresh_links)
 
 
+def _register_official_style(server: MCPServer) -> None:
+    """`check_official_style` 업무 도구(FR-38)를 등록한다."""
+    server.tool()(check_official_style)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -98,6 +104,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_review,
     _register_preflight,
     _register_refresh,
+    _register_official_style,
 )
 
 
