@@ -268,8 +268,9 @@ def find_violations(segments: list[Segment]) -> list[dict[str, Any]]:
 
 # ── docx 고치기 ─────────────────────────────────────────────────────────
 
-_W_P = re.compile(r"<w:p(?:\s[^>]*?)?(?<!/)>.*?</w:p>", re.DOTALL)
-_W_TOKEN = re.compile(r"(<w:t(?:\s[^>]*)?>)([^<]*)(</w:t>)|<w:(?:tab|br)\b[^>]*>")
+_W_TOKEN = re.compile(
+    r"<w:p(?:\s[^>]*?)?(?<!/)>|</w:p>|(<w:t(?:\s[^>]*)?>)([^<]*)(</w:t>)|<w:(?:tab|br)\b[^>]*>"
+)
 
 
 @dataclass
@@ -288,18 +289,30 @@ def _preserve_space(open_tag: str) -> str:
     return open_tag[:-1] + ' xml:space="preserve">'
 
 
-def _paragraph_nodes(paragraph: str) -> tuple[str, list[_Node]]:
-    """문단의 글자(탭·줄바꿈은 공백, 리더와 같음)와 글자 조각 목록."""
-    text = ""
-    nodes: list[_Node] = []
-    for m in _W_TOKEN.finditer(paragraph):
-        if m.group(1) is None:
-            text += " "
-            continue
-        piece = html.unescape(m.group(2))
-        nodes.append(_Node(m, len(text), piece, piece))
-        text += piece
-    return text, nodes
+def _paragraph_groups(xml: str) -> list[tuple[str, list[_Node]]]:
+    """문단마다 자기가 가진 글자(탭·줄바꿈은 공백, 리더와 같음)와 조각 목록.
+
+    텍스트 상자처럼 중첩된 문단은 바깥 문단에 합치지 않고 따로 낸다. 결과는 문서 순서다.
+    """
+    groups: list[tuple[str, list[_Node]]] = []
+    stack: list[tuple[list[str], list[_Node]]] = []
+    for m in _W_TOKEN.finditer(xml):
+        token = m.group(0)
+        if token.startswith("<w:p") and m.group(1) is None and not token.startswith("<w:pPr"):
+            stack.append(([], []))
+        elif token == "</w:p>":
+            if stack:
+                chars, nodes = stack.pop()
+                groups.append(("".join(chars), nodes))
+        elif stack:
+            chars, nodes = stack[-1]
+            if m.group(1) is None:
+                chars.append(" ")
+                continue
+            piece = html.unescape(m.group(2))
+            nodes.append(_Node(m, sum(len(c) for c in chars), piece, piece))
+            chars.append(piece)
+    return groups
 
 
 def _apply_to_nodes(nodes: list[_Node], edit: Edit) -> bool:
@@ -328,37 +341,26 @@ def fix_docx_xml(xml: str, add_end_mark: bool) -> tuple[str, int]:
     조각(w:t) 경계를 넘는 위반도 고친다. 돌려주는 값은 (고친 xml, 실제로 적용한 교정 건수)다.
     """
     applied = 0
-    edited: list[tuple[re.Match[str], list[_Node]]] = []
-    for pm in _W_P.finditer(xml):
-        text, nodes = _paragraph_nodes(pm.group(0))
+    all_nodes: list[_Node] = []
+    for text, nodes in _paragraph_groups(xml):
         for edit in sorted(text_edits(text), key=lambda e: e.start, reverse=True):
             applied += _apply_to_nodes(nodes, edit)
-        edited.append((pm, nodes))
-    tail = [n for _, nodes in edited for n in nodes if n.new.strip()]
+        all_nodes.extend(nodes)
+    all_nodes.sort(key=lambda n: n.match.start())
+    tail = [n for n in all_nodes if n.new.strip()]
     if add_end_mark and tail:
         tail[-1].new = tail[-1].new.rstrip() + _END_SEPARATOR + END_TEXT
         applied += 1
     out: list[str] = []
     cursor = 0
-    for pm, nodes in edited:
-        out.append(xml[cursor : pm.start()])
-        out.append(_render_paragraph(pm.group(0), nodes))
-        cursor = pm.end()
-    out.append(xml[cursor:])
-    return "".join(out), applied
-
-
-def _render_paragraph(paragraph: str, nodes: list[_Node]) -> str:
-    out: list[str] = []
-    cursor = 0
-    for node in nodes:
+    for node in all_nodes:
         m = node.match
         open_tag = _preserve_space(m.group(1)) if node.new != node.text else m.group(1)
-        out.append(paragraph[cursor : m.start()])
+        out.append(xml[cursor : m.start()])
         out.append(f"{open_tag}{html.escape(node.new, quote=False)}{m.group(3)}")
         cursor = m.end()
-    out.append(paragraph[cursor:])
-    return "".join(out)
+    out.append(xml[cursor:])
+    return "".join(out), applied
 
 
 def _target_path(out_dir: str | None, run_id: str, suffix: str) -> Path:
@@ -385,13 +387,13 @@ def _write_fixed(
     return final, applied
 
 
-def _read_docx(document: Path) -> tuple[Package, list[Segment]]:
-    """docx를 한 번만 읽어 검사와 교정에 같은 내용을 쓴다."""
+def _read_docx(document: Path, fix: bool) -> tuple[Package | None, list[Segment]]:
+    """docx를 한 번만 읽어 검사와 교정에 같은 내용을 쓴다. 교정할 때만 Package를 만든다."""
     if not document.is_file():
         raise ReviewError("open", f"파일을 찾을 수 없습니다: {document}")
     try:
         data = document.read_bytes()
-        package = Package.read(data)
+        package = Package.read(data) if fix else None
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
             segments = _docx_segments(archive)
     except (zipfile.BadZipFile, KeyError, OSError, ValueError, SyntaxError) as exc:
@@ -411,7 +413,7 @@ def build_check(document: Path, fix: bool, out_dir: str | None, run_id: str) -> 
     if is_hwp(document):
         segments = read_segments(document)
     else:
-        package, segments = _read_docx(document)
+        package, segments = _read_docx(document, fix)
     violations = find_violations([s for s in segments if s.kind == "text"])
     result: dict[str, Any] = {"violations": violations}
     if fix and package is None:

@@ -82,6 +82,16 @@ def test_fix_docx_xml_edits_runs_and_adds_end_mark() -> None:
     assert "끝." not in fix_docx_xml(xml, add_end_mark=False)[0]
 
 
+def test_fix_keeps_nested_text_box_paragraph_separate() -> None:
+    xml = (
+        "<w:body><w:p><w:r><w:t>10</w:t></w:r><w:r><w:pict><w:txbxContent>"
+        "<w:p><w:r><w:t>150원</w:t></w:r></w:p></w:txbxContent></w:pict></w:r></w:p></w:body>"
+    )
+    out, _ = fix_docx_xml(xml, add_end_mark=False)
+    assert "<w:t>10</w:t>" in out
+    assert "금150원(금백오십원)" in out
+
+
 def test_amount_keeps_unrelated_note_and_big_amount_does_not_crash() -> None:
     assert _fixed("10,150원(금요일 마감, 담당 김원)") == (
         "금10,150원(금일만백오십원)(금요일 마감, 담당 김원)"
