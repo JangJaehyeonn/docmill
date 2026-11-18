@@ -20,3 +20,9 @@
 `meeting_1111.docx`와 같은 문단 11개를 한글(HWP 5.0) 형식으로 담은 파일이다 (FR-35, Phase 6 이후 studio 테스트).
 rhwp-studio 0.9.0에서 새 문서를 만들어 같은 문장을 입력하고 `exportBytes('hwp')`로 저장했다.
 `@rhwp/core` 0.9.0의 `HwpDocument.getTextFileText()`로 읽으면 docx의 문단 텍스트와 같다.
+
+## meeting_empty_title.hwp
+
+`meeting_1111.hwp`에서 3번째 문단("논의 내용")을 `개요 1` 스타일로 바꾸고, 5번째 문단("할 일")의 글자를 지운 뒤
+`개요 1` 스타일을 준 파일이다 (FR-35 hwp 빈 제목 점검). `@rhwp/core` 0.9.0의 `applyStyle`·`deleteText`·`exportHwp`로 만들었다.
+빈 제목은 구역 1의 문단 5 한 곳이고, 문단 3은 글자가 있는 제목이라 빈 제목이 아니다.

@@ -504,13 +504,29 @@ async function serveStatic(
   try {
     const data = await fs.readFile(file);
     res.writeHead(200, { "content-type": MIME[path.extname(file)] ?? "application/octet-stream" });
-    res.end(data);
+    res.end(path.extname(file) === ".html" ? await withBootFiles(opts, data) : data);
   } catch {
     // 알 수 없는 경로는 앱 화면(index.html)으로 돌려보낸다.
     const data = await fs.readFile(path.join(root, "index.html"));
     res.writeHead(200, { "content-type": MIME[".html"] as string });
-    res.end(data);
+    res.end(await withBootFiles(opts, data));
   }
+}
+
+/** 앱 화면 HTML 맨 앞에 작업 폴더 파일 목록을 넣어, 화면이 뜨자마자 목록을 보이게 한다. */
+async function withBootFiles(opts: AppOptions, html: Buffer): Promise<Buffer> {
+  let files: string[] = [];
+  try {
+    files = await listFiles(opts.workspace);
+  } catch {
+    // 목록을 못 읽으면 화면이 직접 조회해 오류를 보여 준다.
+  }
+  const json = JSON.stringify(files).replace(/</g, "\\u003c");
+  const tag = `<script>window.__DOCMILL_FILES__=${json};</script>`;
+  const text = html.toString("utf8");
+  // doctype 앞에 넣으면 호환 모드가 되므로 <head> 안에 넣는다.
+  const at = text.search(/<\/head>/i);
+  return Buffer.from(at >= 0 ? text.slice(0, at) + tag + text.slice(at) : text + tag);
 }
 
 const secrets = new WeakMap<AppOptions, string>();

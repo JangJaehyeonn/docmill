@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
+import { waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
@@ -25,7 +26,10 @@ const LOAD_ERROR = "작업 폴더 목록을 불러오지 못했습니다. 다시
 
 /** studio 화면: 위쪽 탭, 왼쪽 작업 폴더 파일 목록, 가운데 시작 화면(최근 파일). */
 export function App() {
-  const [files, setFiles] = useState<string[]>([]);
+  // 서버가 HTML에 넣어 준 첫 파일 목록으로 시작해 로드 직후부터 목록이 보이게 한다.
+  const [files, setFiles] = useState<string[]>(
+    () => (window as unknown as { __DOCMILL_FILES__?: string[] }).__DOCMILL_FILES__ ?? [],
+  );
   const [recent, setRecent] = useState<string[]>([]);
   const [tabState, setTabState] = useState<TabState>({ tabs: [], active: null });
   const [error, setError] = useState<string | null>(null);
@@ -183,10 +187,16 @@ export function App() {
     if (isHwpPath(path)) return (await saveHwp(path)) ? "saved" : "failed";
     setSaveMessage("저장 중…");
     try {
+      // 방금 입력한 내용이 문서 서버에 닿을 때까지 잠깐 기다린다 (닿지 않은 편집은 강제 저장에 빠진다).
+      const synced = await waitOfficeSynced(path, 15_000);
       // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다.
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
-      setSaveMessage(res.ok ? "저장했어요. 작업 폴더 파일에 반영됐어요." : (body.error ?? "저장하지 못했어요."));
+      if (res.ok && !synced) {
+        setSaveMessage("저장했지만 최근 편집이 문서 서버에 다 닿지 않아 파일에 빠졌을 수 있어요. 잠시 뒤 다시 저장해 주세요.");
+      } else {
+        setSaveMessage(res.ok ? "저장했어요. 작업 폴더 파일에 반영됐어요." : (body.error ?? "저장하지 못했어요."));
+      }
       if (res.ok) return "saved";
       return res.status === 409 ? "no-editor" : "failed";
     } catch {

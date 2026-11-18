@@ -18,6 +18,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_paragraphs
 from docmill.tools.provenance import slide_parts
 from docmill.tools.review import (
     _A,
@@ -58,6 +59,10 @@ _PLACEHOLDER = re.compile(
     r"(?<![A-Za-z])(?:TBD|TBA)(?![A-Za-z])|\[[^\]\n]*(?:작성|입력)[^\]\n]*\]|[○◯□]{2,}|XXX+"
 )
 _TITLE_STYLE = re.compile(r"(?:heading\s*\d*|title|제목\s*\d*)", re.IGNORECASE)
+# 한글의 제목 스타일: 기본 "개요 N"(Outline N)과 사용자가 만든 "제목" 계열.
+_HWP_TITLE_STYLE = re.compile(
+    r"(?:개요\s*\d+|outline\s*\d+|heading\s*\d*|title|제목\s*\d*)", re.IGNORECASE
+)
 _TITLE_PLACEHOLDERS = {"title", "ctrTitle"}
 
 
@@ -182,8 +187,27 @@ def _pptx_empty_titles(archive: zipfile.ZipFile) -> list[dict[str, Any]]:
     return found
 
 
+def _hwp_empty_titles(document: Path) -> list[dict[str, Any]]:
+    try:
+        paragraphs = read_hwp_paragraphs(document)
+    except HwpError as exc:
+        raise ReviewError("read", str(exc)) from exc
+    return [
+        _entry({"section": p["section"], "paragraph": p["paragraph"]}, "")
+        for p in paragraphs
+        if (
+            _HWP_TITLE_STYLE.fullmatch(str(p.get("style", "")).strip())
+            or _HWP_TITLE_STYLE.fullmatch(str(p.get("styleEnglish", "")).strip())
+        )
+        and not str(p.get("text", "")).strip()
+    ]
+
+
 def check_empty_titles(document: Path) -> dict[str, Any]:
-    """제목 서식인데 글자가 없는 문단·제목 상자를 찾는다."""
+    """제목 서식인데 글자가 없는 문단·제목 상자를 찾는다 (hwp는 개요·제목 스타일 문단)."""
+    if is_hwp(document):
+        found = _hwp_empty_titles(document)
+        return _check(EMPTY_TITLE, _status(found, WARN), found)
     finder = _docx_empty_titles if document.suffix.lower() == ".docx" else _pptx_empty_titles
     try:
         with zipfile.ZipFile(document) as archive:
