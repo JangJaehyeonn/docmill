@@ -30,6 +30,7 @@ export function App() {
   const [tabState, setTabState] = useState<TabState>({ tabs: [], active: null });
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
+  const [listLoaded, setListLoaded] = useState(false);
   const [choices, setChoices] = useState<string[]>([]);
   const [editorStates, setEditorStates] = useState<Record<string, EditorState>>({});
   const [pageCounts, setPageCounts] = useState<Record<string, number>>({});
@@ -60,6 +61,8 @@ export function App() {
       setLoadFailed(true);
       setError(LOAD_ERROR);
       return false;
+    } finally {
+      setListLoaded(true);
     }
   }, [refresh]);
 
@@ -256,9 +259,12 @@ export function App() {
 
       <div className="body">
         <aside className="sidebar">
-          <button className="primary" onClick={() => picker.current?.click()}>
-            파일 열기
-          </button>
+          {/* 파일 목록과 함께 나타나도록 첫 조회가 끝난 뒤에 보여 준다. */}
+          {listLoaded && (
+            <button className="primary" onClick={() => picker.current?.click()}>
+              파일 열기
+            </button>
+          )}
           <input
             ref={picker}
             type="file"
