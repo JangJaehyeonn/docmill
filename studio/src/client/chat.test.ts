@@ -4,7 +4,7 @@ import {
   formatPreflight,
   PREFLIGHT_FAILED,
   PREFLIGHT_NO_EDITOR_NOTE,
-  PREFLIGHT_SAVE_FAILED,
+  PREFLIGHT_UNSAVED_NOTE,
   preflightText,
   splitEvents,
   type ChatItem,
@@ -66,17 +66,12 @@ describe("preflightText", () => {
     expect(text).toBe(`${PREFLIGHT_NO_EDITOR_NOTE}\n보내기 전 점검 결과\n개인정보: 통과`);
   });
 
-  it("저장이 실패하거나 예외가 나면 낡은 파일로 점검하지 않는다", async () => {
-    const calls: string[] = [];
-    const fetchFn = (async (url: string) => {
-      calls.push(url);
-      return new Response(JSON.stringify(body));
-    }) as typeof fetch;
-    expect(await preflightText("a.docx", async () => "failed" as const, fetchFn)).toBe(PREFLIGHT_SAVE_FAILED);
+  it("저장이 실패하거나 예외가 나도 점검하되, 편집 내용이 빠졌다는 경고를 붙인다", async () => {
+    const expected = `${PREFLIGHT_UNSAVED_NOTE}\n보내기 전 점검 결과\n개인정보: 통과`;
+    expect(await preflightText("a.docx", async () => "failed" as const, okFetch)).toBe(expected);
     expect(
-      await preflightText("a.docx", async () => Promise.reject(new Error("x")), fetchFn),
-    ).toBe(PREFLIGHT_SAVE_FAILED);
-    expect(calls).toEqual([]);
+      await preflightText("a.docx", async () => Promise.reject(new Error("x")), okFetch),
+    ).toBe(expected);
   });
 
   it("점검 요청 자체가 실패하면 오류 문구를 쓴다", async () => {

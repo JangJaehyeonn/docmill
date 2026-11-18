@@ -60,40 +60,48 @@ const MAX_HWP_BYTES = 256 * 1024 * 1024;
 const sessionKeys = new Map<string, string>();
 
 /**
- * 강제 저장을 요청하고 콜백이 실제로 파일을 쓰기를 기다리는 대기자 (경로 → 결과 알림 함수들).
- * 문서 서버는 강제 저장 명령을 접수만 하고 파일은 나중에 콜백으로 보내므로, 저장 응답을
- * 콜백 처리 뒤로 미뤄야 저장 직후 디스크 파일을 읽는 쪽(보내기 전 점검 등)이 최신 내용을 본다.
+ * 강제 저장 요청별 대기자 (요청 토큰 → 결과 알림). 토큰은 forcesave 명령의 userdata로 보내고,
+ * 문서 서버가 그 저장의 콜백에 userdata로 돌려준다. 문서 서버는 명령을 접수만 하고 파일은 나중에
+ * 콜백으로 보내므로, 저장 응답을 "이 요청의" 콜백 처리 뒤로 미뤄야 저장 직후 디스크 파일을 읽는 쪽
+ * (보내기 전 점검 등)이 최신 내용을 본다. 앞선 저장의 콜백은 뒤 요청을 깨우지 않는다.
  */
-const saveWaiters = new Map<string, Set<(ok: boolean) => void>>();
+const saveWaiters = new Map<string, (ok: boolean) => void>();
 
-/** 경로의 다음 저장 콜백 결과를 기다린다. 시간이 지나면 null. */
-function waitForSaved(rel: string, ms: number): { promise: Promise<boolean | null>; cancel: () => void } {
+interface SaveWait {
+  token: string;
+  promise: Promise<boolean | null>;
+  /** 명령이 접수된 뒤 호출해 콜백 대기 시간을 잰다. 시간이 지나면 promise가 null로 끝난다. */
+  start: (ms: number) => void;
+  cancel: () => void;
+}
+
+/** 강제 저장 한 번의 콜백 결과를 기다린다 (명령을 보내기 전에 만들어 빠른 콜백도 놓치지 않는다). */
+function waitForSaved(): SaveWait {
+  const token = randomBytes(12).toString("hex");
+  let timer: NodeJS.Timeout | undefined;
   let done: (ok: boolean | null) => void = () => undefined;
   const promise = new Promise<boolean | null>((resolve) => {
     done = resolve;
   });
-  const set = saveWaiters.get(rel) ?? new Set<(ok: boolean) => void>();
-  saveWaiters.set(rel, set);
-  const cleanup = (): void => {
-    clearTimeout(timer);
-    set.delete(waiter);
-    if (set.size === 0 && saveWaiters.get(rel) === set) saveWaiters.delete(rel);
-  };
-  const waiter = (ok: boolean): void => {
-    cleanup();
+  const finish = (ok: boolean | null): void => {
+    if (timer) clearTimeout(timer);
+    saveWaiters.delete(token);
     done(ok);
   };
-  const timer = setTimeout(() => {
-    cleanup();
-    done(null);
-  }, ms);
-  set.add(waiter);
-  return { promise, cancel: () => { cleanup(); done(null); } };
+  saveWaiters.set(token, (ok) => finish(ok));
+  return {
+    token,
+    promise,
+    start: (ms) => {
+      if (saveWaiters.has(token)) timer = setTimeout(() => finish(null), ms);
+    },
+    cancel: () => finish(null),
+  };
 }
 
-/** 저장 콜백 처리 결과를 기다리던 쪽에 알린다. */
-function notifySaveWaiters(rel: string, ok: boolean): void {
-  for (const w of [...(saveWaiters.get(rel) ?? [])]) w(ok);
+/** 저장 콜백 처리 결과를 그 요청을 기다리던 쪽에만 알린다. */
+function notifySaveWaiter(token: unknown, ok: boolean): void {
+  if (typeof token === "string") saveWaiters.get(token)?.(ok);
 }
 
 /** 적용·취소를 기다리는 미리보기 (ID → 원본·사본). */
@@ -396,7 +404,12 @@ async function saveCallback(
   if (!verifyPathSig(secretOf(opts), signed.rel, query.get("sig"))) {
     return sendJson(res, 403, { error: "서명이 없거나 맞지 않는 요청입니다." });
   }
-  const body = (await readBody(req)) as { status?: unknown; url?: unknown; key?: unknown };
+  const body = (await readBody(req)) as {
+    status?: unknown;
+    url?: unknown;
+    key?: unknown;
+    userdata?: unknown;
+  };
   console.error("저장 콜백 수신: status=%s", String(body.status));
   const server = normalizeUrl(opts.onlyofficeUrl);
   if (body.status === 4 && typeof body.key === "string") {
@@ -418,21 +431,22 @@ async function saveCallback(
       await replaceFile(file.abs, Buffer.from(await download.arrayBuffer()));
       // 상태 2 = 최종 저장: 세션이 끝났으니 다음에 열 때 새 키를 발급한다.
       if (body.status === 2) sessionKeys.delete(file.rel);
-      notifySaveWaiters(file.rel, true);
+      notifySaveWaiter(body.userdata, true);
     } catch (err) {
       console.error("저장 콜백 처리 실패:", err);
-      notifySaveWaiters(file.rel, false);
+      notifySaveWaiter(body.userdata, false);
       return sendJson(res, 200, { error: 1 });
     }
   }
   sendJson(res, 200, { error: 0 });
 }
 
-async function commandForceSave(server: string, key: string): Promise<number> {
+async function commandForceSave(server: string, key: string, userdata: string): Promise<number> {
   const r = await fetch(`${server}/coauthoring/CommandService.ashx`, {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ c: "forcesave", key }),
+    // userdata는 이 저장의 콜백에 그대로 돌아와, 어떤 요청의 저장인지 구분하는 데 쓴다.
+    body: JSON.stringify({ c: "forcesave", key, userdata }),
   });
   return ((await r.json()) as { error?: number }).error ?? -1;
 }
@@ -447,16 +461,16 @@ async function forceSave(
   const key = sessionKeys.get(rel);
   if (!server || !key) return sendJson(res, 409, { error: "저장할 편집기가 열려 있지 않습니다." });
   // 명령을 보내기 전에 대기를 걸어 두어야 빠르게 오는 콜백도 놓치지 않는다.
-  const saved = waitForSaved(rel, opts.saveWaitMs ?? 30_000);
+  const saved = waitForSaved();
   try {
     // error 4 = 아직 반영할 변경이 없음. 편집 내용이 문서 서버에 닿을 시간을 주고 몇 번 다시 요청한다.
     // error 1 = 이 키의 편집 세션이 아직 문서 서버에 없음. 방금 한 편집이 아직 닿지 않았을 수도 있으므로
     // 잠깐(최대 retryOneSec초) 다시 요청하고, 그래도 1이면 편집이 없는 것으로 본다 (연 뒤 바로 점검하는 경우).
     const retryOneSec = opts.forceSaveRetryOneSec ?? 5;
-    let code = await commandForceSave(server, key);
+    let code = await commandForceSave(server, key, saved.token);
     for (let i = 0; i < 30 && (code === 4 || (code === 1 && i < retryOneSec)); i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      code = await commandForceSave(server, key);
+      code = await commandForceSave(server, key, saved.token);
     }
     const unchanged = code === 1 || code === 4;
     if (code !== 0 && !unchanged) throw new Error(`문서 서버 오류 ${code}`);
@@ -464,7 +478,8 @@ async function forceSave(
       saved.cancel();
       return sendJson(res, 200, { ok: true, unchanged });
     }
-    // 접수됨(0): 콜백이 파일을 다 쓸 때까지 기다린 뒤 응답한다.
+    // 접수됨(0): 대기 시간은 지금(접수 시점)부터 잰다. 이 요청의 콜백이 파일을 다 쓸 때까지 기다린다.
+    saved.start(opts.saveWaitMs ?? 30_000);
     const ok = await saved.promise;
     if (ok === null) return sendJson(res, 504, { error: "문서 서버의 저장이 시간 안에 끝나지 않았습니다." });
     if (!ok) return sendJson(res, 502, { error: "문서 서버에서 받은 파일을 쓰지 못했습니다." });

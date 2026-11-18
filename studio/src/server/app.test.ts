@@ -130,7 +130,7 @@ describe("createApp", () => {
 
   /** 가짜 문서 서버: 강제 저장을 받으면 error 0을 돌려주고, mode에 따라 저장 콜백을 보낸다. */
   async function fakeDocServer(
-    mode: "callback" | "silent" | "bad-download" | "late-session",
+    mode: "callback" | "silent" | "bad-download" | "late-session" | "stale-callback",
     callbackUrl: () => string,
     key: () => string,
   ): Promise<{ url: string; close: () => void }> {
@@ -138,20 +138,30 @@ describe("createApp", () => {
     let calls = 0;
     const fake = http.createServer((req, res) => {
       if (req.url?.startsWith("/coauthoring/CommandService.ashx")) {
-        res.setHeader("content-type", "application/json");
-        // late-session: 방금 한 편집이 아직 문서 서버에 안 닿아 처음엔 error 1(세션 없음)을 돌려준다.
-        if (mode === "late-session" && calls++ === 0) return void res.end(JSON.stringify({ error: 1 }));
-        res.end(JSON.stringify({ error: 0 }));
-        if (mode !== "silent") {
-          // 실제 문서 서버처럼 접수 응답 뒤 조금 있다가 콜백을 보낸다.
+        let raw = "";
+        req.on("data", (c: Buffer) => (raw += c.toString()));
+        req.on("end", () => {
+          const { userdata } = JSON.parse(raw) as { userdata?: string };
+          res.setHeader("content-type", "application/json");
+          // late-session: 방금 한 편집이 아직 문서 서버에 안 닿아 처음엔 error 1(세션 없음)을 돌려준다.
+          if (mode === "late-session" && calls++ === 0) return void res.end(JSON.stringify({ error: 1 }));
+          res.end(JSON.stringify({ error: 0 }));
+          if (mode === "silent") return;
+          // 실제 문서 서버처럼 접수 응답 뒤 조금 있다가 그 요청의 userdata를 담아 콜백을 보낸다.
+          // stale-callback: 앞선 다른 저장의 콜백만 온다 (이 요청을 끝내면 안 된다).
           setTimeout(() => {
             const file = mode === "bad-download" ? "/missing.xlsx" : "/saved.xlsx";
             void fetch(callbackUrl(), {
               method: "POST",
-              body: JSON.stringify({ status: 6, key: key(), url: `http://127.0.0.1:${port}${file}` }),
+              body: JSON.stringify({
+                status: 6,
+                key: key(),
+                url: `http://127.0.0.1:${port}${file}`,
+                userdata: mode === "stale-callback" ? "earlier-request" : userdata,
+              }),
             });
           }, 200);
-        }
+        });
         return;
       }
       if (req.url === "/saved.xlsx") return void res.end("saved-content");
@@ -168,6 +178,7 @@ describe("createApp", () => {
     ["callback", 200],
     ["late-session", 200],
     ["silent", 504],
+    ["stale-callback", 504],
     ["bad-download", 502],
   ] as const)("강제 저장 접수 뒤 콜백 결과(%s)를 기다려 %i를 돌려준다", async (mode, status) => {
     let cfg: { document: { key: string }; editorConfig: { callbackUrl: string } } | undefined;

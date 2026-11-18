@@ -124,13 +124,14 @@ export function formatPreflight(body: PreflightBody): string {
 export type SaveResult = "saved" | "no-editor" | "failed";
 
 export const PREFLIGHT_NO_EDITOR_NOTE = "편집기가 열려 있지 않아 저장된 파일을 점검했어요.";
-export const PREFLIGHT_SAVE_FAILED = "저장하지 못해 점검을 멈췄어요. 저장한 뒤 다시 시도해 주세요.";
+export const PREFLIGHT_UNSAVED_NOTE =
+  "⚠ 저장하지 못해 마지막으로 저장된 파일을 점검했어요. 편집기에서 고친 내용은 이 결과에 없어요.";
 export const PREFLIGHT_FAILED = "점검을 실행하지 못했어요. 잠시 뒤 다시 시도해 주세요.";
 
 /**
- * 먼저 저장하고, 저장이 끝난 디스크 파일로 점검해 채팅 글자를 만든다.
- * 저장이 실패하면 낡은 파일로 "통과"를 보여 주지 않도록 점검하지 않는다.
- * 편집 세션이 없으면 디스크 파일이 최신이므로 안내 한 줄을 붙여 점검한다.
+ * 먼저 저장하고(서버는 문서 서버 콜백이 파일을 다 쓴 뒤 응답한다), 디스크 파일로 점검해 채팅 글자를 만든다.
+ * 저장하지 못했으면 점검은 하되, 결과 위에 편집 내용이 빠졌다는 경고 한 줄을 붙인다 (재현 요청).
+ * 편집 세션이 없으면 디스크 파일이 최신이므로 안내 한 줄을 붙인다.
  */
 export async function preflightText(
   path: string,
@@ -143,7 +144,6 @@ export async function preflightText(
   } catch {
     saved = "failed";
   }
-  if (saved === "failed") return PREFLIGHT_SAVE_FAILED;
   let body: string;
   try {
     const res = await fetchFn(`/api/preflight?path=${encodeURIComponent(path)}`);
@@ -151,7 +151,8 @@ export async function preflightText(
   } catch {
     return PREFLIGHT_FAILED;
   }
-  return saved === "saved" ? body : `${PREFLIGHT_NO_EDITOR_NOTE}\n${body}`;
+  if (saved === "saved") return body;
+  return `${saved === "no-editor" ? PREFLIGHT_NO_EDITOR_NOTE : PREFLIGHT_UNSAVED_NOTE}\n${body}`;
 }
 
 /** 미리보기 카드의 상태를 바꾼다. */
