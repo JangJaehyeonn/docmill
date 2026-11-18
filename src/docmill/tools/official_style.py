@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import codecs
 import html
 import io
 import json
@@ -389,15 +390,50 @@ def _target_path(out_dir: str | None, run_id: str, suffix: str) -> Path:
     return final
 
 
+_XML_DECLARED = re.compile(rb"""^<\?xml[^>]*?encoding\s*=\s*["']([A-Za-z0-9._-]+)["']""")
+_XML_BOMS = (
+    (codecs.BOM_UTF8, "utf-8"),
+    (codecs.BOM_UTF16_LE, "utf-16-le"),
+    (codecs.BOM_UTF16_BE, "utf-16-be"),
+)
+
+
+@dataclass(frozen=True)
+class XmlCodec:
+    """본문 XML의 원래 인코딩(BOM 포함). 교정본을 같은 바이트 형식으로 다시 쓰는 데 쓴다."""
+
+    bom: bytes
+    encoding: str
+
+    def encode(self, xml: str) -> bytes:
+        """원본과 같은 BOM·인코딩으로 바꾼다. XML 선언과 실제 바이트가 어긋나지 않는다."""
+        return self.bom + xml.encode(self.encoding)
+
+
+def decode_xml(data: bytes) -> tuple[str, XmlCodec]:
+    """BOM과 XML 선언에 맞게 XML 바이트를 글자로 바꾼다. 둘 다 없으면 UTF-8이다."""
+    for bom, encoding in _XML_BOMS:
+        if data.startswith(bom):
+            return data[len(bom) :].decode(encoding), XmlCodec(bom, encoding)
+    if data.startswith(b"<\x00"):
+        encoding = "utf-16-le"
+    elif data.startswith(b"\x00<"):
+        encoding = "utf-16-be"
+    else:
+        declared = _XML_DECLARED.match(data)
+        encoding = declared.group(1).decode("ascii") if declared else "utf-8"
+    return data.decode(encoding), XmlCodec(b"", encoding)
+
+
 def _write_fixed(
     package: Package, suffix: str, add_end_mark: bool, out_dir: str | None, run_id: str
 ) -> tuple[Path, int]:
     try:
-        xml = package.parts["word/document.xml"].decode("utf-8")
-    except (KeyError, UnicodeDecodeError) as exc:
+        xml, codec = decode_xml(package.parts["word/document.xml"])
+    except (KeyError, UnicodeDecodeError, LookupError) as exc:
         raise StyleError("fix", f"문서를 고치지 못했습니다: {exc}") from exc
     fixed_xml, applied = fix_docx_xml(xml, add_end_mark)
-    parts = {**package.parts, "word/document.xml": fixed_xml.encode("utf-8")}
+    parts = {**package.parts, "word/document.xml": codec.encode(fixed_xml)}
     final = _target_path(out_dir, run_id, suffix)
     final.parent.mkdir(parents=True, exist_ok=True)
     final.write_bytes(package.write(parts))
@@ -412,10 +448,10 @@ def _read_docx(document: Path, fix: bool) -> tuple[Package | None, list[Segment]
         data = document.read_bytes()
         package = Package.read(data) if fix else None
         with zipfile.ZipFile(io.BytesIO(data)) as archive:
-            xml = archive.read("word/document.xml").decode("utf-8")
+            xml, _ = decode_xml(archive.read("word/document.xml"))
         ET.fromstring(xml)  # reject malformed XML like the review reader does
         segments = docx_text_segments(xml)
-    except (zipfile.BadZipFile, KeyError, OSError, ValueError, SyntaxError) as exc:
+    except (zipfile.BadZipFile, KeyError, OSError, ValueError, SyntaxError, LookupError) as exc:
         raise ReviewError("read", f"문서를 읽지 못했습니다: {exc}") from exc
     return package, segments
 

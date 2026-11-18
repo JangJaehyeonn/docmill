@@ -14,6 +14,7 @@ from docmill.tools.official_style import (
     TIME,
     apply_edits,
     check_official_style,
+    decode_xml,
     find_violations,
     fix_docx_xml,
     korean_numeral,
@@ -158,3 +159,34 @@ def test_text_box_amount_reported_once_and_saved_as_reported(tmp_path: Path) -> 
     assert f"{amounts[0]['after']}</w:t>" in fixed
     assert "<w:t>10</w:t>" in fixed
     assert json.loads(check_official_style(out["path"]))["violations"] == []
+
+
+def _write_docx(path: Path, data: bytes) -> Path:
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr("word/document.xml", data)
+    return path
+
+
+def test_utf16_document_checks_and_fixes_like_utf8(tmp_path: Path) -> None:
+    body = "<w:p><w:r><w:t>회의 2026-11-16 비용 10,150원</w:t></w:r></w:p>"
+    utf8 = (
+        '<?xml version="1.0" encoding="UTF-8"?>'
+        f'<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>'
+    )
+    utf16 = utf8.replace('encoding="UTF-8"', 'encoding="UTF-16"')
+    a = _write_docx(tmp_path / "u8.docx", utf8.encode("utf-8"))
+    b = _write_docx(tmp_path / "u16.docx", utf16.encode("utf-16"))
+    out_a = json.loads(check_official_style(str(a)))
+    out_b = json.loads(check_official_style(str(b)))
+    assert "error" not in out_b
+    assert out_b["violations"] == out_a["violations"]
+    assert [v["rule"] for v in out_b["violations"]] == [DATE, AMOUNT, END_MARK]
+    fixed = json.loads(check_official_style(str(b), fix=True, out_dir=str(tmp_path / "out")))
+    assert fixed["fixed"] == 3
+    with zipfile.ZipFile(fixed["path"]) as z:
+        raw = z.read("word/document.xml")
+    text, codec = decode_xml(raw)
+    assert raw.startswith(codec.bom) and codec.bom
+    assert 'encoding="UTF-16"' in text
+    assert "2026. 11. 16." in text and "끝.</w:t>" in text
+    assert json.loads(check_official_style(fixed["path"]))["violations"] == []
