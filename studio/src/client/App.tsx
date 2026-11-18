@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
@@ -178,17 +179,19 @@ export function App() {
     }
   };
 
-  const save = async (path: string): Promise<boolean> => {
-    if (isHwpPath(path)) return saveHwp(path);
-    setSaveMessage("저장 요청 중…");
+  const save = async (path: string): Promise<SaveResult> => {
+    if (isHwpPath(path)) return (await saveHwp(path)) ? "saved" : "failed";
+    setSaveMessage("저장 중…");
     try {
+      // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다.
       const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
-      setSaveMessage(res.ok ? "저장을 요청했어요. 곧 작업 폴더 파일에 반영돼요." : (body.error ?? "저장하지 못했어요."));
-      return res.ok;
+      setSaveMessage(res.ok ? "저장했어요. 작업 폴더 파일에 반영됐어요." : (body.error ?? "저장하지 못했어요."));
+      if (res.ok) return "saved";
+      return res.status === 409 ? "no-editor" : "failed";
     } catch {
       setSaveMessage("저장하지 못했어요.");
-      return false;
+      return "failed";
     }
   };
 

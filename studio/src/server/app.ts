@@ -47,6 +47,8 @@ export interface AppOptions {
   agentCmd?: string;
   /** rhwp 편집기 빌드 폴더(RHWP_STUDIO_DIST). `/rhwp/` 아래로 내보낸다. */
   rhwpDist?: string;
+  /** 강제 저장 뒤 문서 서버 콜백이 파일을 쓸 때까지 기다리는 시간(ms). 기본 30초. */
+  saveWaitMs?: number;
 }
 
 /** 한글 파일 저장 요청 본문의 최대 크기 (256MB). */
@@ -54,6 +56,43 @@ const MAX_HWP_BYTES = 256 * 1024 * 1024;
 
 /** 편집기 세션의 문서 키 (강제 저장 요청에 쓴다). 경로별로 가장 최근 키를 기억한다. */
 const sessionKeys = new Map<string, string>();
+
+/**
+ * 강제 저장을 요청하고 콜백이 실제로 파일을 쓰기를 기다리는 대기자 (경로 → 결과 알림 함수들).
+ * 문서 서버는 강제 저장 명령을 접수만 하고 파일은 나중에 콜백으로 보내므로, 저장 응답을
+ * 콜백 처리 뒤로 미뤄야 저장 직후 디스크 파일을 읽는 쪽(보내기 전 점검 등)이 최신 내용을 본다.
+ */
+const saveWaiters = new Map<string, Set<(ok: boolean) => void>>();
+
+/** 경로의 다음 저장 콜백 결과를 기다린다. 시간이 지나면 null. */
+function waitForSaved(rel: string, ms: number): { promise: Promise<boolean | null>; cancel: () => void } {
+  let done: (ok: boolean | null) => void = () => undefined;
+  const promise = new Promise<boolean | null>((resolve) => {
+    done = resolve;
+  });
+  const set = saveWaiters.get(rel) ?? new Set<(ok: boolean) => void>();
+  saveWaiters.set(rel, set);
+  const cleanup = (): void => {
+    clearTimeout(timer);
+    set.delete(waiter);
+    if (set.size === 0 && saveWaiters.get(rel) === set) saveWaiters.delete(rel);
+  };
+  const waiter = (ok: boolean): void => {
+    cleanup();
+    done(ok);
+  };
+  const timer = setTimeout(() => {
+    cleanup();
+    done(null);
+  }, ms);
+  set.add(waiter);
+  return { promise, cancel: () => { cleanup(); done(null); } };
+}
+
+/** 저장 콜백 처리 결과를 기다리던 쪽에 알린다. */
+function notifySaveWaiters(rel: string, ok: boolean): void {
+  for (const w of [...(saveWaiters.get(rel) ?? [])]) w(ok);
+}
 
 /** 적용·취소를 기다리는 미리보기 (ID → 원본·사본). */
 const pendingPreviews = new Map<string, PendingPreview>();
@@ -377,8 +416,10 @@ async function saveCallback(
       await replaceFile(file.abs, Buffer.from(await download.arrayBuffer()));
       // 상태 2 = 최종 저장: 세션이 끝났으니 다음에 열 때 새 키를 발급한다.
       if (body.status === 2) sessionKeys.delete(file.rel);
+      notifySaveWaiters(file.rel, true);
     } catch (err) {
       console.error("저장 콜백 처리 실패:", err);
+      notifySaveWaiters(file.rel, false);
       return sendJson(res, 200, { error: 1 });
     }
   }
@@ -403,6 +444,8 @@ async function forceSave(
   const rel = query.get("path") ?? "";
   const key = sessionKeys.get(rel);
   if (!server || !key) return sendJson(res, 409, { error: "저장할 편집기가 열려 있지 않습니다." });
+  // 명령을 보내기 전에 대기를 걸어 두어야 빠르게 오는 콜백도 놓치지 않는다.
+  const saved = waitForSaved(rel, opts.saveWaitMs ?? 30_000);
   try {
     // error 4 = 아직 반영할 변경이 없음. 편집 내용이 문서 서버에 닿을 시간을 주고 몇 번 다시 요청한다.
     let code = await commandForceSave(server, key);
@@ -413,8 +456,17 @@ async function forceSave(
     // error 1 = 이 키의 편집 세션이 아직 없음(연 뒤 편집 전). 이때도 반영할 변경이 없다고 본다.
     const unchanged = code === 1 || code === 4;
     if (code !== 0 && !unchanged) throw new Error(`문서 서버 오류 ${code}`);
-    sendJson(res, 200, { ok: true, unchanged });
+    if (unchanged) {
+      saved.cancel();
+      return sendJson(res, 200, { ok: true, unchanged });
+    }
+    // 접수됨(0): 콜백이 파일을 다 쓸 때까지 기다린 뒤 응답한다.
+    const ok = await saved.promise;
+    if (ok === null) return sendJson(res, 504, { error: "문서 서버의 저장이 시간 안에 끝나지 않았습니다." });
+    if (!ok) return sendJson(res, 502, { error: "문서 서버에서 받은 파일을 쓰지 못했습니다." });
+    sendJson(res, 200, { ok: true, unchanged: false });
   } catch (err) {
+    saved.cancel();
     console.error("저장 요청 실패:", err);
     sendJson(res, 502, { error: "문서 서버에 저장을 요청하지 못했습니다." });
   }

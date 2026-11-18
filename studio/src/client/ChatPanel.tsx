@@ -3,6 +3,7 @@ import {
   applyEvent,
   decidePreview,
   preflightText,
+  type SaveResult,
   sendChat,
   setPreviewStatus,
   type ChatEvent,
@@ -20,7 +21,7 @@ export function ChatPanel(props: {
   tabs: string[];
   active: string | null;
   onPaths: (paths: string[]) => void;
-  onSave: (path: string) => Promise<boolean>;
+  onSave: (path: string) => Promise<SaveResult>;
 }) {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [text, setText] = useState("");
@@ -89,7 +90,7 @@ export function ChatPanel(props: {
     setError(null);
     setBusy(true);
     setItems((s) => [...s, { kind: "user", id: ++counter.current, text: "보내기 전 점검" }]);
-    // 저장하지 않은 편집도 점검되도록 먼저 저장한다. 저장에 실패해도 디스크 파일로 점검한다.
+    // 저장하지 않은 편집도 점검되도록 먼저 저장하고, 저장이 끝난 파일로 점검한다.
     const text = await preflightText(path, props.onSave);
     setItems((s) => [...s, { kind: "assistant", id: ++counter.current, text }]);
     setBusy(false);
