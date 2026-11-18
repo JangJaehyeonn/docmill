@@ -74,8 +74,14 @@ jobs:
             4. 커밋 후 `git push -u origin <브랜치>`로 푸시하고 (git 명령은 `-q` 없이, `&&`로 묶지 말고 하나씩 실행하세요. 허용 목록과 정확히 맞아야 승인 없이 실행됩니다) `gh pr create`로 PR을 여세요. 제목 `feat(${{ steps.pick.outputs.fr }}): ...`, 본문에 `Closes #${{ steps.pick.outputs.issue }}`.
             5. PR을 연 뒤 `gh pr merge --auto --squash <PR번호>`로 자동 머지를 예약하세요. 검사와 리뷰가 통과해야 실제로 머지됩니다.
             6. 막히면 CLAUDE.md의 "막혔을 때" 절차를 따르세요.
+            7. 명령은 백그라운드로 돌리지 말고 끝날 때까지 기다리세요(run_in_background·Monitor 금지). 오래 걸리는 검사도 그대로 실행하세요.
+               잡에는 시간 제한이 있으니, 오래 걸리는 검사(인수 테스트, `scripts/check.py`)를 돌리기 전마다 지금까지의 작업을 커밋하고
+               PR 없이 브랜치에 푸시해 두세요. PR은 구현이 끝나고 검사가 통과한 뒤에 엽니다.
+               끝내기 전에 반드시 커밋·푸시·PR 생성까지 마치세요. 구현을 끝내지 못했으면 PR은 열지 말고, 지금까지의 작업만 커밋·푸시해
+               브랜치에 남기세요 (미완성 PR이 머지되면 안 됩니다. 남은 일은 이슈 코멘트로 적으세요).
           claude_args: >-
-            --max-turns 60
+            --max-turns 90
+            --disallowedTools "Monitor"
             --model ${{ steps.pick.outputs.model || 'claude-sonnet-5-5' }}
             --allowedTools "Read,Write,Edit,Glob,Grep,Bash(uv sync:*),Bash(uv add:*),Bash(uv run ruff:*),Bash(uv run mypy:*),Bash(uv run pytest:*),Bash(uv run python scripts/check.py),Bash(DOCMILL_ACTIVE_FRS=*),Bash(git status:*),Bash(git diff:*),Bash(git log:*),Bash(git add:*),Bash(git commit:*),Bash(git switch:*),Bash(git checkout -b claude/*),Bash(git checkout -q -b claude/*),Bash(git push -u origin claude/*),Bash(git push -q -u origin claude/*),Bash(git push -u -q origin claude/*),Bash(git push origin claude/*),Bash(gh issue view:*),Bash(gh issue comment:*),Bash(gh issue edit:*),Bash(gh pr create:*),Bash(gh pr view:*),Bash(gh pr checks:*),Bash(gh pr comment:*),Bash(gh pr merge --auto --squash:*),Bash(uv run python:*),Bash(python3:*),Bash(cd:*),Bash(ls:*),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(wc:*),Bash(grep:*),Bash(find:*),Bash(which:*),Bash(mkdir:*),Bash(cp:*),Bash(mv:*),Bash(touch:*),Bash(gridcraft-cli:*),Bash(deckcraft-cli:*),Bash(wordcraft-cli:*),Bash(gh issue list:*),Bash(npm --prefix studio:*),Bash(npm ci:*),Bash(npm install:*),Bash(npm run:*),Bash(npx:*),Bash(node:*),Bash(uv run playwright:*)"
       - name: PR을 열지 못했으면 사람에게 넘기기
