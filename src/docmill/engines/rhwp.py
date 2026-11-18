@@ -105,7 +105,11 @@ class RhwpTool:
             data = json.loads(done.stdout)
         except json.JSONDecodeError:
             return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
+        if not isinstance(data, list):
+            return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
         if mode == "paragraphs":
+            if not all(isinstance(x, dict) for x in data):
+                return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
             return EngineResult(ok=True, output=[dict(x) for x in data], duration_ms=millis)
         return EngineResult(ok=True, output=[str(x) for x in data], duration_ms=millis)
 

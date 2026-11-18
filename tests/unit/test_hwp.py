@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -82,3 +83,20 @@ def test_preflight_unreadable_hwp_reports_read_step(tmp_path: Path) -> None:
     with pytest.raises(ReviewError) as info:
         check_empty_titles(broken)
     assert info.value.step == "read"
+
+
+@pytest.mark.parametrize(
+    ("stdout", "mode"),
+    [("null", "lines"), ("3", "lines"), ("null", "paragraphs"), ('[1, "a"]', "paragraphs")],
+)
+def test_unexpected_reader_output_is_failed_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stdout: str, mode: str
+) -> None:
+    def fake_run(*args: object, **kwargs: object) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(args=[], returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr(rhwp.shutil, "which", lambda _: "node")
+    monkeypatch.setattr(rhwp, "_core_dir", lambda: tmp_path)
+    monkeypatch.setattr(rhwp.subprocess, "run", fake_run)
+    result = rhwp.RhwpTool(tmp_path)._read(tmp_path / "input.hwp", mode)
+    assert not result.ok and result.message == "한글 문서 읽기 결과를 해석하지 못했다"
