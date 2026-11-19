@@ -149,7 +149,20 @@ def measure_size(document: Path, segments: list[Segment]) -> int:
     if pages:
         return pages
     chars = sum(len(s.text) for s in segments)
-    return max(1, math.ceil(chars / CHARS_PER_PAGE))
+    estimate = max(1, math.ceil(chars / CHARS_PER_PAGE))
+    if suffix == ".docx":
+        return max(estimate, _docx_page_breaks(document) + 1)
+    return estimate
+
+
+def _docx_page_breaks(document: Path) -> int:
+    """word/document.xml의 쪽 나누기(`w:br w:type="page"`) 개수."""
+    try:
+        with zipfile.ZipFile(document) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+    except (KeyError, zipfile.BadZipFile, ET.ParseError, OSError):
+        return 0
+    return sum(1 for br in root.iter(f"{_W}br") if br.get(f"{_W}type") == "page")
 
 
 def _slide_count(document: Path) -> int | None:
@@ -179,7 +192,9 @@ def _conclusion_items(segments: list[Segment]) -> list[dict[str, Any]]:
                 return []
             reason = "결론이 뒤에 있음"
             return [{"reason": reason, "text": segment.text, "location": segment.location}]
-    return []
+    if not texts:
+        return []
+    return [{"reason": "결론을 찾지 못함", "text": "결론 문장이 없어요", "location": {}}]
 
 
 def _evidence_items(document: Path) -> list[dict[str, Any]]:
@@ -231,7 +246,9 @@ def register_reviewer(
         path = _store(who)
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {"reviewer": who, "rules": rules}
-        path.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
+        tmp.replace(path)
         result: dict[str, Any] = {**record, "comment_count": len(collected)}
         if not rules:
             result["message"] = "코멘트에서 뽑을 기준을 찾지 못했어요."
@@ -254,8 +271,8 @@ def rehearse_review(reviewer: str, document: str) -> str:
     """올리기 전에 등록된 결재자 기준으로 문서를 검사해 걸리는 곳을 돌려준다 (규칙 기반).
 
     reviewer는 register_reviewer로 등록한 이름, document는 pptx·docx 경로다. 결과 JSON의
-    items에 reason('길이 초과'·'출처 없음'·'결론이 뒤에 있음'), text, location이 담기고 길이
-    초과는 current(현재 장 수)와 limit(기준)도 담긴다. 등록하지 않은 이름이면 오류 대신
+    items에 reason('길이 초과'·'출처 없음'·'결론이 뒤에 있음'·'결론을 찾지 못함'), text, location이
+    담기고 길이 초과는 current(현재 장 수)와 limit(기준)도 담긴다. 등록하지 않은 이름이면 오류 대신
     message에 '기준이 없어요'를 돌려준다. 실패하면 error와 실패한 단계(step)를 담는다.
     """
     run_id = current_run_id() or new_run_id()

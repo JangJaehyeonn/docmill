@@ -69,3 +69,28 @@ def test_unknown_reviewer_and_comment_files(tmp_path: Path) -> None:
     assert [(r["kind"], r.get("limit")) for r in out["rules"]] == [("길이", 2), ("근거", None)]
     missing = json.loads(register_reviewer("최팀장", comments_file=str(tmp_path / "x.txt")))
     assert missing["step"] == "read"
+
+
+def test_page_breaks_set_page_floor(tmp_path: Path) -> None:
+    register_reviewer("정대리", ["한 장으로 줄여"])
+    doc = tmp_path / "a.docx"
+    br = '<w:r><w:br w:type="page"/></w:r>'
+    body = br.join(f"<w:p><w:r><w:t>{t}</w:t></w:r></w:p>" for t in "가나다라")
+    with zipfile.ZipFile(doc, "w") as z:
+        z.writestr("word/document.xml", f"<w:document {_W}><w:body>{body}</w:body></w:document>")
+    res = json.loads(rehearse_review("정대리", str(doc)))
+    assert [(i["reason"], i["current"]) for i in res["items"]] == [("길이 초과", 4)]
+
+
+def test_missing_conclusion_is_reported(tmp_path: Path) -> None:
+    register_reviewer("한이사", ["결론을 먼저 써"])
+    doc = _docx(tmp_path / "a.docx", ["배경", "현황", "계획"])
+    res = json.loads(rehearse_review("한이사", str(doc)))
+    assert [i["reason"] for i in res["items"]] == ["결론을 찾지 못함"]
+
+
+def test_reregister_replaces_without_leftover_tmp(tmp_path: Path) -> None:
+    register_reviewer("오과장", ["너무 길다"])
+    out = json.loads(register_reviewer("오과장", ["근거가 뭐야"]))
+    assert [r["kind"] for r in out["rules"]] == ["근거"]
+    assert not list((tmp_path / "home" / "reviewers").glob("*.tmp"))
