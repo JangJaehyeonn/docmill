@@ -48,11 +48,35 @@ def test_run_log_keeps_no_original(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     out = json.loads(logged(mask.mask_text)(SENTENCE, ["홍길동"]))
     logged(mask.unmask_text)(out["masked"])
     con = sqlite3.connect(tmp_path / "docmill.db")
-    rows = " ".join(" ".join(map(str, r)) for r in con.execute("SELECT * FROM tool_runs"))
+    all_rows = con.execute("SELECT * FROM tool_runs").fetchall()
     con.close()
-    for secret in ["900101", "010-1234", "example.com", "홍길동"]:
-        assert secret not in rows
-    assert "mask_text" in rows
+    for tool in ("mask_text", "unmask_text"):
+        mine = [r for r in all_rows if tool in map(str, r)]
+        assert len(mine) == 1, tool
+        row = " ".join(map(str, mine[0]))
+        for secret in ["900101", "010-1234", "example.com", "홍길동"]:
+            assert secret not in row
+
+
+def test_existing_placeholder_is_not_reissued() -> None:
+    table = MaskTable()
+    masked, _ = table.mask("[이름1] / 홍길동", ["홍길동"])
+    assert masked == "[이름1] / [이름2]"
+    assert table.unmask(masked) == "[이름1] / 홍길동"
+
+
+def test_repeated_values_share_one_placeholder() -> None:
+    text = " ".join(["010-1234-5678"] * 200)
+    masked, used = MaskTable().mask(text)
+    assert masked == " ".join(["[전화번호1]"] * 200)
+    assert len(used) == 1
+
+
+def test_name_on_length_boundary_is_masked_before_truncation(tmp_path: Path) -> None:
+    doc = tmp_path / "a.docx"
+    _docx(doc, "가" * (mask.MAX_DOC_CHARS - 2) + "홍길동님")
+    out = mask.mask_documents({"paths": [str(doc)], "names": ["홍길동님"]})
+    assert "홍길동" not in out["documents"][0]["text"]
 
 
 def _docx(path: Path, text: str) -> None:

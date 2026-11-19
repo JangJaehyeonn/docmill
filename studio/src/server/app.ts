@@ -337,10 +337,26 @@ async function chat(
   const send = async (e: ChatEvent): Promise<void> => {
     const info = e.type === "tool_result" ? parsePreview(e.text) : null;
     const reg = info ? await registerPreview(pendingPreviews, root, info) : null;
+    const failed: string[] = [];
     if (e.type === "tool_result" && info && reg) {
-      // 사본에 적용된 결과: 원본은 건드리지 않고(경로 알림 없이) 결과 뒤에 미리보기 카드를 보낸다.
-      if (!res.writableEnded) res.write(JSON.stringify({ ...e, paths: [] }) + "\n");
-      e = { type: "preview", id: reg.id, path: reg.rel, summary: info.summary };
+      // 사본에 적용된 결과: 적용하기 전에 사본의 자리표를 원래 값으로 되돌린다.
+      const copyRel = pendingPreviews.get(reg.id)?.copy;
+      const restored = copyRel ? await unmaskFile(path.join(root, ...copyRel.split("/")), table) : false;
+      if (!restored) {
+        pendingPreviews.delete(reg.id);
+        if (!res.writableEnded) {
+          res.write(
+            JSON.stringify({ type: "error", message: `개인정보 자리표를 되돌리지 못해 미리보기를 취소했어요: ${reg.rel}` }) +
+              "\n",
+          );
+        }
+        return;
+      }
+      // 원본은 건드리지 않고(경로 알림 없이) 결과 뒤에 미리보기 카드를 보낸다.
+      if (!res.writableEnded) {
+        res.write(JSON.stringify({ ...e, text: unmaskText(e.text, table), paths: [] }) + "\n");
+      }
+      e = { type: "preview", id: reg.id, path: reg.rel, summary: info.summary.map((s) => unmaskText(s, table)) };
     } else if (e.type === "tool_result") {
       // 작업 폴더 안의 문서 파일만 상대 경로로 바꿔 알린다.
       const rel: string[] = [];
@@ -354,10 +370,14 @@ async function chat(
       // 파일이 바뀌었을 수 있으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
       for (const r of rel) {
         sessionKeys.delete(r);
-        // 에이전트가 문서에 쓴 자리표는 원래 값으로 되돌린다.
-        await unmaskFile(path.join(root, ...r.split("/")), table);
+        // 에이전트가 문서에 쓴 자리표는 원래 값으로 되돌린다. 되돌리지 못하면 완료로 알리지 않는다.
+        if (!(await unmaskFile(path.join(root, ...r.split("/")), table))) failed.push(r);
       }
-      e = { ...e, paths: rel };
+      e = { ...e, paths: rel.filter((r) => !failed.includes(r)) };
+    }
+    if (failed.length > 0 && !res.writableEnded) {
+      const message = `개인정보 자리표를 되돌리지 못한 문서가 있어요: ${failed.join(", ")}`;
+      res.write(JSON.stringify({ type: "error", message }) + "\n");
     }
     if (e.type === "assistant") e = { ...e, text: unmaskText(e.text, table) };
     else if (e.type === "tool_result") e = { ...e, text: unmaskText(e.text, table) };

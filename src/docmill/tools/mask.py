@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import bisect
 import html
 import json
 import re
@@ -42,22 +43,32 @@ class MaskTable:
 
     def __init__(self, reverse: dict[str, str] | None = None) -> None:
         self.reverse: dict[str, str] = dict(reverse or {})
+        self.reserved: set[str] = set()  # 원문에 이미 있는 자리표 모양 (새로 발급하지 않는다)
         self.forward: dict[str, str] = {v: k for k, v in self.reverse.items()}
 
     def _placeholder(self, kind: str, raw: str) -> str:
         known = self.forward.get(raw)
         if known:
             return known
-        taken = sum(1 for p in self.reverse if p.startswith(f"[{kind}"))
-        placeholder = f"[{kind}{taken + 1}]"
+        number = sum(1 for p in self.reverse if p.startswith(f"[{kind}")) + 1
+        while f"[{kind}{number}]" in self.reverse or f"[{kind}{number}]" in self.reserved:
+            number += 1
+        placeholder = f"[{kind}{number}]"
         self.reverse[placeholder] = raw
         self.forward[raw] = placeholder
         return placeholder
 
+    def reserve(self, text: str) -> None:
+        """원문에 이미 있는 자리표 모양을 예약한다. 같은 번호를 새로 발급하지 않는다."""
+        self.reserved.update(
+            m.group(0) for m in _PLACEHOLDER.finditer(text) if m.group(0) not in self.reverse
+        )
+
     def mask(self, text: str, names: list[str] | None = None) -> tuple[str, list[dict[str, str]]]:
         """가린 문장과 쓰인 자리표 목록(`placeholder`·`kind`, 원래 값 없음)을 돌려준다."""
+        self.reserve(text)
         found: list[Found] = []
-        for kind, raw in _privacy_matches(text):
+        for kind, raw in dict.fromkeys(_privacy_matches(text)):
             found += [
                 (m.start(), m.end(), _LABELS[kind], raw) for m in re.finditer(re.escape(raw), text)
             ]
@@ -84,11 +95,14 @@ class MaskTable:
 
 def _non_overlapping(found: list[Found]) -> list[Found]:
     """겹치는 구간은 먼저 잡힌 것(개인정보 형식 우선)만 남기고 위치 순으로 정렬한다."""
-    kept: list[Found] = []
+    kept: list[Found] = []  # 시작 위치 순으로 유지해 이분 탐색으로 이웃만 비교한다
     for item in found:
-        if all(item[0] >= k[1] or k[0] >= item[1] for k in kept):
-            kept.append(item)
-    return sorted(kept)
+        i = bisect.bisect_left(kept, (item[0],))
+        before_ok = i == 0 or kept[i - 1][1] <= item[0]
+        after_ok = i == len(kept) or kept[i][0] >= item[1]
+        if before_ok and after_ok:
+            kept.insert(i, item)
+    return kept
 
 
 def detect_names(text: str) -> list[str]:
@@ -129,11 +143,11 @@ def _xml_lines(data: bytes) -> list[str]:
     return html.unescape(re.sub(r"<[^>]+>", "", xml)).splitlines()
 
 
-def read_document_text(path: Path) -> str:
-    """문서 본문 글자를 줄 단위로 읽는다. 읽지 못하면 빈 문자열."""
+def read_document_text(path: Path, limit: int | None = MAX_DOC_CHARS) -> str:
+    """문서 본문 글자를 줄 단위로 읽는다. 읽지 못하면 빈 문자열. `limit`이 None이면 안 자른다."""
     if is_hwp(path):
         try:
-            return "\n".join(read_hwp_lines(path))[:MAX_DOC_CHARS]
+            return "\n".join(read_hwp_lines(path))[:limit]
         except HwpError:
             return ""
     lines: list[str] = []
@@ -149,7 +163,7 @@ def read_document_text(path: Path) -> str:
                     lines += _xml_lines(z.read(part))
     except (OSError, zipfile.BadZipFile):
         return ""
-    return "\n".join(line for line in lines if line.strip())[:MAX_DOC_CHARS]
+    return "\n".join(line for line in lines if line.strip())[:limit]
 
 
 def mask_documents(request: dict[str, Any]) -> dict[str, Any]:
@@ -160,11 +174,14 @@ def mask_documents(request: dict[str, Any]) -> dict[str, Any]:
     """
     table = MaskTable({str(k): str(v) for k, v in dict(request.get("table") or {}).items()})
     found = [str(n) for n in request.get("names") or []]
-    raw = [(str(p), read_document_text(Path(str(p)))) for p in request.get("paths") or []]
-    for _, text in raw:
+    # 길이를 자르기 전에 전체 본문을 가려야 경계에 걸친 이름이 새지 않는다.
+    raw = [(str(p), read_document_text(Path(str(p)), None)) for p in request.get("paths") or []]
+    message_raw = str(request.get("message") or "")
+    for _, text in [*raw, ("", message_raw)]:
+        table.reserve(text)
         found += [n for n in detect_names(text) if n not in found]
-    docs = [{"path": p, "text": table.mask(t, found)[0]} for p, t in raw]
-    message = table.mask(str(request.get("message") or ""), found)[0]
+    docs = [{"path": p, "text": table.mask(t, found)[0][:MAX_DOC_CHARS]} for p, t in raw]
+    message = table.mask(message_raw, found)[0]
     return {"documents": docs, "message": message, "table": table.reverse}
 
 
@@ -183,7 +200,7 @@ def unmask_document(path: Path, table: dict[str, str]) -> int:
         if hits:
             count += len(hits)
             new = _PLACEHOLDER.sub(
-                lambda m: html.escape(mapping.reverse.get(m.group(0), m.group(0)), quote=False),
+                lambda m: html.escape(mapping.reverse.get(m.group(0), m.group(0)), quote=True),
                 text,
             )
             blobs[info.filename] = new.encode("utf-8")
