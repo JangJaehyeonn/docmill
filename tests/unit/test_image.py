@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import struct
+import subprocess
 import zipfile
 import zlib
 from pathlib import Path
 
 import pytest
 
+from docmill.engines import rhwp
 from docmill.tools import image as image_module
 from docmill.tools.image import (
     ImageDisabled,
@@ -178,6 +181,7 @@ def test_add_relationship_keeps_existing_relations() -> None:
         ("meeting_1111.docx", None, 9999),
         ("meeting_1111.hwp", None, None),
         ("meeting_1111.hwp", None, -1),
+        ("meeting_1111.hwp", None, 9999),
     ],
 )
 def test_bad_location_does_not_call_provider(
@@ -202,3 +206,75 @@ def test_bad_location_does_not_call_provider(
     assert out["step"] == "scope"
     assert calls == []
     assert not (fake / "o").exists()
+
+
+_TO_HWPX = """
+import { readFileSync, writeFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { join } from "node:path";
+const [dir, input, output] = process.argv.slice(1);
+const core = await import(pathToFileURL(join(dir, "rhwp.js")).href);
+core.initSync({ module: readFileSync(join(dir, "rhwp_bg.wasm")) });
+globalThis.measureTextWidth = () => 8;
+const doc = new core.HwpDocument(new Uint8Array(readFileSync(input)));
+writeFileSync(output, doc.exportHwpx());
+"""
+
+
+def _hwpx(target: Path) -> Path:
+    """hwp 견본을 rhwp로 hwpx로 바꿔 저장한다."""
+    node, core = shutil.which("node"), rhwp._core_dir()
+    assert node is not None and core is not None
+    subprocess.run(
+        [
+            node,
+            "--input-type=module",
+            "-e",
+            _TO_HWPX,
+            "--",
+            str(core),
+            str(FIXTURES / "meeting_1111.hwp"),
+            str(target),
+        ],
+        check=True,
+        timeout=60,
+    )
+    return target
+
+
+def test_hwpx_paragraph_over_count_does_not_call_provider(
+    fake: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    src = _hwpx(fake / "meeting.hwpx")
+    count = rhwp.count_paragraphs(src)
+    assert count.ok and count.output > 0
+    calls: list[str] = []
+    monkeypatch.setattr(image_module, "_fake", lambda prompt, path: calls.append(prompt) or b"")
+    out = json.loads(
+        insert_image(
+            str(src),
+            "그림",
+            after_paragraph=count.output + 1,
+            provider="fake",
+            out_dir=str(fake / "o"),
+        )
+    )
+    assert out["step"] == "scope"
+    assert calls == []
+    assert not (fake / "o").exists()
+
+
+def test_hwp_last_paragraph_is_accepted(fake: Path) -> None:
+    src = FIXTURES / "meeting_1111.hwp"
+    count = rhwp.count_paragraphs(src)
+    assert count.ok
+    out = json.loads(
+        insert_image(
+            str(src),
+            "그림",
+            after_paragraph=count.output,
+            provider="fake",
+            out_dir=str(fake / "o"),
+        )
+    )
+    assert "error" not in out, out

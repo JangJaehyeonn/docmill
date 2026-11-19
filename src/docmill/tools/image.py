@@ -27,7 +27,7 @@ from xml.dom import minidom
 from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import quoteattr
 
-from docmill.engines.rhwp import insert_picture
+from docmill.engines.rhwp import count_paragraphs, insert_picture
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.edits import Parts, _start_tag
 from docmill.tools.guard import GuardError, Outcome, guard_edit, summary
@@ -348,6 +348,16 @@ def _disabled(exc: ImageDisabled, run_id: str) -> dict[str, Any]:
     }
 
 
+def _check_hwp_paragraph(source: Path, paragraph: int) -> None:
+    """hwp·hwpx 문단 수를 읽어 삽입 위치의 상한을 검사한다."""
+    counted = count_paragraphs(source)
+    if not counted.ok:
+        raise GuardError("input", counted.message)
+    count = int(counted.output)
+    if paragraph > count:
+        raise GuardError("scope", f"문단 번호가 올바르지 않다: {paragraph} (1~{count})")
+
+
 def _check_location(
     source: Path, kind: str, slide: int | None, after_paragraph: int | None
 ) -> None:
@@ -362,7 +372,8 @@ def _check_location(
                 "scope", f"after_paragraph(1부터 문단 번호)가 올바르지 않다: {after_paragraph}"
             )
         if kind in HWP_SUFFIXES:
-            return  # the upper bound is checked by the rhwp adapter
+            _check_hwp_paragraph(source, after_paragraph)
+            return
     try:
         package = Package.read(source.read_bytes())
         if kind == ".pptx":

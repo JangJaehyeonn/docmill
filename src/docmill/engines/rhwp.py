@@ -174,3 +174,12 @@ def read_tables(path: Path, timeout: float = 60) -> EngineResult:
 def read_paragraphs(path: Path, timeout: float = 60) -> EngineResult:
     """임시 작업 폴더에서 hwp·hwpx 문단을 스타일 이름과 함께 읽는다 (구역·문단 번호는 1부터)."""
     return _run(path, "get_paragraphs", timeout)
+
+
+def count_paragraphs(path: Path, timeout: float = 60) -> EngineResult:
+    """hwp·hwpx 첫 구역의 본문 문단 수를 센다 (그림 삽입 위치의 상한, output은 int)."""
+    read = read_paragraphs(path, timeout)
+    if not read.ok:
+        return read
+    count = sum(1 for p in read.output if p.get("section") == 1)
+    return EngineResult(ok=True, output=count, duration_ms=read.duration_ms)
