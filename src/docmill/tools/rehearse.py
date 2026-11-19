@@ -14,7 +14,9 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import tempfile
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -246,9 +248,7 @@ def register_reviewer(
         path = _store(who)
         path.parent.mkdir(parents=True, exist_ok=True)
         record = {"reviewer": who, "rules": rules}
-        tmp = path.with_name(path.name + ".tmp")
-        tmp.write_text(json.dumps(record, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(path)
+        _write_atomic(path, json.dumps(record, ensure_ascii=False, indent=2))
         result: dict[str, Any] = {**record, "comment_count": len(collected)}
         if not rules:
             result["message"] = "코멘트에서 뽑을 기준을 찾지 못했어요."
@@ -257,6 +257,18 @@ def register_reviewer(
     except Exception as exc:  # failures must not kill the server
         result = {"error": f"{type(exc).__name__}: {exc}", "step": "unexpected"}
     return _dump(result, run_id)
+
+
+def _write_atomic(path: Path, text: str) -> None:
+    """호출마다 고유한 임시 파일에 완성된 내용을 쓴 뒤 교체한다. 실패하면 기존 파일을 유지한다."""
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(text)
+        os.replace(tmp_name, path)
+    except BaseException:
+        Path(tmp_name).unlink(missing_ok=True)
+        raise
 
 
 def _load_rules(name: str) -> list[dict[str, Any]] | None:
