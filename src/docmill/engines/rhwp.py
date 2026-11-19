@@ -121,6 +121,46 @@ def _run(path: Path, command: str, timeout: float) -> EngineResult:
         return opened if not opened.ok else tool.execute(command, {})
 
 
+def insert_picture(
+    path: Path,
+    out: Path,
+    image: Path,
+    paragraph: int,
+    size: tuple[int, int, int, int],
+    description: str,
+    timeout: float = 60,
+) -> EngineResult:
+    """hwp·hwpx 본문 문단(1부터) 뒤에 새 문단을 만들어 PNG 그림을 넣고 hwp로 저장한다.
+
+    size는 (너비 HWPUNIT, 높이 HWPUNIT, 원본 너비 px, 원본 높이 px)다.
+    """
+    node = shutil.which("node")
+    core = _core_dir()
+    if node is None or core is None:
+        return EngineResult(ok=False, message="한글 문서 편집 도구(Node, @rhwp/core)를 찾지 못했다")
+    script = Path(__file__).resolve().parent.parent / "tools" / "hwp_image.mjs"
+    command = [node, str(script), str(core), str(path), str(out), str(image), "png"]
+    command += [str(paragraph), *(str(n) for n in size), description]
+    try:
+        done = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=timeout,
+            check=False,
+            cwd=out.parent,
+        )
+    except subprocess.TimeoutExpired:
+        return EngineResult(ok=False, message=f"한글 문서 편집이 {timeout:g}초를 넘겼다")
+    except OSError as exc:
+        return EngineResult(ok=False, message=f"한글 문서 편집을 시작하지 못했다: {exc}")
+    if done.returncode != 0 or not out.is_file():
+        reason = done.stderr.strip() or f"종료 코드 {done.returncode}"
+        return EngineResult(ok=False, message=f"한글 문서에 그림을 넣지 못했다: {reason}")
+    return EngineResult(ok=True)
+
+
 def read_lines(path: Path, timeout: float = 60) -> EngineResult:
     """임시 작업 폴더에서 hwp·hwpx 문단 글자를 줄 목록으로 읽는다."""
     return _run(path, "get_text", timeout)
