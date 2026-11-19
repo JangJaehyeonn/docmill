@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import re
 import zipfile
 from dataclasses import dataclass, field
@@ -23,7 +24,7 @@ from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.contradictions import read_content
-from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_paragraphs, read_hwp_tables
 from docmill.tools.review import ReviewError
 
 NUMBER = "숫자"
@@ -33,7 +34,9 @@ CELL = "표 셀"
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
-_NUM = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# A leading "-" is a sign only when it does not follow a word character ("2026-11-20" is a date).
+_NUM = re.compile(r"(?:(?<![\w])-)?\d[\d,]*(?:\.\d+)?")
+_SENTENCE_END = re.compile(r"(?<=[.!?。])\s+")
 _XLSX = (".xlsx",)
 _OOXML = (".docx", ".pptx")
 
@@ -72,7 +75,8 @@ def _sheet_parts(archive: zipfile.ZipFile) -> list[tuple[str, str]]:
     out: list[tuple[str, str]] = []
     for sheet in book.iter(f"{_S}sheet"):
         target = targets.get(sheet.get(f"{_R}id", ""), "")
-        part = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
+        joined = target.lstrip("/") if target.startswith("/") else f"xl/{target}"
+        part = posixpath.normpath(joined)
         out.append((sheet.get("name", ""), part))
     return out
 
@@ -117,6 +121,18 @@ def _ooxml_snapshot(path: Path) -> Snapshot:
     return snap
 
 
+def _hwp_snapshot(path: Path) -> Snapshot:
+    """hwp 본문 문단과 표 셀(표·행·열 위치)을 읽는다."""
+    snap = Snapshot()
+    for para in read_hwp_paragraphs(path):
+        place = f"구역 {para['section']} 문단 {para['paragraph']}"
+        snap.prose.append((place, str(para["text"])))
+    for cell in read_hwp_tables(path):
+        where = f"구역 {cell['section']} 문단 {cell['paragraph']} 표 {cell['table']}"
+        snap.cells[f"{where} {cell['row']}행 {cell['col']}열"] = str(cell["text"])
+    return snap
+
+
 def read_snapshot(path: Path) -> Snapshot:
     """문서에서 본문 문단과 셀 값을 읽는다. 읽지 못하면 ReviewError."""
     suffix = path.suffix.lower()
@@ -124,7 +140,7 @@ def read_snapshot(path: Path) -> Snapshot:
         raise ReviewError("open", f"파일을 찾을 수 없습니다: {path}")
     if is_hwp(path):
         try:
-            return Snapshot(prose=[(f"문단 {i}", t) for i, t in enumerate(read_hwp_lines(path), 1)])
+            return _hwp_snapshot(path)
         except HwpError as exc:
             raise ReviewError("read", f"문서를 읽지 못했습니다: {exc}") from exc
     if suffix not in (*_XLSX, *_OOXML):
@@ -145,8 +161,39 @@ def _change(kind: str, location: str, old: str, new: str) -> dict[str, str]:
     return {"kind": kind, "location": location, "old": old, "new": new}
 
 
+def _same_place(old: list[str], new: list[str], key: Any) -> list[tuple[int | None, int | None]]:
+    """글자(또는 key 변환값)가 같은 항목을 먼저 맞추고, 남은 같은 개수 구간만 순서대로 짝짓는다."""
+    pairs: list[tuple[int | None, int | None]] = []
+    matcher = SequenceMatcher(a=[key(t) for t in old], b=[key(t) for t in new], autojunk=False)
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        if tag == "equal" or (tag == "replace" and i2 - i1 == j2 - j1):
+            pairs += [(i1 + k, j1 + k) for k in range(i2 - i1)]
+        else:
+            pairs += [(i, None) for i in range(i1, i2)] + [(None, j) for j in range(j1, j2)]
+    return pairs
+
+
+def _align(old: list[str], new: list[str]) -> list[tuple[int | None, int | None]]:
+    """같은 글자 → 숫자만 다른 글자 순으로 짝지어 (이전 번호, 새 번호) 목록을 만든다.
+
+    짝이 없는 쪽은 None이다 (삭제·삽입). 문서 순서(새 버전 기준)를 지킨다.
+    """
+    pairs: list[tuple[int | None, int | None]] = []
+    for tag, i1, i2, j1, j2 in SequenceMatcher(a=old, b=new, autojunk=False).get_opcodes():
+        if tag == "equal":
+            continue
+        inner = _same_place(old[i1:i2], new[j1:j2], _skeleton)
+        pairs += [(None if a is None else i1 + a, None if b is None else j1 + b) for a, b in inner]
+    return pairs
+
+
 def _skeleton(text: str) -> str:
     return _NUM.sub("\0", text)
+
+
+def _number_changes(place: str, old: str, new: str) -> list[dict[str, str]]:
+    pairs = zip(_NUM.findall(old), _NUM.findall(new), strict=True)
+    return [_change(NUMBER, place, a, b) for a, b in pairs if a != b]
 
 
 def _diff_text(place: str, old: str, new: str, text_kind: str) -> list[dict[str, str]]:
@@ -154,25 +201,36 @@ def _diff_text(place: str, old: str, new: str, text_kind: str) -> list[dict[str,
     if old == new:
         return []
     if _skeleton(old) == _skeleton(new):
-        pairs = zip(_NUM.findall(old), _NUM.findall(new), strict=True)
-        return [_change(NUMBER, place, a, b) for a, b in pairs if a != b]
+        return _number_changes(place, old, new)
     return [_change(text_kind, place, old, new)]
 
 
+def _diff_paragraph(place: str, old: str, new: str) -> list[dict[str, str]]:
+    """문단 하나를 비교한다. 문장이 여럿이면 문장끼리 짝지어 숫자·문장 변경을 따로 센다."""
+    if old == new:
+        return []
+    if _skeleton(old) == _skeleton(new):
+        return _number_changes(place, old, new)
+    a, b = _SENTENCE_END.split(old.strip()), _SENTENCE_END.split(new.strip())
+    if len(a) < 2 and len(b) < 2:
+        return [_change(SENTENCE, place, old, new)]
+    found: list[dict[str, str]] = []
+    for i, j in _align(a, b):
+        found += _diff_text(
+            place, a[i] if i is not None else "", b[j] if j is not None else "", SENTENCE
+        )
+    return found
+
+
 def _prose_changes(before: list[tuple[str, str]], after: list[tuple[str, str]]) -> list[Any]:
-    """문단 목록을 글자로 맞춰 본 뒤 바뀐 문단을 모은다. 위치는 새 버전 기준(없으면 이전)이다."""
+    """문단 목록을 짝지어 바뀐 문단을 모은다. 위치는 새 버전 기준(없으면 이전)이다."""
     old_texts, new_texts = [t for _, t in before], [t for _, t in after]
     found: list[dict[str, str]] = []
-    matcher = SequenceMatcher(a=old_texts, b=new_texts, autojunk=False)
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
-        if tag == "equal":
-            continue
-        span = max(i2 - i1, j2 - j1)
-        for k in range(span):
-            old = before[i1 + k] if i1 + k < i2 else None
-            new = after[j1 + k] if j1 + k < j2 else None
-            place = (new or old or ("", ""))[0]
-            found += _diff_text(place, old[1] if old else "", new[1] if new else "", SENTENCE)
+    for i, j in _align(old_texts, new_texts):
+        place = (after[j] if j is not None else before[i or 0])[0]
+        found += _diff_paragraph(
+            place, old_texts[i] if i is not None else "", new_texts[j] if j is not None else ""
+        )
     return found
 
 

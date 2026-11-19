@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   applyEvent,
   formatPreflight,
+  isCompareTool,
+  parseComparison,
   PREFLIGHT_FAILED,
   PREFLIGHT_NO_EDITOR_NOTE,
   PREFLIGHT_UNSAVED_NOTE,
@@ -77,5 +79,31 @@ describe("preflightText", () => {
   it("점검 요청 자체가 실패하면 오류 문구를 쓴다", async () => {
     const failFetch = (async () => Promise.reject(new Error("net"))) as typeof fetch;
     expect(await preflightText("a.docx", async () => "saved" as const, failFetch)).toBe(PREFLIGHT_FAILED);
+  });
+});
+
+describe("compare_versions 결과", () => {
+  it("MCP 접두어가 붙은 이름도 비교 도구로 알아본다", () => {
+    expect(isCompareTool("compare_versions")).toBe(true);
+    expect(isCompareTool("mcp__docmill__compare_versions")).toBe(true);
+    expect(isCompareTool("verify_numbers")).toBe(false);
+  });
+
+  it("changes 를 종류·위치·이전 값·새 값으로 해석한다", () => {
+    const text = JSON.stringify({
+      changes: [{ kind: "숫자", location: "S B1", old: "7", new: "9" }],
+      summary: "바뀐 곳 1곳 (숫자 1곳)",
+    });
+    expect(parseComparison(text)).toEqual({
+      changes: [{ kind: "숫자", location: "S B1", old: "7", new: "9" }],
+      summary: "바뀐 곳 1곳 (숫자 1곳)",
+      error: undefined,
+    });
+  });
+
+  it("모양이 맞지 않으면 null 이다", () => {
+    expect(parseComparison(undefined)).toBeNull();
+    expect(parseComparison("not json")).toBeNull();
+    expect(parseComparison('{"other":1}')).toBeNull();
   });
 });

@@ -40,3 +40,9 @@ rhwp-studio 0.9.0에서 새 문서를 만들어 같은 문장을 입력하고 `e
 - 문단 7: 마감 `2026-11-15` → `2026-11-14` (숫자)
 `@rhwp/core` 0.9.0의 `deleteText`·`insertText`·`exportHwp`로 만들었다.
 
+## table_v1.hwp · table_v2.hwp
+
+버전 비교(FR-41)의 hwp 표 셀 점검용. `meeting_1111.hwp` 구역 1 문단 2 자리에 2×2 표를 만든 파일이다
+(`항목`·`금액` / `예산`·값). 두 파일은 2행 2열 값만 다르다: `1,200`(v1) → `1,500`(v2).
+`@rhwp/core` 0.9.0의 `createTable`·`insertTextInCell`·`exportHwp`로 만들었다.
+

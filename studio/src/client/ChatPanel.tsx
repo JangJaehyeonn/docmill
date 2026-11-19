@@ -8,7 +8,43 @@ import {
   setPreviewStatus,
   type ChatEvent,
   type ChatItem,
+  isCompareTool,
+  parseComparison,
+  type VersionComparison,
 } from "./chat";
+
+/** 버전 비교 결과(종류·위치·이전 값·새 값)를 표로 보여준다. */
+function ComparisonTable(props: { comparison: VersionComparison }) {
+  const { changes, summary, error } = props.comparison;
+  if (error) return <p role="alert">{error}</p>;
+  if (changes.length === 0) return <p className="hint">바뀐 곳이 없어요.</p>;
+  return (
+    <div>
+      <p className="hint">{summary}</p>
+      <table className="compare-table">
+        <caption>버전 비교 결과</caption>
+        <thead>
+          <tr>
+            <th scope="col">종류</th>
+            <th scope="col">위치</th>
+            <th scope="col">이전 값</th>
+            <th scope="col">새 값</th>
+          </tr>
+        </thead>
+        <tbody>
+          {changes.map((c, i) => (
+            <tr key={`${c.location}-${i}`}>
+              <td>{c.kind}</td>
+              <td>{c.location}</td>
+              <td>{c.old}</td>
+              <td>{c.new}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 interface Suggestion {
   label: string;
@@ -128,7 +164,11 @@ export function ChatPanel(props: {
           ) : it.kind === "tool" ? (
             <details key={it.id} data-role="tool-card" className="tool-card">
               <summary>도구 호출: {it.name}</summary>
-              <pre>{it.result ?? "실행 중…"}</pre>
+              {isCompareTool(it.name) && parseComparison(it.result) ? (
+                <ComparisonTable comparison={parseComparison(it.result) as VersionComparison} />
+              ) : (
+                <pre>{it.result ?? "실행 중…"}</pre>
+              )}
             </details>
           ) : it.kind === "preview" ? (
             <div key={it.id} data-role="preview-card" className="tool-card">

@@ -24,6 +24,52 @@ export type ChatEvent =
   | { type: "error"; message: string }
   | { type: "done" };
 
+/** `compare_versions` 결과의 변경 한 건. */
+export interface VersionChange {
+  kind: string;
+  location: string;
+  old: string;
+  new: string;
+}
+
+/** `compare_versions` 결과를 표로 그릴 수 있게 해석한 모양. */
+export interface VersionComparison {
+  changes: VersionChange[];
+  summary: string;
+  error?: string;
+}
+
+/** 도구 이름이 `compare_versions`(MCP 접두어 허용)인지 확인한다. */
+export function isCompareTool(name: string): boolean {
+  return name === "compare_versions" || name.endsWith("__compare_versions");
+}
+
+/** `compare_versions` 결과 글자를 해석한다. 모양이 맞지 않으면 null (원문 그대로 보여준다). */
+export function parseComparison(text: string | undefined): VersionComparison | null {
+  if (!text) return null;
+  try {
+    const body = JSON.parse(text) as Record<string, unknown>;
+    if (!body || !Array.isArray(body.changes)) return null;
+    const changes: VersionChange[] = [];
+    for (const c of body.changes as Record<string, unknown>[]) {
+      if (typeof c?.kind !== "string" || typeof c.location !== "string") return null;
+      changes.push({
+        kind: c.kind,
+        location: c.location,
+        old: String(c.old ?? ""),
+        new: String(c.new ?? ""),
+      });
+    }
+    return {
+      changes,
+      summary: typeof body.summary === "string" ? body.summary : "",
+      error: typeof body.error === "string" ? body.error : undefined,
+    };
+  } catch {
+    return null;
+  }
+}
+
 /** 이벤트 하나를 항목 목록에 반영한 새 목록을 돌려준다. */
 export function applyEvent(items: ChatItem[], event: ChatEvent, nextId: number): ChatItem[] {
   if (event.type === "tool") {
