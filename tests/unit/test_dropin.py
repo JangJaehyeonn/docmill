@@ -103,6 +103,19 @@ def test_refresh_links_fixes_dropped_table(tmp_path: Path) -> None:
         assert "1,500" in z.read("ppt/slides/slide4.xml").decode("utf-8")
 
 
+def test_refresh_keeps_dropped_cell_literal_next_to_report_pair(tmp_path: Path) -> None:
+    from docmill.tools.refresh import _renewed, _Sources
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C2")
+    dropped = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"][0]
+    report = json.loads(json.dumps(dropped))
+    report["source"].pop("literal")
+    report["source"]["criteria_range"] = "Z2:Z2"  # blank names: the pair path would total 0
+    sources = _Sources(pptx, [report, dropped])
+    assert _renewed(dropped, sources)[1] == 1200
+
+
 def test_failures_leave_document_untouched(tmp_path: Path) -> None:
     pptx, xlsx = _workspace(tmp_path)
     before = pptx.read_bytes()

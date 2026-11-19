@@ -284,6 +284,7 @@ def _numbers(
                         "sheet": sheet,
                         "aggregation": "sum",
                         "range": f"{addr}:{addr}",
+                        "literal": True,
                         "digits": digits,
                     },
                 }

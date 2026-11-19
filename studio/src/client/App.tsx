@@ -358,7 +358,7 @@ export function App() {
       if (hasOfficePending(target)) {
         // 넣는 사이 입력한 편집이 사라지지 않게 다시 불러오지 않는다.
         setDropMessage(
-          `${baseName(target)}: ${body.summary ?? "범위를 넣었어요."} 보내지 않은 편집이 있어 화면은 그대로예요. 저장한 뒤 탭을 다시 불러 주세요.`,
+          `${baseName(target)}: ${body.summary ?? "범위를 넣었어요."} 넣는 동안 입력한 편집이 있어 화면은 그대로예요. 화면의 편집은 파일에 저장되지 않았으니, 탭을 닫았다 다시 열면 넣은 표가 보이는 대신 그 편집은 사라져요.`,
         );
         return;
       }

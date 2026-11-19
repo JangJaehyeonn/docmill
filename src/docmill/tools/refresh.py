@@ -388,6 +388,8 @@ class _Sources:
         return self._cells[key]
 
     def table(self, src: dict[str, Any]) -> Table | None:
+        if src.get("literal"):
+            return None  # 끌어다 놓은 단일 셀은 같은 범위의 보고서 집계와 섞지 않는다
         pair = self._pairs.get((src["file"], src["sheet"], src["range"]))
         if pair is None:
             return None
