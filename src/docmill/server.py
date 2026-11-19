@@ -23,6 +23,7 @@ from docmill.tools.mask import mask_text, unmask_text
 from docmill.tools.official_style import check_official_style
 from docmill.tools.preflight import preflight
 from docmill.tools.refresh import refresh_links
+from docmill.tools.rehearse import register_reviewer, rehearse_review
 from docmill.tools.report import excel_to_report_ppt
 from docmill.tools.review import review_map
 from docmill.tools.suggest import suggest_actions
@@ -118,6 +119,12 @@ def _register_image(server: MCPServer) -> None:
     server.tool()(insert_image)
 
 
+def _register_rehearse(server: MCPServer) -> None:
+    """`register_reviewer`·`rehearse_review` 업무 도구(FR-43)를 등록한다."""
+    server.tool()(register_reviewer)
+    server.tool()(rehearse_review)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -134,6 +141,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_contradictions,
     _register_compare,
     _register_image,
+    _register_rehearse,
 )
 
 
