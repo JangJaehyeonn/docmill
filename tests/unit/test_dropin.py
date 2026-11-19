@@ -34,7 +34,9 @@ def test_parse_range() -> None:
     assert parse_range("$b2") == (2, 2, 2, 2)
 
 
-@pytest.mark.parametrize("bad", ["", "A1:", "C3:A1", "A5:A1", "A1:A500", "A1:ZZ2", "x"])
+@pytest.mark.parametrize(
+    "bad", ["", "A1:", "C3:A1", "A5:A1", "A1:A500", "A1:ZZ2", "x", "A1048577", "XFE1"]
+)
 def test_parse_range_rejects(bad: str) -> None:
     from docmill.tools.dropin import DropInError
 
@@ -68,8 +70,8 @@ def test_is_deterministic(tmp_path: Path) -> None:
     second.mkdir()
     pptx1, xlsx1 = _workspace(first)
     pptx2, xlsx2 = _workspace(second)
-    _run(pptx1, xlsx1)
-    _run(pptx2, xlsx2)
+    assert "error" not in _run(pptx1, xlsx1)
+    assert "error" not in _run(pptx2, xlsx2)
     assert pptx1.read_bytes() == pptx2.read_bytes()
 
 
@@ -118,3 +120,66 @@ def test_cli_command(tmp_path: Path) -> None:
     out = CliRunner().invoke(app, ["insert-range", str(pptx), str(xlsx), "A1:C16"])
     assert out.exit_code == 0
     assert json.loads(out.stdout.strip().splitlines()[-1])["slide"] == 4
+
+
+def test_parse_range_accepts_last_sheet_cell() -> None:
+    assert parse_range("XFD1048576") == (1048576, 16384, 1048576, 16384)
+
+
+def test_small_decimals_keep_their_value() -> None:
+    from docmill.tools.dropin import _cell_text, _numbers
+
+    assert _cell_text(0.004) == "0.004"
+    assert _cell_text(1200) == "1,200"
+    assert _cell_text(1200.5) == "1,200.50"
+    found = _numbers([[0.004]], (1, 1), Path("a.xlsx"), "S", 1, 3)
+    assert found[0]["value"] == 0.004 and found[0]["source"]["digits"] == 3
+
+
+def test_tall_table_fits_slide() -> None:
+    from docmill.tools.dropin import _BOTTOM, _CELL_MARGIN, _MIN_FONT, _TOP, MAX_ROWS, _font_size
+
+    for rows in (1, 16, MAX_ROWS):
+        font = _font_size(rows)
+        assert font >= _MIN_FONT
+        assert rows * (font / 100 * 12700 * 1.2 + 2 * _CELL_MARGIN) <= _BOTTOM - _TOP
+
+
+def test_prefixed_relationships_are_linked(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    with zipfile.ZipFile(pptx) as z:
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    with zipfile.ZipFile(pptx, "w") as z:
+        for info, data in items:
+            if info.filename == "ppt/_rels/presentation.xml.rels":
+                text = data.decode("utf-8")
+                text = text.replace("<Relationships", "<rel:Relationships")
+                text = text.replace("</Relationships>", "</rel:Relationships>")
+                text = text.replace("<Relationship ", "<rel:Relationship ")
+                data = text.replace(
+                    'xmlns="http://schemas.openxmlformats.org/package/2006/relationships"',
+                    'xmlns:rel="http://schemas.openxmlformats.org/package/2006/relationships"',
+                ).encode("utf-8")
+            z.writestr(info, data)
+    assert "error" not in _run(pptx, xlsx)
+    with zipfile.ZipFile(pptx) as z:
+        assert b"slides/slide4.xml" in z.read("ppt/_rels/presentation.xml.rels")
+
+
+def test_provenance_source_is_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    assert "error" not in _run(Path(pptx.name), Path(xlsx.name))
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert Path(numbers[0]["source"]["file"]).is_absolute()
+
+
+def test_cli_error_is_logged_as_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import docmill.runlog as runlog
+
+    recorded: list[str] = []
+    monkeypatch.setattr(runlog, "_safe_record", lambda **kw: recorded.append(kw["status"]))
+    pptx, xlsx = _workspace(tmp_path)
+    out = CliRunner().invoke(app, ["insert-range", str(pptx), str(xlsx), "bad"])
+    assert json.loads(out.stdout.strip().splitlines()[-1])["step"] == "range"
+    assert recorded == ["error"]

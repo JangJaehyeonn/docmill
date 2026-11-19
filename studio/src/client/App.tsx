@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
-import { waitOfficeSynced } from "./officeSync";
+import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
@@ -67,6 +67,7 @@ export function App() {
   const [rangeText, setRangeText] = useState("");
   const [dropMessage, setDropMessage] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [keyTarget, setKeyTarget] = useState("");
   const dragged = useRef<DraggedRange | null>(null);
   const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
@@ -354,6 +355,13 @@ export function App() {
         setDropMessage(body.error ?? "범위를 문서에 넣지 못했어요.");
         return;
       }
+      if (hasOfficePending(target)) {
+        // 넣는 사이 입력한 편집이 사라지지 않게 다시 불러오지 않는다.
+        setDropMessage(
+          `${baseName(target)}: ${body.summary ?? "범위를 넣었어요."} 보내지 않은 편집이 있어 화면은 그대로예요. 저장한 뒤 탭을 다시 불러 주세요.`,
+        );
+        return;
+      }
       reloadTab(target);
       setDropMessage(`${baseName(target)}: ${body.summary ?? "범위를 넣었어요."}`);
     } catch {
@@ -569,6 +577,29 @@ export function App() {
                       }}
                     >
                       범위 끌기
+                    </button>
+                    <label>
+                      넣을 PPT 탭{" "}
+                      <select value={keyTarget} onChange={(e) => setKeyTarget(e.target.value)}>
+                        <option value="">선택</option>
+                        {tabState.tabs
+                          .filter((t) => /\.pptx$/i.test(t.path))
+                          .map((t) => (
+                            <option key={t.path} value={t.path}>
+                              {baseName(t.path)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!isCellRange(rangeText) || keyTarget === ""}
+                      onClick={() => {
+                        dragged.current = { source: active.path, range: rangeText.trim() };
+                        void dropRange(keyTarget);
+                      }}
+                    >
+                      범위 넣기
                     </button>
                   </span>
                 )}

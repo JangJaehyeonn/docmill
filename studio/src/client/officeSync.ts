@@ -43,3 +43,8 @@ export function waitOfficeSynced(path: string, ms: number): Promise<boolean> {
     set.add(wake);
   });
 }
+
+/** 보내지 않은 편집이 남아 있으면 true. 문서를 다시 불러오면 그 편집이 사라진다. */
+export function hasOfficePending(path: string): boolean {
+  return pending.get(path) === true;
+}

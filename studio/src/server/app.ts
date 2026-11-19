@@ -290,12 +290,19 @@ async function insertRange(
   if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
     return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
   }
-  const body = (await readBody(req)) as { target?: unknown; source?: unknown; range?: unknown };
+  const raw: unknown = await readBody(req);
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return sendJson(res, 400, { error: "요청 본문이 올바르지 않습니다." });
+  }
+  const body = raw as { target?: unknown; source?: unknown; range?: unknown };
+  if (typeof body.target !== "string" || typeof body.source !== "string") {
+    return sendJson(res, 400, { error: "대상 문서와 원본 파일 경로가 필요합니다." });
+  }
   const range = typeof body.range === "string" ? body.range : "";
   if (!isCellRange(range)) return sendJson(res, 400, { error: "셀 범위를 A1:C16 형식으로 입력하세요." });
-  const target = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.target ?? "") }));
+  const target = await resolveQuery(opts, res, new URLSearchParams({ path: body.target }));
   if (!target) return;
-  const source = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.source ?? "") }));
+  const source = await resolveQuery(opts, res, new URLSearchParams({ path: body.source }));
   if (!source) return;
   if (!/\.pptx$/i.test(target.rel)) {
     return sendJson(res, 400, { error: "지금은 PPT(pptx) 탭에만 범위를 놓을 수 있어요." });
@@ -303,9 +310,14 @@ async function insertRange(
   if (!/\.xlsx$/i.test(source.rel)) return sendJson(res, 400, { error: "엑셀(xlsx) 탭의 범위만 끌 수 있어요." });
   const root = await fs.realpath(opts.workspace);
   const result = await withFileLock(target.rel, async () => {
+    const before = await fs.stat(target.abs);
     const r = await runInsert(target.abs, source.abs, range, root);
     // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
-    if (!r.error) sessionKeys.delete(target.rel);
+    // 응답을 잃은 실패(시간 초과 등)라도 파일이 바뀌었다면 키를 버린다.
+    const after = await fs.stat(target.abs).catch(() => before);
+    if (!r.error || after.mtimeMs !== before.mtimeMs || after.size !== before.size) {
+      sessionKeys.delete(target.rel);
+    }
     return r;
   });
   sendJson(res, result.error ? 502 : 200, { path: target.rel, ...result });

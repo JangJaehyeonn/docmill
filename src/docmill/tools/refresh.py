@@ -207,6 +207,14 @@ def _value(src: dict[str, Any], table: Table | None, cells: dict[str, Any]) -> f
 # ---------------------------------------------------------------- shown numbers
 
 
+def number_digits(value: float) -> int:
+    """표시 소수 자릿수. 정수는 0, 소수는 값이 0으로 사라지지 않게 최대 6자리까지 쓴다."""
+    if value == int(value):
+        return 0
+    text = f"{value:.6f}".rstrip("0")
+    return max(2, len(text.split(".")[1]) if "." in text else 0)
+
+
 def _display(number: float) -> int | float:
     return int(number) if number == int(number) else number
 
@@ -218,7 +226,7 @@ def _shown(src: dict[str, Any], value: float) -> tuple[float, dict[str, Any]]:
         return float(f"{value:.1f}"), src
     if agg == "count_distinct" or "digits" not in src:
         return value, src
-    digits = 0 if value == int(value) else 2
+    digits = number_digits(value)
     return float(f"{value:.{digits}f}"), {**src, "digits": digits}
 
 

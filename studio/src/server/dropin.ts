@@ -18,7 +18,11 @@ export function parseInsert(stdout: string): InsertResult {
   const failed = (error: string): InsertResult => ({ summary: "", error });
   let data: Record<string, unknown>;
   try {
-    data = JSON.parse(stdout) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(stdout);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      return failed("범위를 넣은 결과를 읽지 못했어요.");
+    }
+    data = parsed as Record<string, unknown>;
   } catch {
     return failed("범위를 넣은 결과를 읽지 못했어요.");
   }

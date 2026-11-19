@@ -81,10 +81,26 @@ def insert_range_command(
     cell_range: str = typer.Argument(..., help="넣을 셀 범위 (예: A1:C16)"),
 ) -> None:
     """엑셀 셀 범위를 pptx에 표로 넣고 숫자 출처를 기록해 결과를 JSON으로 출력합니다. FR-44."""
+    import functools
+    import json
+
     from docmill.runlog import logged
     from docmill.tools.dropin import insert_range
 
-    typer.echo(logged(insert_range, ai_used=False)(document, source, cell_range))
+    class _Failed(Exception):
+        """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
+
+    @functools.wraps(insert_range)
+    def failing_on_error(document: str, source: str, cell_range: str) -> str:
+        result = insert_range(document, source, cell_range)
+        if "error" in json.loads(result):
+            raise _Failed(result)
+        return result
+
+    try:
+        typer.echo(logged(failing_on_error, ai_used=False)(document, source, cell_range))
+    except _Failed as failed:
+        typer.echo(str(failed))  # studio reads the error JSON from stdout
 
 
 @app.command("mask-doc")

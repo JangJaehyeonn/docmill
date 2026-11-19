@@ -22,9 +22,17 @@ from xml.sax.saxutils import escape
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.ooxml import OoxmlError, Package
 from docmill.tools.provenance import column_letter, column_number, dump, provenance_path
-from docmill.tools.refresh import RefreshError, _commit, _document_lock, read_cells
+from docmill.tools.refresh import (
+    RefreshError,
+    _commit,
+    _document_lock,
+    number_digits,
+    read_cells,
+)
 
-MAX_ROWS = 100
+MAX_ROWS = 30
+MAX_SHEET_ROW = 1048576
+MAX_SHEET_COLUMN = 16384
 MAX_COLUMNS = 20
 _RANGE = re.compile(r"\$?([A-Za-z]{1,3})\$?(\d+)(?::\$?([A-Za-z]{1,3})\$?(\d+))?")
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -33,6 +41,8 @@ _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _SLIDE_PART = re.compile(r"ppt/slides/slide(\d+)\.xml")
 _TABLE_STYLE = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"
 _FONT_SIZE = 1200
+_MIN_FONT = 800
+_CELL_MARGIN = 18288
 _MARGIN = 457200
 _TOP = 1600200
 _BOTTOM = 6400800
@@ -58,6 +68,8 @@ def parse_range(text: str) -> tuple[int, int, int, int]:
     r2 = int(m.group(4) or m.group(2))
     if r1 < 1 or r2 < r1 or c2 < c1:
         raise DropInError("range", f"셀 범위의 시작이 끝보다 뒤에 있다: {text!r}")
+    if r2 > MAX_SHEET_ROW or c2 > MAX_SHEET_COLUMN:
+        raise DropInError("range", f"엑셀 시트 범위(XFD1048576)를 벗어난 주소다: {text!r}")
     if r2 - r1 + 1 > MAX_ROWS or c2 - c1 + 1 > MAX_COLUMNS:
         raise DropInError(
             "range", f"범위가 너무 크다 (최대 {MAX_ROWS}행 × {MAX_COLUMNS}열): {text!r}"
@@ -77,7 +89,7 @@ def _first_sheet(xlsx: Path) -> str:
 
 
 def _digits(value: float) -> int:
-    return 0 if value == int(value) else 2
+    return number_digits(value)
 
 
 def _cell_text(value: Any) -> str:
@@ -95,24 +107,32 @@ def _is_number(value: Any) -> bool:
     return isinstance(value, int | float) and not isinstance(value, bool)
 
 
-def _cell_xml(text: str, numeric: bool) -> str:
+def _font_size(rows: int) -> int:
+    """행이 표 영역에 모두 들어가도록 글꼴 크기(1/100pt)를 정한다 (행 높이 = 글자 높이 + 여백)."""
+    fit = ((_BOTTOM - _TOP) // rows - 2 * _CELL_MARGIN) / 12700 / 1.2
+    return max(_MIN_FONT, min(_FONT_SIZE, int(fit) * 100))
+
+
+def _cell_xml(text: str, numeric: bool, font: int) -> str:
     align = ' algn="r"' if numeric else ""
-    size = f'lang="ko-KR" sz="{_FONT_SIZE}"'
+    size = f'lang="ko-KR" sz="{font}"'
+    pr = f'<a:tcPr marT="{_CELL_MARGIN}" marB="{_CELL_MARGIN}"/>'
     if not text:
         empty = f"<a:p><a:endParaRPr {size}/></a:p>"
-        return f"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{empty}</a:txBody><a:tcPr/></a:tc>"
+        return f"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{empty}</a:txBody>{pr}</a:tc>"
     run = f"<a:r><a:rPr {size}/><a:t>{escape(text)}</a:t></a:r>"
     para = f"<a:p><a:pPr{align}/>{run}</a:p>"
-    return f"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{para}</a:txBody><a:tcPr/></a:tc>"
+    return f"<a:tc><a:txBody><a:bodyPr/><a:lstStyle/>{para}</a:txBody>{pr}</a:tc>"
 
 
 def _table_xml(grid: list[list[Any]], width: int, shape_id: int) -> str:
     rows, cols = len(grid), len(grid[0])
     col_w = width // cols
     row_h = min(370840, (_BOTTOM - _TOP) // rows)
+    font = _font_size(rows)
     trs = "".join(
         f'<a:tr h="{row_h}">'
-        + "".join(_cell_xml(_cell_text(v), _is_number(v)) for v in row)
+        + "".join(_cell_xml(_cell_text(v), _is_number(v), font) for v in row)
         + "</a:tr>"
         for row in grid
     )
@@ -202,12 +222,7 @@ def _add_slide(package: Package, title: str, grid: list[list[Any]]) -> tuple[byt
     parts["ppt/presentation.xml"] = presentation.replace(
         "</p:sldIdLst>", new_id + "</p:sldIdLst>", 1
     ).encode("utf-8")
-    parts["ppt/_rels/presentation.xml.rels"] = pres_rels.replace(
-        "</Relationships>",
-        f'<Relationship Id="rId{rid_no}" Type="{_REL_NS}/slide" Target="slides/slide{number}.xml"/>'
-        "</Relationships>",
-        1,
-    ).encode("utf-8")
+    parts["ppt/_rels/presentation.xml.rels"] = _add_relationship(pres_rels, rid_no, number)
     types = _text(parts, "[Content_Types].xml")
     override = (
         f'<Override PartName="/{part}" ContentType="application/vnd.openxmlformats-officedocument.'
@@ -222,6 +237,18 @@ def _add_slide(package: Package, title: str, grid: list[list[Any]]) -> tuple[byt
     )
     grown = Package((*package.infos, *added), parts)
     return grown.write(parts), number, 3
+
+
+def _add_relationship(rels: str, rid_no: int, number: int) -> bytes:
+    """관계 파일 끝에 슬라이드 관계를 더한다. 접두사(`rel:` 등)와 상관없이 닫는 태그를 찾는다."""
+    m = re.search(r"</((?:[\w.-]+:)?)Relationships\s*>", rels)
+    if m is None:
+        raise DropInError("document", "presentation.xml.rels에 관계 목록이 없다")
+    new = (
+        f'<{m.group(1)}Relationship Id="rId{rid_no}" Type="{_REL_NS}/slide" '
+        f'Target="slides/slide{number}.xml"/>'
+    )
+    return (rels[: m.start()] + new + rels[m.start() :]).encode("utf-8")
 
 
 def _new_info(name: str, stamp: tuple[int, int, int, int, int, int]) -> zipfile.ZipInfo:
@@ -253,7 +280,7 @@ def _numbers(
                         "column": c + 1,
                     },
                     "source": {
-                        "file": str(source),
+                        "file": str(source.resolve()),
                         "sheet": sheet,
                         "aggregation": "sum",
                         "range": f"{addr}:{addr}",
@@ -284,10 +311,15 @@ def _insert(document: Path, source: Path, cell_range: str, run_id: str) -> dict[
         raise DropInError("input", f"읽을 수 있는 .xlsx 파일이 아니다: {source}")
     r1, c1, r2, c2 = parse_range(cell_range)
     sheet = _first_sheet(source)
+    version = source.stat().st_mtime_ns
     try:
         cells = read_cells(source, sheet)
     except RefreshError as exc:
         raise DropInError(exc.step, exc.message) from exc
+    if source.stat().st_mtime_ns != version:
+        raise DropInError(
+            "source", f"읽는 동안 원본 엑셀이 바뀌었다. 다시 시도하세요: {source.name}"
+        )
     grid = [
         [cells.get(f"{column_letter(c)}{r}") for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)
     ]

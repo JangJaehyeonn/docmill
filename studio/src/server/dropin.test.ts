@@ -23,5 +23,7 @@ describe("parseInsert", () => {
   it("reports unreadable output", () => {
     expect(parseInsert("not json").error).toBeTruthy();
     expect(parseInsert("{}").error).toBeTruthy();
+    expect(parseInsert("null").error).toBeTruthy();
+    expect(parseInsert("[]").error).toBeTruthy();
   });
 });
