@@ -209,3 +209,21 @@ def test_same_item_in_slide_tables_is_compared(tmp_path: Path) -> None:
     [item] = _items(path, "항목 불일치")
     places = [e["location"] for e in item["locations"]]  # type: ignore[attr-defined]
     assert places == ["슬라이드 1 표 1 2행 2열", "슬라이드 2 표 1 2행 2열"]
+
+
+def test_zero_base_percent_point_claim_is_compared(tmp_path: Path) -> None:
+    table = [["구분", "전", "후"], ["점유율", "0%", "5%"]]
+    ok = _docx(tmp_path / "a.docx", ["점유율은 5%p 증가했다.", table])
+    assert _items(ok, "비율 불일치") == []
+    bad = _docx(tmp_path / "b.docx", ["점유율은 8%p 증가했다.", table])
+    [item] = _items(bad, "비율 불일치")
+    assert item["expected"] == "5%p" and item["actual"] == "8%p"
+
+
+def test_two_column_tables_keep_period_in_item_key(tmp_path: Path) -> None:
+    a = [["항목", "2024년"], ["매출", "100"]]
+    b = [["항목", "2025년"], ["매출", "125"]]
+    assert _items(_docx(tmp_path / "a.docx", [a, b]), "항목 불일치") == []
+    c = [["항목", "값"], ["매출", "100"]]
+    d = [["항목", "값"], ["매출", "125"]]
+    assert len(_items(_docx(tmp_path / "b.docx", [c, d]), "항목 불일치")) == 1

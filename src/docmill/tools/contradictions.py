@@ -34,6 +34,7 @@ _P = "{http://schemas.openxmlformats.org/presentationml/2006/main}"
 _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 _NUMBER = re.compile(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
+_PERIOD_TITLE = re.compile(r"\d|분기|상반기|하반기|전년|당해")
 _TOTAL_LABEL = re.compile(r"^(?:합\s*계|총\s*계|총\s*합|소\s*계|total|sum)$", re.IGNORECASE)
 _CHANGE = re.compile(
     r"(\d+(?:\.\d+)?)\s*%\s*(p|포인트)?\s*(증가|상승|늘|확대|성장|감소|하락|줄|축소|떨어)"
@@ -316,7 +317,7 @@ class Change:
 
     place: str
     name: str
-    pct: float
+    pct: float | None
     pp: float | None
 
 
@@ -329,14 +330,13 @@ def _table_changes(tables: list[Table]) -> list[Change]:
                 continue
             nums = [(c, _quantity(x)) for c, x in enumerate(row) if c > 0]
             for (c1, a), (c2, b) in pairwise(nums):
-                if a is None or b is None or c2 != c1 + 1 or not a.base or not _compatible([a, b]):
+                if a is None or b is None or c2 != c1 + 1 or not _compatible([a, b]):
                     continue
                 pp = b.value - a.value if a.unit == b.unit == "%" else None
-                out.append(
-                    Change(
-                        _cell_place(table, r, c2), row[0], (b.base - a.base) / abs(a.base) * 100, pp
-                    )
-                )
+                pct = (b.base - a.base) / abs(a.base) * 100 if a.base else None
+                if pct is None and pp is None:
+                    continue
+                out.append(Change(_cell_place(table, r, c2), row[0], pct, pp))
     return out
 
 
@@ -432,7 +432,9 @@ def _table_hits(tables: list[Table]) -> list[tuple[str, Hit]]:
                 quantity = _quantity(row[c])
                 title = header[c].strip() if c < len(header) else ""
                 if quantity is not None and title:
-                    key = re.sub(r"\s+", "", label) + (f"({title})" if len(row) > 2 else "")
+                    key = re.sub(r"\s+", "", label) + (
+                        f"({title})" if len(row) > 2 or _PERIOD_TITLE.search(title) else ""
+                    )
                     hits.append((key, Hit(_cell_place(table, r, c), row[c], quantity)))
     return hits
 
