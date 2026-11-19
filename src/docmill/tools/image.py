@@ -23,6 +23,8 @@ import urllib.request
 import zipfile
 from pathlib import Path
 from typing import Any
+from xml.dom import minidom
+from xml.parsers.expat import ExpatError
 from xml.sax.saxutils import quoteattr
 
 from docmill.engines.rhwp import insert_picture
@@ -43,6 +45,8 @@ _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _REQUEST_TIMEOUT = 60
 _REL_TYPE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+_XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 _WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 _A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
 _PIC_NS = "http://schemas.openxmlformats.org/drawingml/2006/picture"
@@ -241,6 +245,30 @@ def _image_name(parts: Parts, folder: str) -> str:
     return f"{folder}/image{number}.png"
 
 
+def add_relationship(rels: bytes, rid: str, target: str) -> bytes:
+    """관계 파트(.rels)를 파싱해 루트 `Relationships`에 그림 관계를 덧붙인다.
+
+    빈 파트·자기 닫힘 루트·기존 관계가 있는 루트를 모두 다루고 기존 관계는 그대로 둔다.
+    """
+    text = rels.decode("utf-8") if rels.strip() else f'<Relationships xmlns="{_PKG_REL_NS}"/>'
+    try:
+        dom = minidom.parseString(text)
+    except ExpatError as exc:
+        raise GuardError("edit", f"관계 파트(.rels)를 읽지 못했다: {exc}") from exc
+    root = dom.documentElement
+    if root is None or root.localName != "Relationships" or root.namespaceURI != _PKG_REL_NS:
+        raise GuardError("edit", "관계 파트의 루트가 Relationships가 아니다")
+    relation = dom.createElementNS(
+        _PKG_REL_NS, f"{root.prefix}:Relationship" if root.prefix else "Relationship"
+    )
+    relation.setAttribute("Id", rid)
+    relation.setAttribute("Type", _REL_TYPE)
+    relation.setAttribute("Target", target)
+    root.appendChild(relation)
+    body = root.toxml()
+    return (_XML_DECL + body).encode("utf-8")
+
+
 def _attach_image(kind: str, data: bytes, part: str, rid: str, png: bytes) -> bytes:
     """범위 밖 파트(그림 파일·관계·콘텐츠 형식)를 지키기 뒤에 덧붙인다."""
     package = Package.read(data)
@@ -248,13 +276,7 @@ def _attach_image(kind: str, data: bytes, part: str, rid: str, png: bytes) -> by
     media = _image_name(parts, "ppt/media" if kind == ".pptx" else "word/media")
     rels_name = _rels_name(part)
     target = posixpath.relpath(media, part.rpartition("/")[0])
-    relation = f'<Relationship Id="{rid}" Type="{_REL_TYPE}" Target="{target}"/>'
-    rels = parts.get(rels_name, b"").decode("utf-8")
-    if not rels:
-        rels = '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"></Relationships>'
-    parts[rels_name] = rels.replace("</Relationships>", relation + "</Relationships>").encode(
-        "utf-8"
-    )
+    parts[rels_name] = add_relationship(parts.get(rels_name, b""), rid, target)
     types = parts["[Content_Types].xml"].decode("utf-8")
     if not re.search(r'<Default\b[^>]*\bExtension="png"', types, re.IGNORECASE):
         default = '<Default Extension="png" ContentType="image/png"/>'
@@ -326,6 +348,38 @@ def _disabled(exc: ImageDisabled, run_id: str) -> dict[str, Any]:
     }
 
 
+def _check_location(
+    source: Path, kind: str, slide: int | None, after_paragraph: int | None
+) -> None:
+    """이미지를 만들기 전에 삽입 위치를 검사한다 (틀리면 제공자를 부르지 않는다)."""
+    if kind in HWP_SUFFIXES or kind == ".docx":
+        if (
+            isinstance(after_paragraph, bool)
+            or not isinstance(after_paragraph, int)
+            or after_paragraph < 1
+        ):
+            raise GuardError(
+                "scope", f"after_paragraph(1부터 문단 번호)가 올바르지 않다: {after_paragraph}"
+            )
+        if kind in HWP_SUFFIXES:
+            return  # the upper bound is checked by the rhwp adapter
+    try:
+        package = Package.read(source.read_bytes())
+        if kind == ".pptx":
+            numbered(slide_parts(package.parts), slide, "슬라이드")
+            return
+        text = package.parts[DOCUMENT_PART].decode("utf-8")
+    except zipfile.BadZipFile as exc:
+        raise GuardError("input", f"문서 파일(zip)을 열지 못했다: {exc}") from exc
+    except KeyError as exc:
+        raise GuardError("input", f"문서 본문 파트가 없다: {exc}") from exc
+    except ScopeError as exc:
+        raise GuardError("scope", str(exc)) from exc
+    count = len(element_spans(text, lambda n, p: n == "p" and p[-1:] == ("body",)))
+    if not isinstance(after_paragraph, int) or after_paragraph > count:
+        raise GuardError("scope", f"문단 번호가 올바르지 않다: {after_paragraph} (1~{count})")
+
+
 def _insert(
     document: str,
     prompt: str,
@@ -341,6 +395,7 @@ def _insert(
         raise GuardError("input", f"읽을 수 있는 pptx·docx·hwp 파일이 아니다: {document}")
     if not prompt.strip():
         raise GuardError("input", "이미지 설명(prompt)이 비어 있다")
+    _check_location(source, kind, slide, after_paragraph)
     name = provider or os.environ.get(DEFAULT_PROVIDER_ENV, "") or "openai"
     try:
         png = generate_image(name, prompt)

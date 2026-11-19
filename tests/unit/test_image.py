@@ -11,7 +11,14 @@ from pathlib import Path
 
 import pytest
 
-from docmill.tools.image import ImageDisabled, generate_image, insert_image, png_size
+from docmill.tools import image as image_module
+from docmill.tools.image import (
+    ImageDisabled,
+    add_relationship,
+    generate_image,
+    insert_image,
+    png_size,
+)
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 
@@ -125,3 +132,73 @@ def test_bad_inputs_return_errors(fake: Path) -> None:
     assert json.loads(insert_image(src, "  ", slide=1, provider="fake"))["step"] == "input"
     assert json.loads(insert_image(src, "x", slide=1, provider="nope"))["step"] == "generate"
     assert json.loads(insert_image(str(fake / "none.pptx"), "x", slide=1))["step"] == "input"
+
+
+_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+@pytest.mark.parametrize(
+    "rels",
+    [
+        b"",
+        f'<?xml version="1.0"?><Relationships xmlns="{_PKG}"/>'.encode(),
+        f'<Relationships xmlns="{_PKG}"></Relationships>'.encode(),
+    ],
+    ids=["missing", "self-closing", "empty"],
+)
+def test_add_relationship_handles_empty_roots(rels: bytes) -> None:
+    out = add_relationship(rels, "rId1", "../media/image1.png").decode()
+    found = re.findall(r'<Relationship Id="(rId\d+)"[^>]*Target="([^"]+)"', out)
+    assert found == [("rId1", "../media/image1.png")]
+    assert f'<Relationships xmlns="{_PKG}">' in out
+
+
+def test_add_relationship_keeps_existing_relations() -> None:
+    rels = (
+        f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n<Relationships xmlns="{_PKG}">'
+        '<Relationship Id="rId1" Type="t/layout" Target="../slideLayouts/slideLayout1.xml"/>'
+        '<Relationship Id="rId2" Type="t/link" Target="https://example.com" TargetMode="External"/>'
+        "</Relationships>"
+    ).encode()
+    out = add_relationship(rels, "rId3", "../media/image1.png").decode()
+    ids = re.findall(r'<Relationship Id="(rId\d+)"', out)
+    assert ids == ["rId1", "rId2", "rId3"]
+    assert 'Target="../slideLayouts/slideLayout1.xml"' in out
+    assert 'TargetMode="External"' in out
+    assert "ns0:" not in out
+
+
+@pytest.mark.parametrize(
+    ("name", "slide", "paragraph"),
+    [
+        ("company_intro.pptx", None, None),
+        ("company_intro.pptx", 99, None),
+        ("meeting_1111.docx", None, None),
+        ("meeting_1111.docx", None, 0),
+        ("meeting_1111.docx", None, 9999),
+        ("meeting_1111.hwp", None, None),
+        ("meeting_1111.hwp", None, -1),
+    ],
+)
+def test_bad_location_does_not_call_provider(
+    name: str,
+    slide: int | None,
+    paragraph: int | None,
+    fake: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(image_module, "_fake", lambda prompt, path: calls.append(prompt) or b"")
+    out = json.loads(
+        insert_image(
+            str(FIXTURES / name),
+            "그림",
+            slide=slide,
+            after_paragraph=paragraph,
+            provider="fake",
+            out_dir=str(fake / "o"),
+        )
+    )
+    assert out["step"] == "scope"
+    assert calls == []
+    assert not (fake / "o").exists()
