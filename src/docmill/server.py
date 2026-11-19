@@ -18,6 +18,7 @@ from docmill.runner import run_recipe
 from docmill.tools.compare import compare_versions
 from docmill.tools.contradictions import find_contradictions
 from docmill.tools.guard import guarded_edit
+from docmill.tools.image import insert_image
 from docmill.tools.mask import mask_text, unmask_text
 from docmill.tools.official_style import check_official_style
 from docmill.tools.preflight import preflight
@@ -112,6 +113,11 @@ def _register_compare(server: MCPServer) -> None:
     server.tool()(compare_versions)
 
 
+def _register_image(server: MCPServer) -> None:
+    """`insert_image` 업무 도구(FR-42)를 등록한다."""
+    server.tool()(insert_image)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -127,6 +133,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_mask,
     _register_contradictions,
     _register_compare,
+    _register_image,
 )
 
 
