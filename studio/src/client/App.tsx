@@ -579,7 +579,7 @@ export function App() {
                       draggable={isCellRange(rangeText)}
                       title="PPT 탭으로 끌어다 놓으면 표로 들어가요"
                       onDragStart={(e) => {
-                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText.trim() };
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText };
                         e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(dragged.current));
                         e.dataTransfer.setData("text/plain", rangeText.trim());
                         e.dataTransfer.effectAllowed = "copy";
@@ -608,7 +608,7 @@ export function App() {
                       type="button"
                       disabled={!isCellRange(rangeText) || keyTarget === ""}
                       onClick={() => {
-                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText.trim() };
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText };
                         void dropRange(keyTarget);
                       }}
                     >

@@ -320,10 +320,18 @@ def _shape_edits(
 ) -> list[tuple[int, int, str]]:
     """도형 하나의 숫자를 provenance 순서대로 짝지어, 바뀐 숫자의 글자 교체 목록을 만든다."""
     start, end = _shape_span(slide, shape, label)
-    tokens = _without_names(_tokens(slide, start, end), slide, start, end, items)
     edits: list[tuple[int, int, str]] = []
-    cursor = 0
+    plain: list[tuple[dict[str, Any], str | None]] = []
     for item, new_text in items:
+        if item["kind"] != "table":
+            plain.append((item, new_text))
+        elif new_text is not None:
+            edits.append(_cell_edit(slide, start, end, label, item, new_text))
+    if not plain:
+        return edits
+    tokens = _without_names(_tokens(slide, start, end), slide, start, end, plain)
+    cursor = 0
+    for item, new_text in plain:
         old = float(item["value"])
         while cursor < len(tokens) and not _same(tokens[cursor][2], old):
             cursor += 1
@@ -333,6 +341,31 @@ def _shape_edits(
             edits.append((tokens[cursor][0], tokens[cursor][1], new_text))
         cursor += 1
     return edits
+
+
+def _cell_edit(
+    slide: str, start: int, end: int, label: str, item: dict[str, Any], new_text: str
+) -> tuple[int, int, str]:
+    """표 칸의 숫자를 기록된 행·열로 찾아 글자 교체를 만든다 (같은 값의 다른 칸과 섞이지 않는다)."""
+    loc = item["location"]
+    row, column = int(loc.get("row", 0)), int(loc.get("column", 0))
+    fragment = slide[start:end]
+    rows = element_spans(fragment, lambda n, p: n == "tr")
+    if not 1 <= row <= len(rows):
+        raise RefreshError("locate", f"{label}의 {row}행을 찾지 못했다")
+    row_text = fragment[rows[row - 1].start : rows[row - 1].end]
+    cells = element_spans(row_text, lambda n, p: n == "tc")
+    if not 1 <= column <= len(cells):
+        raise RefreshError("locate", f"{label}의 {row}행 {column}열을 찾지 못했다")
+    base = start + rows[row - 1].start + cells[column - 1].start
+    cell_end = start + rows[row - 1].start + cells[column - 1].end
+    old = float(item["value"])
+    for at, stop, value in _tokens(slide, base, cell_end):
+        if _same(value, old):
+            return at, stop, new_text
+    raise RefreshError(
+        "locate", f"{label}의 {row}행 {column}열에서 숫자 {_display(old)}을(를) 찾지 못했다"
+    )
 
 
 def _point_edit(chart: str, series: int, point: int, new: str, label: str) -> tuple[int, int, str]:
@@ -611,6 +644,9 @@ def _differs(shown: float, old: float) -> bool:
 
 
 def _refresh(document: Path, run_id: str) -> dict[str, Any]:
+    from docmill.tools.dropin import _recover  # lazy: dropin imports this module
+
+    _recover(document)  # finish or undo an interrupted range insert before reading anything
     numbers = _load(document)
     sources = _Sources(document, numbers)
     renewed: list[dict[str, Any]] = []

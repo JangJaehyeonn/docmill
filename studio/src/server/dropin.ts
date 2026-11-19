@@ -45,7 +45,7 @@ export function runInsert(
   timeoutMs = 60_000,
 ): Promise<InsertResult> {
   const args = ["insert-range", docAbs, sourceAbs, range.trim()];
-  if (sheet.trim()) args.push("--sheet", sheet.trim());
+  if (sheet.trim()) args.push("--sheet", sheet); // keep the exact name: sheets may have edge spaces
   return new Promise((resolve) => {
     execFile(
       "docmill",

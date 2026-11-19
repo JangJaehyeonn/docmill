@@ -382,3 +382,48 @@ def test_completed_insert_is_not_rolled_back(tmp_path: Path) -> None:
     after = pptx.read_bytes()
     _recover(pptx)
     assert pptx.read_bytes() == after
+
+
+def test_refresh_recovers_interrupted_insert_first(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C4")
+    before_doc = pptx.read_bytes()
+    killed = subprocess.run(
+        [sys.executable, "-c", _KILL_BETWEEN_PUBLISHES, str(pptx), str(xlsx)], check=False
+    )
+    assert killed.returncode == 9
+    assert pptx.read_bytes() != before_doc  # half published
+    assert "error" not in json.loads(refresh_links(str(pptx)))
+    assert pptx.read_bytes() == before_doc  # refresh rolled the half insert back first
+
+
+def test_refresh_uses_recorded_cell_not_same_text(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx)
+    with zipfile.ZipFile(pptx) as zin:
+        items = [(i, zin.read(i.filename)) for i in zin.infolist()]
+    with zipfile.ZipFile(pptx, "w") as zout:
+        for info, raw in items:
+            if info.filename == "ppt/slides/slide4.xml":
+                # a text cell before the numeric cell shows the same digits as the linked number
+                text = raw.decode("utf-8")
+                at = text.index("<a:t>") + len("<a:t>")
+                raw = (text[:at] + "1200" + text[text.index("</a:t>", at) :]).encode("utf-8")
+            zout.writestr(info, raw)
+    changed = tmp_path / "changed.xlsx"
+    with zipfile.ZipFile(xlsx) as zin, zipfile.ZipFile(changed, "w") as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "xl/worksheets/sheet1.xml":
+                data = data.replace(
+                    b'<c r="C2" t="n"><v>1200</v>', b'<c r="C2" t="n"><v>1500</v>', 1
+                )
+            zout.writestr(item, data)
+    shutil.copy(changed, xlsx)
+    assert [c["new"] for c in json.loads(refresh_links(str(pptx)))["changes"]] == [1500]
+    with zipfile.ZipFile(pptx) as z:
+        slide = z.read("ppt/slides/slide4.xml").decode("utf-8")
+    assert "<a:t>1200</a:t>" in slide and "1,500" in slide
