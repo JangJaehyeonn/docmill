@@ -74,6 +74,19 @@ def refresh_links_command(path: str = typer.Argument(..., help="새 숫자로 �
     typer.echo(logged(refresh_links, ai_used=False)(path))
 
 
+@app.command("insert-range")
+def insert_range_command(
+    document: str = typer.Argument(..., help="표를 넣을 pptx 문서 경로"),
+    source: str = typer.Argument(..., help="원본 xlsx 경로"),
+    cell_range: str = typer.Argument(..., help="넣을 셀 범위 (예: A1:C16)"),
+) -> None:
+    """엑셀 셀 범위를 pptx에 표로 넣고 숫자 출처를 기록해 결과를 JSON으로 출력합니다. FR-44."""
+    from docmill.runlog import logged
+    from docmill.tools.dropin import insert_range
+
+    typer.echo(logged(insert_range, ai_used=False)(document, source, cell_range))
+
+
 @app.command("mask-doc")
 def mask_doc_command() -> None:
     """stdin의 JSON 요청(문서 경로·메시지·이름·대응표)을 가려 JSON으로 출력합니다. FR-39."""

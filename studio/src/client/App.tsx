@@ -14,6 +14,7 @@ import {
   type LinkChange,
   type LinkSource,
 } from "./links";
+import { DRAG_TYPE, canDropOn, isCellRange, type DraggedRange } from "./dropin";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
@@ -63,6 +64,11 @@ export function App() {
   const [linkAlerts, setLinkAlerts] = useState<Record<string, LinkSource[]>>({});
   const [linkResult, setLinkResult] = useState<LinkResult | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [rangeText, setRangeText] = useState("");
+  const [dropMessage, setDropMessage] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const dragged = useRef<DraggedRange | null>(null);
+  const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
   const handledLinks = useRef<Handled>({});
   const picker = useRef<HTMLInputElement>(null);
@@ -313,6 +319,50 @@ export function App() {
     }
   };
 
+  // 편집기에 방금 한 편집이 파일에 닿도록 먼저 저장한다. 저장하지 못했으면 false.
+  const saveBefore = async (path: string): Promise<boolean> => {
+    if (!/\.(xlsx|pptx|docx)$/i.test(path)) return true;
+    const synced = await waitOfficeSynced(path, 15_000);
+    return synced && (await save(path)) !== "failed";
+  };
+
+  // 엑셀 탭에서 끌어 온 셀 범위를 놓은 탭의 문서에 표로 넣는다 (docmill 도구 insert_range).
+  const dropRange = async (target: string): Promise<void> => {
+    const from = dragged.current;
+    dragged.current = null;
+    setDropTarget(null);
+    if (!from || droppingRef.current) return;
+    const refusal = canDropOn(target);
+    if (refusal) {
+      setDropMessage(refusal);
+      return;
+    }
+    droppingRef.current = true;
+    setDropMessage(`${baseName(from.source)}의 ${from.range}를 ${baseName(target)}에 넣는 중…`);
+    try {
+      if (!(await saveBefore(from.source)) || !(await saveBefore(target))) {
+        setDropMessage("열린 문서를 먼저 저장하지 못해 범위를 넣지 않았어요.");
+        return;
+      }
+      const res = await fetch("/api/insert-range", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target, source: from.source, range: from.range }),
+      });
+      const body = (await res.json()) as { summary?: string; error?: string };
+      if (!res.ok || body.error) {
+        setDropMessage(body.error ?? "범위를 문서에 넣지 못했어요.");
+        return;
+      }
+      reloadTab(target);
+      setDropMessage(`${baseName(target)}: ${body.summary ?? "범위를 넣었어요."}`);
+    } catch {
+      setDropMessage("범위를 문서에 넣지 못했어요.");
+    } finally {
+      droppingRef.current = false;
+    }
+  };
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <header className="topbar">
@@ -324,7 +374,21 @@ export function App() {
                 aria-selected={t.path === tabState.active}
                 title={t.path}
                 data-reloaded={reloads[t.path] ?? 0}
+                data-drop-target={dropTarget === t.path ? "true" : undefined}
                 onClick={() => setTabState((s) => openTab(s, t))}
+                onDragOver={(e) => {
+                  if (!dragged.current) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDropTarget(t.path);
+                }}
+                onDragLeave={() => setDropTarget((d) => (d === t.path ? null : d))}
+                onDrop={(e) => {
+                  if (!dragged.current) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void dropRange(t.path);
+                }}
               >
                 {t.name}
               </button>
@@ -365,6 +429,15 @@ export function App() {
           </button>
         </section>
       ))}
+
+      {dropMessage && (
+        <section role="status" aria-label="범위 넣기 결과" className="alert">
+          <p>{dropMessage}</p>
+          <button type="button" onClick={() => setDropMessage(null)}>
+            닫기
+          </button>
+        </section>
+      )}
 
       {linkResult && (
         <section role="status" aria-label="새 숫자로 고친 결과" className="alert">
@@ -469,6 +542,36 @@ export function App() {
                   저장
                 </button>
                 {saveMessage && <span className="hint">{saveMessage}</span>}
+                {/\.xlsx$/i.test(active.path) && (
+                  <span className="range-drag">
+                    <label>
+                      범위{" "}
+                      <input
+                        type="text"
+                        value={rangeText}
+                        placeholder="A1:C16"
+                        onChange={(e) => setRangeText(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      draggable={isCellRange(rangeText)}
+                      title="PPT 탭으로 끌어다 놓으면 표로 들어가요"
+                      onDragStart={(e) => {
+                        dragged.current = { source: active.path, range: rangeText.trim() };
+                        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(dragged.current));
+                        e.dataTransfer.setData("text/plain", rangeText.trim());
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onDragEnd={() => {
+                        dragged.current = null;
+                        setDropTarget(null);
+                      }}
+                    >
+                      범위 끌기
+                    </button>
+                  </span>
+                )}
               </div>
               {activeState === "unavailable" && (
                 <p role="status" className="alert">

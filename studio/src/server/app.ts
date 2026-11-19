@@ -27,6 +27,7 @@ import {
   registerPreview,
   type PendingPreview,
 } from "./preview.js";
+import { isCellRange, runInsert } from "./dropin.js";
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
 import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
@@ -209,6 +210,7 @@ async function handleApi(
     return sendJson(res, 200, { sources: await linkStatus(root, file.abs) });
   }
   if (req.method === "POST" && pathname === "/api/links/refresh") return refreshLinks(opts, req, res);
+  if (req.method === "POST" && pathname === "/api/insert-range") return insertRange(opts, req, res);
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (req.method === "POST" && pathname === "/api/preview/apply") {
     return decide(opts, req, res, "apply");
@@ -277,6 +279,36 @@ async function refreshLinks(
     return r;
   });
   sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
+}
+
+/** 엑셀 탭의 셀 범위를 pptx 문서에 표로 넣는다 (docmill 도구 insert_range, AI 없음). */
+async function insertRange(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+  }
+  const body = (await readBody(req)) as { target?: unknown; source?: unknown; range?: unknown };
+  const range = typeof body.range === "string" ? body.range : "";
+  if (!isCellRange(range)) return sendJson(res, 400, { error: "셀 범위를 A1:C16 형식으로 입력하세요." });
+  const target = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.target ?? "") }));
+  if (!target) return;
+  const source = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.source ?? "") }));
+  if (!source) return;
+  if (!/\.pptx$/i.test(target.rel)) {
+    return sendJson(res, 400, { error: "지금은 PPT(pptx) 탭에만 범위를 놓을 수 있어요." });
+  }
+  if (!/\.xlsx$/i.test(source.rel)) return sendJson(res, 400, { error: "엑셀(xlsx) 탭의 범위만 끌 수 있어요." });
+  const root = await fs.realpath(opts.workspace);
+  const result = await withFileLock(target.rel, async () => {
+    const r = await runInsert(target.abs, source.abs, range, root);
+    // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
+    if (!r.error) sessionKeys.delete(target.rel);
+    return r;
+  });
+  sendJson(res, result.error ? 502 : 200, { path: target.rel, ...result });
 }
 
 /** 자리표 → 원래 값 대응표. 서버 메모리에만 두고 로그·파일에 쓰지 않는다 (FR-39). */
