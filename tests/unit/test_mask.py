@@ -76,7 +76,17 @@ def test_name_on_length_boundary_is_masked_before_truncation(tmp_path: Path) -> 
     doc = tmp_path / "a.docx"
     _docx(doc, "가" * (mask.MAX_DOC_CHARS - 2) + "홍길동님")
     out = mask.mask_documents({"paths": [str(doc)], "names": ["홍길동님"]})
-    assert "홍길동" not in out["documents"][0]["text"]
+    text = out["documents"][0]["text"]
+    assert "홍길동" not in text and "홍길" not in text
+    assert len(text) <= mask.MAX_DOC_CHARS
+    assert not text.endswith("[이")
+
+
+def test_truncation_never_splits_a_placeholder(tmp_path: Path) -> None:
+    doc = tmp_path / "a.docx"
+    _docx(doc, "가" * (mask.MAX_DOC_CHARS - 2) + "홍길동님")
+    text = mask.mask_documents({"paths": [str(doc)], "names": ["홍길동님"]})["documents"][0]["text"]
+    assert text == "가" * (mask.MAX_DOC_CHARS - 2)
 
 
 def _docx(path: Path, text: str) -> None:

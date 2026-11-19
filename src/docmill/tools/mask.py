@@ -166,6 +166,16 @@ def read_document_text(path: Path, limit: int | None = MAX_DOC_CHARS) -> str:
     return "\n".join(line for line in lines if line.strip())[:limit]
 
 
+def _cut(text: str, limit: int) -> str:
+    """자리표 중간에서 끊기지 않도록 `limit`자 이내로 자른다."""
+    if len(text) <= limit:
+        return text
+    for m in _PLACEHOLDER.finditer(text):
+        if m.start() < limit < m.end():
+            return text[: m.start()]
+    return text[:limit]
+
+
 def mask_documents(request: dict[str, Any]) -> dict[str, Any]:
     """studio가 에이전트에 넘길 내용을 가린다.
 
@@ -180,7 +190,7 @@ def mask_documents(request: dict[str, Any]) -> dict[str, Any]:
     for _, text in [*raw, ("", message_raw)]:
         table.reserve(text)
         found += [n for n in detect_names(text) if n not in found]
-    docs = [{"path": p, "text": table.mask(t, found)[0][:MAX_DOC_CHARS]} for p, t in raw]
+    docs = [{"path": p, "text": _cut(table.mask(t, found)[0], MAX_DOC_CHARS)} for p, t in raw]
     message = table.mask(message_raw, found)[0]
     return {"documents": docs, "message": message, "table": table.reverse}
 

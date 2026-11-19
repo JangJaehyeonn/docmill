@@ -383,16 +383,24 @@ async function chat(
     else if (e.type === "tool_result") e = { ...e, text: unmaskText(e.text, table) };
     if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
   };
+  const held: ChatEvent[] = [];
   await runAgent({
     command: opts.agentCmd || defaultAgentCommand(),
     cwd: root,
     prompt,
     signal: abort.signal,
     emit: (e) => {
+      // 문서를 되돌리는 결과는 에이전트가 끝날 때까지 붙잡아 둔다. 실행 중에 복원하면 에이전트의 저장을 덮어쓸 수 있다.
+      // 순서가 바뀌지 않도록 한 번 붙잡기 시작하면 뒤따르는 이벤트도 함께 붙잡는다.
+      if (held.length > 0 || (e.type === "tool_result" && (e.paths.length > 0 || parsePreview(e.text)))) {
+        held.push(e);
+        return;
+      }
       queue = queue.then(() => send(e));
     },
   });
   await queue;
+  for (const e of held) await send(e);
   res.end();
 }
 
