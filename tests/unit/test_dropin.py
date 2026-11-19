@@ -145,7 +145,7 @@ def test_small_decimals_keep_their_value() -> None:
     assert _cell_text(0.004) == "0.004"
     assert _cell_text(1200) == "1,200"
     assert _cell_text(1200.5) == "1,200.50"
-    found = _numbers([[0.004]], (1, 1), Path("a.xlsx"), "S", 1, 3)
+    found = _numbers([[0.004]], (1, 1), (Path("a.xlsx"), "S", "sha256:x"), 1, 3)
     assert found[0]["value"] == 0.004 and found[0]["source"]["digits"] == 3
 
 
@@ -196,3 +196,189 @@ def test_cli_error_is_logged_as_error(tmp_path: Path, monkeypatch: pytest.Monkey
     out = CliRunner().invoke(app, ["insert-range", str(pptx), str(xlsx), "bad"])
     assert json.loads(out.stdout.strip().splitlines()[-1])["step"] == "range"
     assert recorded == ["error"]
+
+
+_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+_DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+_PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def _two_sheet_xlsx(path: Path, first: int, second: int) -> Path:
+    """`요약`(B2=first)과 `3분기`(B2=second) 두 시트가 있는 최소 엑셀 파일."""
+
+    def sheet(value: int) -> str:
+        return (
+            f'<worksheet xmlns="{_MAIN}"><sheetData><row r="2">'
+            f'<c r="B2"><v>{value}</v></c></row></sheetData></worksheet>'
+        )
+
+    files = {
+        "[Content_Types].xml": (
+            '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+            '<Default Extension="xml" ContentType="application/xml"/></Types>'
+        ),
+        "_rels/.rels": (
+            f'<Relationships xmlns="{_PKG_REL}"><Relationship Id="rId1" '
+            f'Type="{_DOC_REL}/officeDocument" Target="xl/workbook.xml"/></Relationships>'
+        ),
+        "xl/workbook.xml": (
+            f'<workbook xmlns="{_MAIN}" xmlns:r="{_DOC_REL}"><sheets>'
+            '<sheet name="요약" sheetId="1" r:id="rId1"/>'
+            '<sheet name="3분기" sheetId="2" r:id="rId2"/></sheets></workbook>'
+        ),
+        "xl/_rels/workbook.xml.rels": (
+            f'<Relationships xmlns="{_PKG_REL}">'
+            f'<Relationship Id="rId1" Type="{_DOC_REL}/worksheet" Target="worksheets/sheet1.xml"/>'
+            f'<Relationship Id="rId2" Type="{_DOC_REL}/worksheet" Target="worksheets/sheet2.xml"/>'
+            "</Relationships>"
+        ),
+        "xl/worksheets/sheet1.xml": sheet(first),
+        "xl/worksheets/sheet2.xml": sheet(second),
+    }
+    with zipfile.ZipFile(path, "w") as z:
+        for name, text in files.items():
+            z.writestr(name, text)
+    return path
+
+
+def test_uses_selected_sheet(tmp_path: Path) -> None:
+    pptx, _ = _workspace(tmp_path)
+    book = _two_sheet_xlsx(tmp_path / "book.xlsx", 10, 120)
+    result = json.loads(insert_range(str(pptx), str(book), "B2", "3분기"))
+    assert result["sheet"] == "3분기"
+    with zipfile.ZipFile(pptx) as z:
+        assert "<a:t>120</a:t>" in z.read("ppt/slides/slide4.xml").decode("utf-8")
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert numbers[0]["value"] == 120 and numbers[0]["source"]["sheet"] == "3분기"
+    # without a sheet the first sheet is used, as before
+    assert json.loads(insert_range(str(pptx), str(book), "B2"))["sheet"] == "요약"
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert numbers[1]["value"] == 10 and numbers[1]["source"]["sheet"] == "요약"
+
+
+def test_unknown_sheet_is_refused(tmp_path: Path) -> None:
+    pptx, _ = _workspace(tmp_path)
+    before = pptx.read_bytes()
+    book = _two_sheet_xlsx(tmp_path / "book.xlsx", 10, 120)
+    result = json.loads(insert_range(str(pptx), str(book), "B2", "없는 시트"))
+    assert result["step"] == "source" and pptx.read_bytes() == before
+
+
+def test_cli_sheet_option(tmp_path: Path) -> None:
+    pptx, _ = _workspace(tmp_path)
+    book = _two_sheet_xlsx(tmp_path / "book.xlsx", 10, 120)
+    out = CliRunner().invoke(app, ["insert-range", str(pptx), str(book), "B2", "--sheet", "3분기"])
+    assert out.exit_code == 0
+    assert json.loads(out.stdout.strip().splitlines()[-1])["sheet"] == "3분기"
+
+
+def test_prefixed_content_types_are_linked(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    ct = "http://schemas.openxmlformats.org/package/2006/content-types"
+    with zipfile.ZipFile(pptx) as z:
+        items = [(i, z.read(i.filename)) for i in z.infolist()]
+    with zipfile.ZipFile(pptx, "w") as z:
+        for info, data in items:
+            if info.filename == "[Content_Types].xml":
+                text = data.decode("utf-8").replace(f'xmlns="{ct}"', f'xmlns:ct="{ct}"')
+                for tag in ("Types", "Default", "Override"):
+                    text = text.replace(f"<{tag}", f"<ct:{tag}").replace(
+                        f"</{tag}>", f"</ct:{tag}>"
+                    )
+                data = text.encode("utf-8")
+            z.writestr(info, data)
+    assert "error" not in _run(pptx, xlsx)
+    with zipfile.ZipFile(pptx) as z:
+        types = z.read("[Content_Types].xml").decode("utf-8")
+    assert '<ct:Override PartName="/ppt/slides/slide4.xml"' in types
+
+
+def _digest(path: Path) -> str:
+    import hashlib
+
+    return "sha256:" + hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def test_records_version_of_the_bytes_read(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import docmill.tools.dropin as dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    read = _digest(xlsx)
+    changed = _two_sheet_xlsx(tmp_path / "other.xlsx", 1, 2).read_bytes()
+    publish = dropin._publish_pair
+
+    def source_saved_meanwhile(*args: Any) -> None:
+        xlsx.write_bytes(changed)  # the user saves Excel after the read, before publishing
+        publish(*args)
+
+    monkeypatch.setattr(dropin, "_publish_pair", source_saved_meanwhile)
+    assert "error" not in _run(pptx, xlsx, "C2")
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert numbers[0]["source"]["read_version"] == read != _digest(xlsx)
+
+
+def test_refresh_updates_read_version(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C2")
+    data = xlsx.read_bytes()
+    with zipfile.ZipFile(xlsx) as zin:
+        items = [(i, zin.read(i.filename)) for i in zin.infolist()]
+    with zipfile.ZipFile(xlsx, "w") as zout:
+        for info, raw in items:
+            if info.filename == "xl/worksheets/sheet1.xml":
+                raw = raw.replace(b'<c r="C2" t="n"><v>1200</v>', b'<c r="C2" t="n"><v>1500</v>')
+            zout.writestr(info, raw)
+    assert xlsx.read_bytes() != data
+    assert [c["new"] for c in json.loads(refresh_links(str(pptx)))["changes"]] == [1500]
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert numbers[0]["source"]["read_version"] == _digest(xlsx)
+
+
+_KILL_BETWEEN_PUBLISHES = """
+import os, sys
+import docmill.tools.refresh as refresh
+from docmill.tools.dropin import insert_range
+
+real = refresh._publish
+
+def publish(data, final):
+    if final.name.endswith(".provenance.json"):
+        os._exit(9)  # hard kill: the document is published, the provenance is not
+    real(data, final)
+
+refresh._publish = publish
+insert_range(sys.argv[1], sys.argv[2], "A1:C3")
+"""
+
+
+def test_killed_insert_is_rolled_back_next_time(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C4")
+    before_doc = pptx.read_bytes()
+    before_prov = provenance_path(pptx).read_bytes()
+    killed = subprocess.run(
+        [sys.executable, "-c", _KILL_BETWEEN_PUBLISHES, str(pptx), str(xlsx)], check=False
+    )
+    assert killed.returncode == 9
+    assert pptx.read_bytes() != before_doc  # half published
+    assert provenance_path(pptx).read_bytes() == before_prov
+    result = _run(pptx, xlsx, "A1:C3")  # retry recovers first, then inserts once
+    assert result["slide"] == 5
+    numbers = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"]
+    assert [n["location"]["slide"] for n in numbers] == [4, 5, 5]
+    with zipfile.ZipFile(pptx) as z:
+        assert "ppt/slides/slide6.xml" not in z.namelist()
+
+
+def test_completed_insert_is_not_rolled_back(tmp_path: Path) -> None:
+    from docmill.tools.dropin import _journal, _recover
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C4")
+    assert not _journal(pptx).exists()
+    after = pptx.read_bytes()
+    _recover(pptx)
+    assert pptx.read_bytes() == after

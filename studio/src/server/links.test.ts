@@ -1,8 +1,9 @@
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { linkedFiles, linkStatus, parseRefresh } from "./links.js";
+import { linkedFiles, linkStatus, parseRefresh, readVersions } from "./links.js";
 
 const prov = (files: string[]) =>
   JSON.stringify({ numbers: files.map((file) => ({ value: 1, source: { file } })) });
@@ -14,6 +15,21 @@ describe("linkedFiles", () => {
   it("returns empty for broken JSON", () => {
     expect(linkedFiles("oops")).toEqual([]);
     expect(linkedFiles(JSON.stringify({ numbers: "x" }))).toEqual([]);
+  });
+});
+
+describe("readVersions", () => {
+  it("collects recorded read versions per source file", () => {
+    const text = JSON.stringify({
+      numbers: [
+        { source: { file: "/a.xlsx", read_version: "sha256:1" } },
+        { source: { file: "/a.xlsx", read_version: "sha256:1" } },
+        { source: { file: "/b.xlsx" } },
+      ],
+    });
+    expect([...(readVersions(text).get("/a.xlsx") ?? [])]).toEqual(["sha256:1"]);
+    expect(readVersions(text).has("/b.xlsx")).toBe(false);
+    expect(readVersions("oops").size).toBe(0);
   });
 });
 
@@ -41,6 +57,25 @@ describe("linkStatus", () => {
     const after = await linkStatus(root, doc);
     expect(after[0]).toMatchObject({ path: "sales.xlsx", newer: true });
     expect(after[0]?.version).not.toBe(before[0]?.version);
+  });
+
+  it("marks a source changed after it was read as newer even if saved before the provenance", async () => {
+    const src = path.join(root, "sales.xlsx");
+    const doc = path.join(root, "report.pptx");
+    const sha = (text: string) => `sha256:${createHash("sha256").update(text).digest("hex")}`;
+    await fs.writeFile(doc, "p");
+    await fs.writeFile(
+      `${doc}.provenance.json`,
+      JSON.stringify({ numbers: [{ value: 1, source: { file: src, read_version: sha("read") } }] }),
+    );
+    // the source was saved while inserting: older than the provenance file, but not what was read
+    const old = new Date(Date.now() - 60_000);
+    await fs.writeFile(src, "saved meanwhile");
+    await fs.utimes(src, old, old);
+    expect((await linkStatus(root, doc))[0]).toMatchObject({ path: "sales.xlsx", newer: true });
+    await fs.writeFile(src, "read");
+    await fs.utimes(src, old, old);
+    expect((await linkStatus(root, doc))[0]).toMatchObject({ path: "sales.xlsx", newer: false });
   });
 
   it("returns empty without a provenance file", async () => {

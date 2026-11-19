@@ -79,6 +79,7 @@ def insert_range_command(
     document: str = typer.Argument(..., help="표를 넣을 pptx 문서 경로"),
     source: str = typer.Argument(..., help="원본 xlsx 경로"),
     cell_range: str = typer.Argument(..., help="넣을 셀 범위 (예: A1:C16)"),
+    sheet: str = typer.Option("", "--sheet", help="범위를 읽을 시트 이름 (비우면 첫 시트)"),
 ) -> None:
     """엑셀 셀 범위를 pptx에 표로 넣고 숫자 출처를 기록해 결과를 JSON으로 출력합니다. FR-44."""
     import functools
@@ -91,14 +92,14 @@ def insert_range_command(
         """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
 
     @functools.wraps(insert_range)
-    def failing_on_error(document: str, source: str, cell_range: str) -> str:
-        result = insert_range(document, source, cell_range)
+    def failing_on_error(document: str, source: str, cell_range: str, sheet: str) -> str:
+        result = insert_range(document, source, cell_range, sheet or None)
         if "error" in json.loads(result):
             raise _Failed(result)
         return result
 
     try:
-        typer.echo(logged(failing_on_error, ai_used=False)(document, source, cell_range))
+        typer.echo(logged(failing_on_error, ai_used=False)(document, source, cell_range, sheet))
     except _Failed as failed:
         typer.echo(str(failed))  # studio reads the error JSON from stdout
 

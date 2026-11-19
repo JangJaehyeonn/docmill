@@ -294,10 +294,14 @@ async function insertRange(
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return sendJson(res, 400, { error: "요청 본문이 올바르지 않습니다." });
   }
-  const body = raw as { target?: unknown; source?: unknown; range?: unknown };
+  const body = raw as { target?: unknown; source?: unknown; range?: unknown; sheet?: unknown };
   if (typeof body.target !== "string" || typeof body.source !== "string") {
     return sendJson(res, 400, { error: "대상 문서와 원본 파일 경로가 필요합니다." });
   }
+  if (body.sheet !== undefined && typeof body.sheet !== "string") {
+    return sendJson(res, 400, { error: "시트 이름이 올바르지 않습니다." });
+  }
+  const sheet = body.sheet ?? "";
   const range = typeof body.range === "string" ? body.range : "";
   if (!isCellRange(range)) return sendJson(res, 400, { error: "셀 범위를 A1:C16 형식으로 입력하세요." });
   const target = await resolveQuery(opts, res, new URLSearchParams({ path: body.target }));
@@ -311,7 +315,7 @@ async function insertRange(
   const root = await fs.realpath(opts.workspace);
   const result = await withFileLock(target.rel, async () => {
     const before = await fs.stat(target.abs);
-    const r = await runInsert(target.abs, source.abs, range, root);
+    const r = await runInsert(target.abs, source.abs, range, root, sheet);
     // 파일이 바뀌었으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
     // 응답을 잃은 실패(시간 초과 등)라도 파일이 바뀌었다면 키를 버린다.
     const after = await fs.stat(target.abs).catch(() => before);

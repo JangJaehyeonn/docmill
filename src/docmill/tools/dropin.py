@@ -11,9 +11,16 @@ studio에서 엑셀 탭의 범위를 PPT 탭으로 끌어다 놓으면 이 도�
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
 import json
 import re
+import shutil
+import signal
+import sys
+import tempfile
 import zipfile
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -26,8 +33,10 @@ from docmill.tools.refresh import (
     RefreshError,
     _commit,
     _document_lock,
+    _publish,
+    cells_from_bytes,
     number_digits,
-    read_cells,
+    source_digest,
 )
 
 MAX_ROWS = 30
@@ -77,15 +86,24 @@ def parse_range(text: str) -> tuple[int, int, int, int]:
     return r1, c1, r2, c2
 
 
-def _first_sheet(xlsx: Path) -> str:
+def _pick_sheet(data: bytes, xlsx: Path, wanted: str | None) -> str:
+    """고른 시트 이름을 확인해 돌려준다. 고르지 않았으면(None·빈 값) 첫 시트를 쓴다."""
     try:
-        parts = Package.read(xlsx.read_bytes()).parts
-        sheet = next(ET.fromstring(parts["xl/workbook.xml"]).iter(f"{_S}sheet"), None)
-    except (OSError, KeyError, ValueError, OoxmlError, ET.ParseError) as exc:
+        parts = Package.read(data).parts
+        names = [
+            str(s.get("name"))
+            for s in ET.fromstring(parts["xl/workbook.xml"]).iter(f"{_S}sheet")
+            if s.get("name")
+        ]
+    except (KeyError, ValueError, OoxmlError, ET.ParseError, zipfile.BadZipFile) as exc:
         raise DropInError("source", f"원본 엑셀을 읽지 못했다: {xlsx} ({exc})") from exc
-    if sheet is None or not sheet.get("name"):
+    if not names:
         raise DropInError("source", f"원본 엑셀에 시트가 없다: {xlsx}")
-    return str(sheet.get("name"))
+    if not wanted:
+        return names[0]
+    if wanted not in names:
+        raise DropInError("source", f"원본 엑셀에 '{wanted}' 시트가 없다: {xlsx.name}")
+    return wanted
 
 
 def _digits(value: float) -> int:
@@ -224,13 +242,7 @@ def _add_slide(package: Package, title: str, grid: list[list[Any]]) -> tuple[byt
     ).encode("utf-8")
     parts["ppt/_rels/presentation.xml.rels"] = _add_relationship(pres_rels, rid_no, number)
     types = _text(parts, "[Content_Types].xml")
-    override = (
-        f'<Override PartName="/{part}" ContentType="application/vnd.openxmlformats-officedocument.'
-        'presentationml.slide+xml"/>'
-    )
-    parts["[Content_Types].xml"] = types.replace("</Types>", override + "</Types>", 1).encode(
-        "utf-8"
-    )
+    parts["[Content_Types].xml"] = _add_override(types, part)
     stamp = package.infos[0].date_time if package.infos else (1980, 1, 1, 0, 0, 0)
     added = tuple(
         _new_info(name, stamp) for name in parts if name not in {i.filename for i in package.infos}
@@ -251,6 +263,18 @@ def _add_relationship(rels: str, rid_no: int, number: int) -> bytes:
     return (rels[: m.start()] + new + rels[m.start() :]).encode("utf-8")
 
 
+def _add_override(types: str, part: str) -> bytes:
+    """콘텐츠 타입 파일에 슬라이드 항목을 더한다. 닫는 태그는 접두사(`ct:` 등)와 상관없이 찾는다."""
+    m = re.search(r"</((?:[\w.-]+:)?)Types\s*>", types)
+    if m is None:
+        raise DropInError("document", "[Content_Types].xml에 형식 목록이 없다")
+    new = (
+        f'<{m.group(1)}Override PartName="/{part}" ContentType="application/'
+        'vnd.openxmlformats-officedocument.presentationml.slide+xml"/>'
+    )
+    return (types[: m.start()] + new + types[m.start() :]).encode("utf-8")
+
+
 def _new_info(name: str, stamp: tuple[int, int, int, int, int, int]) -> zipfile.ZipInfo:
     info = zipfile.ZipInfo(name, date_time=stamp)
     info.compress_type = zipfile.ZIP_DEFLATED
@@ -258,9 +282,14 @@ def _new_info(name: str, stamp: tuple[int, int, int, int, int, int]) -> zipfile.
 
 
 def _numbers(
-    grid: list[list[Any]], first: tuple[int, int], source: Path, sheet: str, slide: int, shape: int
+    grid: list[list[Any]],
+    first: tuple[int, int],
+    origin: tuple[Path, str, str],
+    slide: int,
+    shape: int,
 ) -> list[dict[str, Any]]:
     """숫자 칸마다 문서 위치와 원본 출처(한 칸 `sum`)를 행 순서대로 만든다."""
+    source, sheet, version = origin
     found: list[dict[str, Any]] = []
     for r, row in enumerate(grid):
         for c, value in enumerate(row):
@@ -286,6 +315,7 @@ def _numbers(
                         "range": f"{addr}:{addr}",
                         "literal": True,
                         "digits": digits,
+                        "read_version": version,
                     },
                 }
             )
@@ -305,22 +335,90 @@ def _existing(document: Path) -> list[dict[str, Any]]:
     return numbers
 
 
-def _insert(document: Path, source: Path, cell_range: str, run_id: str) -> dict[str, Any]:
+def _journal(document: Path) -> Path:
+    """발행 도중 끊겼을 때 되돌릴 이전 파일을 두는 폴더 (임시 폴더, 문서 경로별 하나)."""
+    digest = hashlib.sha256(str(document.resolve()).encode("utf-8")).hexdigest()[:24]
+    return Path(tempfile.gettempdir()) / f"docmill-insert-{digest}"
+
+
+def _sha(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _recover(document: Path) -> None:
+    """지난 삽입이 문서만 바꾸고 끊겼으면(문서는 새것, 출처 파일은 옛것) 두 파일을
+    이전으로 되돌린다.
+
+    두 파일이 모두 새것(발행은 끝나고 정리 전에 끊김)이거나 그 뒤 문서가 다시 바뀌었으면
+    손대지 않는다.
+    """
+    journal = _journal(document)
+    if not journal.is_dir():
+        return
+    try:
+        marks = json.loads((journal / "ready.json").read_text(encoding="utf-8"))
+        doc_hash, prov_hash = str(marks["document"]), str(marks["provenance"])
+    except (OSError, ValueError, KeyError, TypeError):
+        shutil.rmtree(journal, ignore_errors=True)  # journal incomplete: nothing was published
+        return
+    prov = provenance_path(document)
+    doc_new = document.is_file() and _sha(document.read_bytes()) == doc_hash
+    prov_new = prov.is_file() and _sha(prov.read_bytes()) == prov_hash
+    if doc_new and not prov_new:
+        backup = journal / "provenance.bak"
+        if backup.is_file():
+            _publish(backup.read_bytes(), prov)
+        else:
+            prov.unlink(missing_ok=True)
+        _publish((journal / "document.bak").read_bytes(), document)
+    shutil.rmtree(journal, ignore_errors=True)
+
+
+@contextlib.contextmanager
+def _signals_deferred() -> Iterator[None]:
+    """두 파일을 발행하는 동안 종료 신호(시간 초과의 SIGTERM 등)를 미뤄 반쯤 발행되지 않게 한다."""
+    if sys.platform == "win32":
+        yield  # Windows has no signal mask; the journal recovers the next time instead
+        return
+    blocked = {signal.SIGTERM, signal.SIGINT, signal.SIGHUP}
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, blocked)
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
+
+
+def _publish_pair(document: Path, data: bytes, original: bytes, sidecar: bytes) -> None:
+    """pptx와 출처 파일을 함께 발행한다. 중간에 끊기면 다음 삽입이 저널로 둘 다 되돌린다."""
+    journal = _journal(document)
+    shutil.rmtree(journal, ignore_errors=True)
+    journal.mkdir(parents=True)
+    (journal / "document.bak").write_bytes(original)
+    prov = provenance_path(document)
+    if prov.is_file():
+        (journal / "provenance.bak").write_bytes(prov.read_bytes())
+    marks = {"document": _sha(data), "provenance": _sha(sidecar)}
+    (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
+    with _signals_deferred():
+        _commit(document, data, original, sidecar)
+        shutil.rmtree(journal, ignore_errors=True)
+
+
+def _insert(
+    document: Path, source: Path, cell_range: str, sheet_name: str | None, run_id: str
+) -> dict[str, Any]:
     if document.suffix.lower() != ".pptx" or not document.is_file():
         raise DropInError("input", f"지금은 pptx 문서에만 넣을 수 있다: {document.name}")
     if source.suffix.lower() != ".xlsx" or not source.is_file():
         raise DropInError("input", f"읽을 수 있는 .xlsx 파일이 아니다: {source}")
     r1, c1, r2, c2 = parse_range(cell_range)
-    sheet = _first_sheet(source)
-    version = source.stat().st_mtime_ns
+    _recover(document)
+    raw = source.read_bytes()  # read once: values, sheet and version all come from these bytes
+    sheet = _pick_sheet(raw, source, sheet_name)
     try:
-        cells = read_cells(source, sheet)
+        cells = cells_from_bytes(raw, sheet, source)
     except RefreshError as exc:
         raise DropInError(exc.step, exc.message) from exc
-    if source.stat().st_mtime_ns != version:
-        raise DropInError(
-            "source", f"읽는 동안 원본 엑셀이 바뀌었다. 다시 시도하세요: {source.name}"
-        )
     grid = [
         [cells.get(f"{column_letter(c)}{r}") for c in range(c1, c2 + 1)] for r in range(r1, r2 + 1)
     ]
@@ -329,9 +427,9 @@ def _insert(document: Path, source: Path, cell_range: str, run_id: str) -> dict[
         data, slide, shape = _add_slide(Package.read(original), f"{source.name} 표", grid)
     except (OoxmlError, zipfile.BadZipFile, ValueError) as exc:
         raise DropInError("document", f"문서에 표를 넣지 못했다: {exc}") from exc
-    added = _numbers(grid, (r1, c1), source, sheet, slide, shape)
+    added = _numbers(grid, (r1, c1), (source, sheet, source_digest(raw)), slide, shape)
     sidecar = dump([*_existing(document), *added])
-    _commit(document, data, original, sidecar)
+    _publish_pair(document, data, original, sidecar)
     return {
         "document": str(document),
         "provenance": str(provenance_path(document)),
@@ -339,18 +437,21 @@ def _insert(document: Path, source: Path, cell_range: str, run_id: str) -> dict[
         "rows": len(grid),
         "columns": len(grid[0]),
         "numbers": len(added),
+        "sheet": sheet,
         "summary": (
-            f"{source.name} {cell_range} 표를 새 슬라이드(파일 번호 {slide})에 넣고 "
+            f"{source.name} '{sheet}' {cell_range} 표를 새 슬라이드(파일 번호 {slide})에 넣고 "
             f"숫자 {len(added)}개의 출처를 기록했다"
         ),
         "run_id": run_id,
     }
 
 
-def insert_range(document: str, source: str, cell_range: str) -> str:
+def insert_range(document: str, source: str, cell_range: str, sheet: str | None = None) -> str:
     """엑셀 셀 범위를 pptx 문서 맨 끝 새 슬라이드에 표로 넣고 숫자마다 원본 출처를 기록한다.
 
-    document는 넣을 pptx, source는 원본 xlsx(첫 시트), cell_range는 `A1:C16` 같은 범위다.
+    document는 넣을 pptx, source는 원본 xlsx, cell_range는 `A1:C16` 같은 범위,
+    sheet는 범위를 읽을 시트 이름이다(없으면 첫 시트). 출처에는 읽은 원본의 판
+    (`read_version`)도 적는다.
     숫자 칸의 출처는 문서 옆 `<문서 이름>.provenance.json`에 덧붙으며, 원본이 바뀌면
     `refresh_links`가 이 숫자도 고친다. 결과는 JSON 문자열이며, 실패하면 error와 실패한
     단계(step)를 담고 문서는 바뀌지 않는다.
@@ -358,7 +459,7 @@ def insert_range(document: str, source: str, cell_range: str) -> str:
     run_id = current_run_id() or new_run_id()
     try:
         with _document_lock(Path(document)):
-            result = _insert(Path(document), Path(source), cell_range, run_id)
+            result = _insert(Path(document), Path(source), cell_range, sheet, run_id)
     except DropInError as exc:
         result = {"error": exc.message, "step": exc.step, "run_id": run_id}
     except Exception as exc:  # file failures must not kill the caller

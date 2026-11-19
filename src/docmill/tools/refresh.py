@@ -104,7 +104,21 @@ def _shared_strings(parts: dict[str, bytes]) -> list[str]:
 def read_cells(xlsx: Path, sheet: str) -> dict[str, Any]:
     """엑셀 시트 하나의 셀 값(`C2` → 값)을 읽는다. 수식 셀은 저장된 결과 값을 쓴다."""
     try:
-        parts = Package.read(xlsx.read_bytes()).parts
+        data = xlsx.read_bytes()
+    except OSError as exc:
+        raise RefreshError("source", f"원본 엑셀을 읽지 못했다: {xlsx} ({exc})") from exc
+    return cells_from_bytes(data, sheet, xlsx)
+
+
+def source_digest(data: bytes) -> str:
+    """원본 파일 바이트의 판 표시(`sha256:<hex>`). 출처에 적어 두면 읽은 뒤 바뀐 원본을 알아챈다."""
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def cells_from_bytes(data: bytes, sheet: str, xlsx: Path) -> dict[str, Any]:
+    """이미 읽은 엑셀 바이트에서 시트 하나의 셀 값을 꺼낸다 (`xlsx`는 오류 문구용 경로)."""
+    try:
+        parts = Package.read(data).parts
         names = [
             s.get("name", "") for s in ET.fromstring(parts["xl/workbook.xml"]).iter(f"{_S}sheet")
         ]
@@ -379,12 +393,27 @@ class _Sources:
         self._document = document
         self._pairs = _pairs(numbers)
         self._cells: dict[tuple[str, str], dict[str, Any]] = {}
+        self._bytes: dict[str, bytes] = {}
         self._tables: dict[Pair, Table] = {}
+
+    def _read(self, file: str) -> bytes:
+        if file not in self._bytes:
+            path = _source_path(file, self._document)
+            try:
+                self._bytes[file] = path.read_bytes()
+            except OSError as exc:
+                raise RefreshError("source", f"원본 엑셀을 읽지 못했다: {path} ({exc})") from exc
+        return self._bytes[file]
+
+    def digest(self, file: str) -> str:
+        """이번 새로 고침에서 읽은 원본 바이트의 판 표시."""
+        return source_digest(self._read(file))
 
     def cells(self, file: str, sheet: str) -> dict[str, Any]:
         key = (file, sheet)
         if key not in self._cells:
-            self._cells[key] = read_cells(_source_path(file, self._document), sheet)
+            data = self._read(file)
+            self._cells[key] = cells_from_bytes(data, sheet, _source_path(file, self._document))
         return self._cells[key]
 
     def table(self, src: dict[str, Any]) -> Table | None:
@@ -411,6 +440,9 @@ def _renewed(item: dict[str, Any], sources: _Sources) -> tuple[dict[str, Any], f
         new_src = {k: v for k, v in new_src.items() if k != "excluded_rows"}
         if table.excluded:
             new_src["excluded_rows"] = list(table.excluded)
+    if "read_version" in new_src:
+        # 읽은 원본의 판을 새로 적어 studio가 이 판을 기준으로 바뀐 원본을 알아채게 한다.
+        new_src = {**new_src, "read_version": sources.digest(src["file"])}
     new_item = {**item, "value": _display(shown), "source": new_src}
     text = _chart_text(shown) if item["kind"] == "chart" else _text(new_src, shown)
     return new_item, shown, text

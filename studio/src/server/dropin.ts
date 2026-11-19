@@ -41,12 +41,15 @@ export function runInsert(
   sourceAbs: string,
   range: string,
   cwd: string,
+  sheet = "",
   timeoutMs = 60_000,
 ): Promise<InsertResult> {
+  const args = ["insert-range", docAbs, sourceAbs, range.trim()];
+  if (sheet.trim()) args.push("--sheet", sheet.trim());
   return new Promise((resolve) => {
     execFile(
       "docmill",
-      ["insert-range", docAbs, sourceAbs, range.trim()],
+      args,
       { cwd, timeout: timeoutMs, encoding: "utf-8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } },
       (err, stdout) =>
         resolve(err ? { summary: "", error: "범위를 문서에 넣지 못했어요." } : parseInsert(stdout)),

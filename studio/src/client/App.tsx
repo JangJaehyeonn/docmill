@@ -65,6 +65,8 @@ export function App() {
   const [linkResult, setLinkResult] = useState<LinkResult | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
   const [rangeText, setRangeText] = useState("");
+  const [sheetText, setSheetText] = useState("");
+  const [insertingInto, setInsertingInto] = useState<string | null>(null);
   const [dropMessage, setDropMessage] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [keyTarget, setKeyTarget] = useState("");
@@ -339,6 +341,7 @@ export function App() {
       return;
     }
     droppingRef.current = true;
+    setInsertingInto(target); // 넣는 동안 대상 편집기 입력을 막는다
     setDropMessage(`${baseName(from.source)}의 ${from.range}를 ${baseName(target)}에 넣는 중…`);
     try {
       if (!(await saveBefore(from.source)) || !(await saveBefore(target))) {
@@ -348,7 +351,7 @@ export function App() {
       const res = await fetch("/api/insert-range", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ target, source: from.source, range: from.range }),
+        body: JSON.stringify({ target, source: from.source, range: from.range, sheet: from.sheet }),
       });
       const body = (await res.json()) as { summary?: string; error?: string };
       if (!res.ok || body.error) {
@@ -368,6 +371,7 @@ export function App() {
       setDropMessage("범위를 문서에 넣지 못했어요.");
     } finally {
       droppingRef.current = false;
+      setInsertingInto(null);
     }
   };
 
@@ -561,12 +565,21 @@ export function App() {
                         onChange={(e) => setRangeText(e.target.value)}
                       />
                     </label>
+                    <label>
+                      시트{" "}
+                      <input
+                        type="text"
+                        value={sheetText}
+                        placeholder="첫 시트"
+                        onChange={(e) => setSheetText(e.target.value)}
+                      />
+                    </label>
                     <button
                       type="button"
                       draggable={isCellRange(rangeText)}
                       title="PPT 탭으로 끌어다 놓으면 표로 들어가요"
                       onDragStart={(e) => {
-                        dragged.current = { source: active.path, range: rangeText.trim() };
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText.trim() };
                         e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(dragged.current));
                         e.dataTransfer.setData("text/plain", rangeText.trim());
                         e.dataTransfer.effectAllowed = "copy";
@@ -595,7 +608,7 @@ export function App() {
                       type="button"
                       disabled={!isCellRange(rangeText) || keyTarget === ""}
                       onClick={() => {
-                        dragged.current = { source: active.path, range: rangeText.trim() };
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText.trim() };
                         void dropRange(keyTarget);
                       }}
                     >
@@ -612,6 +625,7 @@ export function App() {
               <OfficeEditor
                 key={`${active.path}#${reloads[active.path] ?? 0}`}
                 path={active.path}
+                locked={insertingInto === active.path}
                 onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
               />
             </>
