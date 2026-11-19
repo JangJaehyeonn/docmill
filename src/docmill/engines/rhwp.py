@@ -1,7 +1,7 @@
 """rhwp(`@rhwp/core`, Node) 한글 문서 읽기 어댑터 (FR-35, ADR 0025).
 
-`DocumentTool` 규약을 따른다. 읽기 전용이라 `execute("get_text")`(줄 목록)와
-`execute("get_paragraphs")`(문단별 스타일·글자)만 지원하고,
+`DocumentTool` 규약을 따른다. 읽기 전용이라 `execute("get_text")`(줄 목록)·
+`execute("get_paragraphs")`(문단별 스타일·글자)·`execute("get_tables")`(표 셀)만 지원하고,
 실패는 예외 대신 `EngineResult`로 돌려준다.
 """
 
@@ -57,7 +57,7 @@ class RhwpTool:
 
     def execute(self, command: str, args: dict[str, Any]) -> EngineResult:
         """`get_text`는 줄 목록(list[str]), `get_paragraphs`는 문단 목록(list[dict])을 돌려준다."""
-        modes = {"get_text": "lines", "get_paragraphs": "paragraphs"}
+        modes = {"get_text": "lines", "get_paragraphs": "paragraphs", "get_tables": "tables"}
         if command not in modes:
             return EngineResult(ok=False, message=f"지원하지 않는 명령: {command}")
         if self._staged is None:
@@ -107,7 +107,7 @@ class RhwpTool:
             return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
         if not isinstance(data, list):
             return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
-        if mode == "paragraphs":
+        if mode in ("paragraphs", "tables"):
             if not all(isinstance(x, dict) for x in data):
                 return EngineResult(ok=False, message="한글 문서 읽기 결과를 해석하지 못했다")
             return EngineResult(ok=True, output=[dict(x) for x in data], duration_ms=millis)
@@ -124,6 +124,11 @@ def _run(path: Path, command: str, timeout: float) -> EngineResult:
 def read_lines(path: Path, timeout: float = 60) -> EngineResult:
     """임시 작업 폴더에서 hwp·hwpx 문단 글자를 줄 목록으로 읽는다."""
     return _run(path, "get_text", timeout)
+
+
+def read_tables(path: Path, timeout: float = 60) -> EngineResult:
+    """임시 작업 폴더에서 hwp·hwpx 본문 표의 셀을 구역·문단·표·행·열 번호(1부터)와 함께 읽는다."""
+    return _run(path, "get_tables", timeout)
 
 
 def read_paragraphs(path: Path, timeout: float = 60) -> EngineResult:

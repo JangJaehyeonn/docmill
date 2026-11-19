@@ -15,6 +15,7 @@ from docmill import __version__
 from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
+from docmill.tools.compare import compare_versions
 from docmill.tools.contradictions import find_contradictions
 from docmill.tools.guard import guarded_edit
 from docmill.tools.mask import mask_text, unmask_text
@@ -106,6 +107,11 @@ def _register_contradictions(server: MCPServer) -> None:
     server.tool()(find_contradictions)
 
 
+def _register_compare(server: MCPServer) -> None:
+    """`compare_versions` 업무 도구(FR-41)를 등록한다."""
+    server.tool()(compare_versions)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -120,6 +126,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_official_style,
     _register_mask,
     _register_contradictions,
+    _register_compare,
 )
 
 
