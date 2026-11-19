@@ -15,6 +15,7 @@ from docmill import __version__
 from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
+from docmill.tools.contradictions import find_contradictions
 from docmill.tools.guard import guarded_edit
 from docmill.tools.mask import mask_text, unmask_text
 from docmill.tools.official_style import check_official_style
@@ -100,6 +101,11 @@ def _register_mask(server: MCPServer) -> None:
     server.tool()(unmask_text)
 
 
+def _register_contradictions(server: MCPServer) -> None:
+    """`find_contradictions` 업무 도구(FR-40)를 등록한다."""
+    server.tool()(find_contradictions)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -113,6 +119,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_refresh,
     _register_official_style,
     _register_mask,
+    _register_contradictions,
 )
 
 

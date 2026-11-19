@@ -22,6 +22,7 @@ def test_every_registrar_is_applied_and_only_business_tools_exposed() -> None:
         "check_official_style",
         "mask_text",
         "unmask_text",
+        "find_contradictions",
     }
     names = {tool.name for tool in asyncio.run(server_module.build_server().list_tools())}
     assert server_module.TOOL_REGISTRARS
