@@ -142,3 +142,70 @@ def test_errors_are_returned_not_raised(tmp_path: Path) -> None:
     broken = tmp_path / "b.docx"
     broken.write_text("not a zip")
     assert _run(broken)["step"] == "read"
+
+
+def test_units_are_converted_in_totals(tmp_path: Path) -> None:
+    table = [["항목", "값"], ["a", "1억원"], ["b", "5000만원"], ["합계", "15000만원"]]
+    assert _items(_docx(tmp_path / "a.docx", [table]), "합계 불일치") == []
+    bad = [["항목", "값"], ["a", "1억원"], ["b", "5000만원"], ["합계", "16000만원"]]
+    [item] = _items(_docx(tmp_path / "b.docx", [bad]), "합계 불일치")
+    assert item["expected"] == "15000만원" and item["actual"] == "16000만원"
+
+
+def test_subtotal_sums_only_its_own_section(tmp_path: Path) -> None:
+    rows = [["항목", "값"], ["A", "100"], ["B", "200"], ["소계", "300"]]
+    rows += [["C", "400"], ["D", "500"], ["소계", "900"], ["합계", "1200"]]
+    assert _items(_docx(tmp_path / "a.docx", [rows]), "합계 불일치") == []
+    rows[-2][1] = "1200"
+    [item] = _items(_docx(tmp_path / "b.docx", [rows]), "합계 불일치")
+    assert item["actual"] == "1200" and item["expected"] == "900"
+
+
+def test_percent_point_claim_is_compared_with_difference(tmp_path: Path) -> None:
+    table = [["구분", "전", "후"], ["점유율", "20%", "25%"]]
+    ok = _docx(tmp_path / "a.docx", ["점유율은 5%p 증가했다.", table])
+    assert _items(ok, "비율 불일치") == []
+    bad = _docx(tmp_path / "b.docx", ["점유율은 8%p 증가했다.", table])
+    [item] = _items(bad, "비율 불일치")
+    assert item["expected"] == "5%p" and item["actual"] == "8%p"
+
+
+def test_claim_about_other_item_is_not_compared(tmp_path: Path) -> None:
+    table = [["구분", "전", "후"], ["매출", "100", "125"]]
+    doc = _docx(tmp_path / "a.docx", ["인원은 30% 증가했다.", table])
+    assert _items(doc, "비율 불일치") == []
+
+
+def test_full_item_names_are_kept(tmp_path: Path) -> None:
+    doc = _pptx(tmp_path / "a.pptx", [["국내 영업1팀 매출은 10원"], ["해외 영업1팀 매출은 12원"]])
+    assert _items(doc, "항목 불일치") == []
+    same = _pptx(tmp_path / "b.pptx", [["국내 영업1팀 매출은 10원"], ["국내 영업1팀 매출은 12원"]])
+    assert len(_items(same, "항목 불일치")) == 1
+
+
+def test_item_values_are_unit_converted_but_unit_families_differ(tmp_path: Path) -> None:
+    same = _pptx(tmp_path / "a.pptx", [["매출은 1억원이다."], ["매출은 10000만원이다."]])
+    assert _items(same, "항목 불일치") == []
+    other = _pptx(tmp_path / "b.pptx", [["규모는 10원이다."], ["규모는 10명이다."]])
+    assert len(_items(other, "항목 불일치")) == 1
+
+
+def test_same_item_in_slide_tables_is_compared(tmp_path: Path) -> None:
+    def cell(text: str) -> str:
+        return f"<a:tc><a:txBody><a:p><a:r><a:t>{text}</a:t></a:r></a:p></a:txBody></a:tc>"
+
+    path = _pptx(tmp_path / "a.pptx", [["x"], ["y"]], [["항목", "값"], ["매출", "100"]])
+    rows = f"<a:tr>{cell('항목')}{cell('값')}</a:tr><a:tr>{cell('매출')}{cell('120')}</a:tr>"
+    xml = (
+        f'<p:sld xmlns:p="{_P}" xmlns:a="{_A}"><p:cSld><p:spTree><p:graphicFrame>'
+        f"<a:tbl>{rows}</a:tbl></p:graphicFrame></p:spTree></p:cSld></p:sld>"
+    )
+    with zipfile.ZipFile(path) as z:
+        files = {n: z.read(n) for n in z.namelist()}
+    files["ppt/slides/slide2.xml"] = xml.encode()
+    with zipfile.ZipFile(path, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+    [item] = _items(path, "항목 불일치")
+    places = [e["location"] for e in item["locations"]]  # type: ignore[attr-defined]
+    assert places == ["슬라이드 1 표 1 2행 2열", "슬라이드 2 표 1 2행 2열"]

@@ -36,12 +36,21 @@ _W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 _NUMBER = re.compile(r"[+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?")
 _TOTAL_LABEL = re.compile(r"^(?:합\s*계|총\s*계|총\s*합|소\s*계|total|sum)$", re.IGNORECASE)
 _CHANGE = re.compile(
-    r"(\d+(?:\.\d+)?)\s*%\s*(?:p\s*)?(증가|상승|늘|확대|성장|감소|하락|줄|축소|떨어)"
+    r"(\d+(?:\.\d+)?)\s*%\s*(p|포인트)?\s*(증가|상승|늘|확대|성장|감소|하락|줄|축소|떨어)"
 )
+_UNITS = "만원|억원|천원|원|%|명|건|개|대|곳"
 _ITEM_VALUE = re.compile(
-    r"([가-힣A-Za-z0-9]+(?:[ \t][가-힣A-Za-z0-9]+)?)\s*(?:은|는)\s*"
-    r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(만원|억원|천원|원|%|명|건|개|대|곳)"
+    r"\s*([가-힣A-Za-z0-9][가-힣A-Za-z0-9 \t]*?)\s*(?:은|는)\s*"
+    r"([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(" + _UNITS + ")"
 )
+# a clause ends at sentence punctuation or at a connective right after a unit
+_CLAUSE_SPLIT = re.compile(
+    r"\.(?!\d)|,(?!\d{3})|[!?;\n。]+|(?<=[원명건개대곳%])(?:이고|이며|이었고|였고)"
+)
+_SUBJECT = re.compile(r"[가-힣A-Za-z0-9]+(?:은|는|이|가)(?=\s|$)")
+_UNIT_AT_END = re.compile(r"\s*(" + _UNITS + ")$")
+# unit -> (family, scale to the family's base unit); units of one family are convertible
+_UNIT_SCALE = {"억원": ("원", 1e8), "만원": ("원", 1e4), "천원": ("원", 1e3), "원": ("원", 1.0)}
 _DOWN = ("감소", "하락", "줄", "축소", "떨어")
 _PCT_TOLERANCE = 0.5
 _VALUE_TOLERANCE = 1e-6
@@ -151,12 +160,43 @@ def read_content(document: Path) -> Content:
 # ── 숫자 도우미 ──────────────────────────────────────────────────────────
 
 
-def _number(cell: str) -> float | None:
-    """셀 글자 전체가 숫자(쉼표·단위 허용)일 때만 값을 돌려준다."""
-    stripped = re.sub(r"\s*(?:만원|억원|천원|원|%|명|건|개|대|곳)$", "", cell.strip())
+@dataclass(frozen=True)
+class Quantity:
+    """숫자와 단위. base는 같은 계열(원 등)의 기본 단위로 환산한 값이다."""
+
+    value: float
+    unit: str
+
+    @property
+    def family(self) -> str:
+        """환산 가능한 단위 계열. 단위가 없으면 빈 문자열."""
+        return _UNIT_SCALE.get(self.unit, (self.unit, 1.0))[0]
+
+    @property
+    def scale(self) -> float:
+        """이 단위 1이 기본 단위 몇인지."""
+        return _UNIT_SCALE.get(self.unit, (self.unit, 1.0))[1]
+
+    @property
+    def base(self) -> float:
+        """기본 단위로 환산한 값."""
+        return self.value * self.scale
+
+
+def _quantity(cell: str) -> Quantity | None:
+    """셀 글자 전체가 숫자(쉼표·단위 허용)일 때만 값과 단위를 돌려준다."""
+    text = cell.strip()
+    unit_match = _UNIT_AT_END.search(text)
+    unit = unit_match.group(1) if unit_match else ""
+    stripped = text[: unit_match.start()] if unit_match else text
     if not _NUMBER.fullmatch(stripped):
         return None
-    return float(stripped.replace(",", ""))
+    return Quantity(float(stripped.replace(",", "")), unit)
+
+
+def _compatible(quantities: list[Quantity]) -> bool:
+    """단위가 있는 값끼리 같은 계열일 때만 함께 계산할 수 있다."""
+    return len({q.family for q in quantities if q.unit}) <= 1
 
 
 def _fmt(value: float) -> str:
@@ -179,16 +219,37 @@ def _cell_place(table: Table, row: int, col: int) -> str:
     return f"{table.place} {row + 1}행 {col + 1}열"
 
 
-def _total_row_items(table: Table, total_row: int, col: int) -> list[float]:
-    values: list[float] = []
-    for r in range(1, total_row):
+def _is_subtotal(label: str) -> bool:
+    return label.strip().replace(" ", "").startswith("소계")
+
+
+def _total_row_items(table: Table, total_row: int, col: int) -> list[Quantity]:
+    """합계 행 위쪽의 항목 값. 소계 행은 직전 합계·소계 행 이후 구간만 합산한다."""
+    start = 1
+    if _is_subtotal(table.rows[total_row][0]):
+        for r in range(total_row - 1, 0, -1):
+            if table.rows[r] and _TOTAL_LABEL.match(table.rows[r][0].strip()):
+                start = r + 1
+                break
+    values: list[Quantity] = []
+    for r in range(start, total_row):
         row = table.rows[r]
         label = row[0] if row else ""
         if col < len(row) and not _TOTAL_LABEL.match(label.strip()):
-            value = _number(row[col])
+            value = _quantity(row[col])
             if value is not None:
                 values.append(value)
     return values
+
+
+def _sum_mismatch(items: list[Quantity], actual: Quantity | None) -> float | None:
+    """항목 합이 합계 칸과 다르면 합계 칸 단위로 환산한 항목 합을, 같으면 None을 돌려준다."""
+    if actual is None or len(items) < 2 or not _compatible([*items, actual]):
+        return None
+    total = sum(q.base for q in items)
+    if _close(total, actual.base):
+        return None
+    return total / actual.scale
 
 
 def _row_checks(table: Table) -> list[dict[str, Any]]:
@@ -197,11 +258,10 @@ def _row_checks(table: Table) -> list[dict[str, Any]]:
         if r == 0 or not row or not _TOTAL_LABEL.match(row[0].strip()):
             continue
         for c in range(1, len(row)):
-            actual = _number(row[c])
-            items = _total_row_items(table, r, c)
-            if actual is None or len(items) < 2 or _close(sum(items), actual):
-                continue
-            found.append(_mismatch(table, r, c, sum(items), actual, "열"))
+            actual = _quantity(row[c])
+            expected = _sum_mismatch(_total_row_items(table, r, c), actual)
+            if actual is not None and expected is not None:
+                found.append(_mismatch(table, r, c, expected, actual, "열"))
     return found
 
 
@@ -215,25 +275,27 @@ def _col_checks(table: Table) -> list[dict[str, Any]]:
             row = table.rows[r]
             if c >= len(row) or _TOTAL_LABEL.match(row[0].strip()):
                 continue
-            actual = _number(row[c])
-            items = [v for v in (_number(x) for x in row[1:c]) if v is not None]
-            if actual is None or len(items) < 2 or _close(sum(items), actual):
-                continue
-            found.append(_mismatch(table, r, c, sum(items), actual, "행"))
+            actual = _quantity(row[c])
+            items = [v for v in (_quantity(x) for x in row[1:c]) if v is not None]
+            expected = _sum_mismatch(items, actual)
+            if actual is not None and expected is not None:
+                found.append(_mismatch(table, r, c, expected, actual, "행"))
     return found
 
 
 def _mismatch(
-    table: Table, row: int, col: int, expected: float, actual: float, axis: str
+    table: Table, row: int, col: int, expected: float, actual: Quantity, axis: str
 ) -> dict[str, Any]:
     place = _cell_place(table, row, col)
     cell = table.rows[row][col]
+    exp_text = f"{_fmt(expected)}{actual.unit}"
+    act_text = f"{_fmt(actual.value)}{actual.unit}"
     return {
         "kind": TOTAL_MISMATCH,
         "locations": [_entry(place, cell)],
-        "expected": _fmt(expected),
-        "actual": _fmt(actual),
-        "message": f"{place}의 합계 {_fmt(actual)}이(가) 항목 {axis} 합 {_fmt(expected)}과 다름",
+        "expected": exp_text,
+        "actual": act_text,
+        "message": f"{place}의 합계 {act_text}이(가) 항목 {axis} 합 {exp_text}과 다름",
     }
 
 
@@ -248,43 +310,74 @@ def total_contradictions(tables: list[Table]) -> list[dict[str, Any]]:
 # ── (2) 비율·증감 ───────────────────────────────────────────────────────
 
 
-def _table_changes(tables: list[Table]) -> list[tuple[str, str, float]]:
-    """표의 행마다 이웃한 두 숫자 칸의 증감률(%)을 (위치, 행 이름, 값)으로 모은다."""
-    out: list[tuple[str, str, float]] = []
+@dataclass
+class Change:
+    """표 한 행의 이웃한 두 숫자 칸 사이 변화. pp는 둘 다 %일 때의 %p 차이다."""
+
+    place: str
+    name: str
+    pct: float
+    pp: float | None
+
+
+def _table_changes(tables: list[Table]) -> list[Change]:
+    """표의 행마다 이웃한 두 숫자 칸의 증감률(%)과 %p 차이를 모은다."""
+    out: list[Change] = []
     for table in tables:
         for r, row in enumerate(table.rows):
             if r == 0 or not row or _TOTAL_LABEL.match(row[0].strip()):
                 continue
-            nums = [(c, _number(x)) for c, x in enumerate(row) if c > 0]
+            nums = [(c, _quantity(x)) for c, x in enumerate(row) if c > 0]
             for (c1, a), (c2, b) in pairwise(nums):
-                if a and b is not None and c2 == c1 + 1:
-                    out.append((_cell_place(table, r, c2), row[0], (b - a) / abs(a) * 100))
+                if a is None or b is None or c2 != c1 + 1 or not a.base or not _compatible([a, b]):
+                    continue
+                pp = b.value - a.value if a.unit == b.unit == "%" else None
+                out.append(
+                    Change(
+                        _cell_place(table, r, c2), row[0], (b.base - a.base) / abs(a.base) * 100, pp
+                    )
+                )
     return out
 
 
-def _claims(text: str) -> list[tuple[float, str]]:
+def _claims(text: str) -> list[tuple[float, str, bool, int]]:
+    """본문의 증감 주장을 (부호 있는 값, 원문, %p 여부, 시작 위치)로 모은다."""
     return [
-        (float(m.group(1)) * (-1 if m.group(2) in _DOWN else 1), m.group(0))
+        (
+            float(m.group(1)) * (-1 if m.group(3) in _DOWN else 1),
+            m.group(0),
+            m.group(2) is not None,
+            m.start(),
+        )
         for m in _CHANGE.finditer(text)
     ]
 
 
 def _ratio_for(
-    para: Prose, claim: float, phrase: str, changes: list[tuple[str, str, float]]
+    para: Prose, claim: tuple[float, str, bool, int], changes: list[Change]
 ) -> dict[str, Any] | None:
-    related = [c for c in changes if c[1].strip() and c[1].strip() in para.text]
+    value, phrase, is_pp, start = claim
+    related = [c for c in changes if c.name.strip() and c.name.strip() in para.text]
+    if not related and _SUBJECT.search(para.text[:start]):
+        return None  # 본문이 표에 없는 다른 항목을 말하고 있다
     pool = related or changes
-    if any(abs(value - claim) <= _PCT_TOLERANCE for _, _, value in pool):
+    candidates: list[tuple[str, float]] = []
+    for c in pool:
+        v = c.pp if is_pp else c.pct
+        if v is not None:
+            candidates.append((c.place, v))
+    if any(abs(v - value) <= _PCT_TOLERANCE for _, v in candidates):
         return None
-    if len(pool) != 1:
+    if len(candidates) != 1:
         return None  # 어느 표 값과 비교해야 하는지 정할 수 없으면 알리지 않는다
-    place, _, value = pool[0]
+    place, expected = candidates[0]
+    suffix = "%p" if is_pp else "%"
     return {
         "kind": RATIO_MISMATCH,
         "locations": [_entry(para.place, para.text), _entry(place, "")],
-        "expected": f"{_fmt(abs(value))}%",
-        "actual": f"{_fmt(abs(claim))}%",
-        "message": f"본문 '{phrase}'이(가) 표에서 계산한 {_fmt(value)}%와 다릅니다.",
+        "expected": f"{_fmt(abs(expected))}{suffix}",
+        "actual": f"{_fmt(abs(value))}{suffix}",
+        "message": f"본문 '{phrase}'이(가) 표에서 계산한 {_fmt(expected)}{suffix}와 다릅니다.",
     }
 
 
@@ -295,8 +388,8 @@ def ratio_contradictions(content: Content) -> list[dict[str, Any]]:
     if not changes:
         return found
     for para in content.prose:
-        for claim, phrase in _claims(para.text):
-            item = _ratio_for(para, claim, phrase, changes)
+        for claim in _claims(para.text):
+            item = _ratio_for(para, claim, changes)
             if item:
                 found.append(item)
     return found
@@ -305,24 +398,67 @@ def ratio_contradictions(content: Content) -> list[dict[str, Any]]:
 # ── (3) 같은 항목 ───────────────────────────────────────────────────────
 
 
-def item_contradictions(prose: list[Prose]) -> list[dict[str, Any]]:
-    """같은 항목이 쪽·슬라이드마다 다른 숫자로 나오는 곳을 찾는다."""
-    seen: dict[str, list[tuple[Prose, float, str]]] = {}
+@dataclass
+class Hit:
+    """같은 항목 이름으로 모은 값 하나와 그 위치."""
+
+    place: str
+    text: str
+    quantity: Quantity
+
+
+def _prose_hits(prose: list[Prose]) -> list[tuple[str, Hit]]:
+    hits: list[tuple[str, Hit]] = []
     for para in prose:
-        for m in _ITEM_VALUE.finditer(para.text):
-            key = re.sub(r"\s+", "", m.group(1))
-            seen.setdefault(key, []).append((para, float(m.group(2).replace(",", "")), m.group(3)))
+        for clause in _CLAUSE_SPLIT.split(para.text):
+            m = _ITEM_VALUE.match(clause)
+            if m:
+                key = re.sub(r"\s+", "", m.group(1))
+                quantity = Quantity(float(m.group(2).replace(",", "")), m.group(3))
+                hits.append((key, Hit(para.place, para.text, quantity)))
+    return hits
+
+
+def _table_hits(tables: list[Table]) -> list[tuple[str, Hit]]:
+    """표의 '항목 이름 | 값' 칸을 (항목 키, 값)으로 모은다. 키에는 열 제목이 붙는다."""
+    hits: list[tuple[str, Hit]] = []
+    for table in tables:
+        header = table.rows[0] if table.rows else []
+        for r, row in enumerate(table.rows):
+            label = row[0].strip() if row else ""
+            if r == 0 or not label or _TOTAL_LABEL.match(label):
+                continue
+            for c in range(1, len(row)):
+                quantity = _quantity(row[c])
+                title = header[c].strip() if c < len(header) else ""
+                if quantity is not None and title:
+                    key = re.sub(r"\s+", "", label) + (f"({title})" if len(row) > 2 else "")
+                    hits.append((key, Hit(_cell_place(table, r, c), row[c], quantity)))
+    return hits
+
+
+def _differs(a: Quantity, b: Quantity) -> bool:
+    if a.unit and b.unit and a.family != b.family:
+        return True
+    return not _close(a.base, b.base)
+
+
+def item_contradictions(content: Content) -> list[dict[str, Any]]:
+    """같은 항목이 쪽·슬라이드·표마다 다른 숫자로 나오는 곳을 찾는다."""
+    seen: dict[str, list[Hit]] = {}
+    for key, hit in _prose_hits(content.prose) + _table_hits(content.tables):
+        seen.setdefault(key, []).append(hit)
     found: list[dict[str, Any]] = []
     for key, hits in seen.items():
-        first = hits[0]
-        if all(h[2] == first[2] and _close(h[1], first[1]) for h in hits):
+        first = hits[0].quantity
+        if not any(_differs(h.quantity, first) for h in hits[1:]):
             continue
-        shown = [f"{_fmt(v)}{u}" for _, v, u in hits]
+        shown = [f"{_fmt(h.quantity.value)}{h.quantity.unit}" for h in hits]
         found.append(
             {
                 "kind": ITEM_MISMATCH,
                 "item": key,
-                "locations": [_entry(p.place, p.text) for p, _, _ in hits],
+                "locations": [_entry(h.place, h.text) for h in hits],
                 "expected": shown[0],
                 "actual": shown[-1],
                 "message": f"'{key}'이(가) 위치마다 다릅니다: {', '.join(shown)}",
@@ -340,7 +476,7 @@ def build_contradictions(document: Path) -> dict[str, Any]:
     items = (
         total_contradictions(content.tables)
         + ratio_contradictions(content)
-        + item_contradictions(content.prose)
+        + item_contradictions(content)
     )
     summary = f"숫자 모순 {len(items)}건" if items else "숫자 모순 없음"
     return {"contradictions": items, "summary": summary}
