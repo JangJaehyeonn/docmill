@@ -23,6 +23,7 @@ import re
 import shutil
 import time
 import zipfile
+import zlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -86,10 +87,49 @@ def _wait_files(ws: Path, pattern: str, seconds: int = 90) -> list[Path]:
     return []
 
 
+def _pdf_objects(data: bytes) -> bytes:
+    """PDF 본문과, 압축된 스트림(객체 스트림 포함)을 풀어 이은 바이트."""
+    parts = [data]
+    for m in re.finditer(rb"stream\r?\n", data):
+        end = data.find(b"endstream", m.end())
+        if end < 0:
+            continue
+        try:
+            parts.append(zlib.decompressobj().decompress(data[m.end() : end]))
+        except zlib.error:
+            continue
+    return b"\n".join(parts)
+
+
 def _pdf_pages(pdf: Path) -> int:
+    """쪽 수: 쪽 객체(/Type /Page) 수가 쪽 트리 뿌리(/Type /Pages)의 /Count와 같아야 한다."""
     data = pdf.read_bytes()
     assert data.startswith(b"%PDF"), "PDF 파일이어야 한다"
-    return len(re.findall(rb"/Type\s*/Page(?![s\w])", data))
+    assert b"%%EOF" in data[-2048:], "PDF가 끝까지 쓰여야 한다"
+    body = _pdf_objects(data)
+    leaves = len(re.findall(rb"/Type\s*/Page(?![s\w])", body))
+    counts = [
+        int(m.group(1) or m.group(2))
+        for m in re.finditer(
+            rb"/Type\s*/Pages\b[^>]*?/Count\s+(\d+)|/Count\s+(\d+)[^>]*?/Type\s*/Pages\b", body
+        )
+    ]
+    assert counts, "쪽 트리(/Type /Pages)가 있어야 한다"
+    assert max(counts) == leaves, ("쪽 트리 /Count와 쪽 객체 수가 같아야 한다", counts, leaves)
+    return leaves
+
+
+def _confirm_if_asked(page: Any, ws: Path, pattern: str, seconds: int = 60) -> None:
+    """preflight 실패로 확인 창이 뜨면 `그래도 내보내기`를 누른다 (FR-46: 실패가 있으면 확인을 받는다)."""
+    button = page.get_by_role("dialog").get_by_role("button", name="그래도 내보내기")
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        if list(ws.glob(pattern)):
+            return
+        if button.count() and button.first.is_visible():
+            button.first.click()
+            return
+        time.sleep(0.5)
 
 
 @pytest.mark.fr("FR-46")
@@ -106,6 +146,7 @@ def test_pptx_pdf_export_page_count_equals_slide_count(
     page.goto(start_studio(workspace=ws))
     _open(page, "company_intro.pptx")
     _export(page, "PDF")
+    _confirm_if_asked(page, ws, "*.pdf")  # 이 샘플은 개인정보(이메일) 점검이 실패한다
     pdfs = _wait_files(ws, "*.pdf")
     assert pdfs, "작업 폴더에 PDF가 생겨야 한다"
     assert _pdf_pages(pdfs[0]) == slides
@@ -125,8 +166,11 @@ def test_mail_draft_makes_eml_with_attachment_and_sends_nothing(
     assert emls, "작업 폴더에 .eml 파일이 생겨야 한다"
     msg = email.message_from_bytes(emls[0].read_bytes(), policy=email.policy.default)
     assert isinstance(msg, email.message.EmailMessage)
-    names = [part.get_filename() for part in msg.iter_attachments()]
-    assert "report.docx" in names, names
+    attached = {part.get_filename(): part.get_content() for part in msg.iter_attachments()}
+    assert "report.docx" in attached, list(attached)
+    assert attached["report.docx"] == (ws / "report.docx").read_bytes(), (
+        "첨부 내용이 문서와 같아야 한다"
+    )
     assert "보냈" not in page.locator("body").inner_text()
 
 

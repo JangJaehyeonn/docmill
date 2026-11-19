@@ -6,7 +6,9 @@
   (`button` 이름 `범위 끌기`)가 생긴다. 이것을 pptx 탭(`role=tab`)에 놓으면 docmill 도구가
   그 pptx에 표 또는 그래프를 넣고 작업 폴더의 파일을 갱신한다.
 - provenance는 FR-21처럼 `<pptx 이름>.provenance.json`의 `numbers`에 쌓인다. 새로 들어온 숫자는
-  `source.file`(원본 경로, 끝이 sales_q3.xlsx)·`source.range`(A1:C16 안의 범위)·`location`을 가진다.
+  `value`(넣은 숫자, 범위 안 숫자 셀의 합)·`source.file`(원본 경로, 끝이 sales_q3.xlsx)·
+  `source.range`(A1:C16 안의 범위, 시작 ≤ 끝)·`location`을 가진다.
+  표 칸·그래프 값으로 새로 들어간 숫자마다 provenance 항목이 있다.
 - 원본이 바뀌면 FR-37처럼 '원본이 바뀌었어요' 문구와 `새 숫자로 고치기` 버튼이 나온다.
 - ONLYOFFICE가 필요하므로 DOCMILL_ONLYOFFICE_URL이 없으면 실패한다.
 - 이 파일은 tests/acceptance/ 로 옮겨졌을 때 conftest의 start_studio·page 픽스처를 쓴다.
@@ -20,15 +22,20 @@ import re
 import shutil
 import time
 import zipfile
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
 import pytest
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 RANGE = "A1:C16"
 _RANGE_RE = re.compile(r"([A-C])(\d+)(?::([A-C])(\d+))?")
+_NUM = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_A = "{http://schemas.openxmlformats.org/drawingml/2006/main}"
+_C = "{http://schemas.openxmlformats.org/drawingml/2006/chart}"
 
 _FR = "FR-44"
 pytestmark = pytest.mark.skipif(
@@ -86,11 +93,59 @@ def _wait(cond: Callable[[], bool], seconds: int = 90) -> bool:
     return False
 
 
-def _inside(rng: str) -> bool:
+def _bounds(rng: str) -> tuple[str, int, str, int] | None:
+    """A1:C16 안의 올바른 범위(시작 ≤ 끝)면 (시작 열, 시작 행, 끝 열, 끝 행)을 돌려준다."""
     m = _RANGE_RE.fullmatch(rng)
     if not m:
-        return False
-    return int(m.group(2)) >= 1 and int(m.group(4) or m.group(2)) <= 16
+        return None
+    c1, r1 = m.group(1), int(m.group(2))
+    c2, r2 = m.group(3) or c1, int(m.group(4) or r1)
+    if not (1 <= r1 <= r2 <= 16 and c1 <= c2):
+        return None
+    return c1, r1, c2, r2
+
+
+def _source_numbers() -> dict[str, float]:
+    """sales_q3.xlsx의 숫자 셀(주소 → 값)."""
+    with zipfile.ZipFile(FIXTURES / "sales_q3.xlsx") as z:
+        sheet = z.read("xl/worksheets/sheet1.xml").decode("utf-8")
+    cells: dict[str, float] = {}
+    for addr, attrs, value in re.findall(r'<c r="([A-Z]+\d+)"([^>]*)><v>([^<]*)</v>', sheet):
+        if 't="s"' not in attrs and 't="str"' not in attrs:
+            cells[addr] = float(value)
+    return cells
+
+
+def _range_sum(rng: str) -> float | None:
+    """범위 안 숫자 셀의 합. 숫자 셀이 없으면 None."""
+    b = _bounds(rng)
+    if b is None:
+        return None
+    c1, r1, c2, r2 = b
+    picked = [
+        v
+        for addr, v in _source_numbers().items()
+        if c1 <= addr[0] <= c2 and r1 <= int(addr[1:]) <= r2
+    ]
+    return sum(picked) if picked else None
+
+
+def _shown_numbers(pptx: Path) -> Counter[float]:
+    """표 칸 전체가 숫자인 값과 그래프 값(c:val)의 개수."""
+    found: Counter[float] = Counter()
+    with zipfile.ZipFile(pptx) as z:
+        for name in z.namelist():
+            if re.fullmatch(r"ppt/slides/slide\d+\.xml", name):
+                for tc in ET.fromstring(z.read(name)).iter(f"{_A}tc"):
+                    text = "".join(t.text or "" for t in tc.iter(f"{_A}t")).strip()
+                    if _NUM.fullmatch(text):
+                        found[float(text.replace(",", ""))] += 1
+            if re.fullmatch(r"ppt/charts/chart\d+\.xml", name):
+                for val in ET.fromstring(z.read(name)).iter(f"{_C}val"):
+                    for v in val.iter(f"{_C}v"):
+                        if v.text and _NUM.fullmatch(v.text.strip()):
+                            found[float(v.text.replace(",", ""))] += 1
+    return found
 
 
 def _provenance_ready(pptx: Path) -> bool:
@@ -108,14 +163,22 @@ def test_drop_range_on_pptx_adds_table_or_chart_with_provenance(
     ws = _ws(tmp_path)
     pptx = ws / "company_intro.pptx"
     before = _structure(pptx)
+    shown_before = _shown_numbers(pptx)
     page.goto(start_studio(workspace=ws))
     _drop_range(page)
     assert _wait(lambda: _structure(pptx) > before), "표 또는 그래프가 생겨야 한다"
     assert _wait(lambda: _provenance_ready(pptx)), "provenance가 기록돼야 한다"
-    for n in _prov(pptx):
+    inserted = _shown_numbers(pptx) - shown_before
+    assert inserted, "넣은 표·그래프에 원본 숫자가 들어가야 한다"
+    entries = _prov(pptx)
+    for n in entries:
         assert str(n["source"]["file"]).endswith("sales_q3.xlsx"), n
-        assert _inside(str(n["source"]["range"])), n
+        expected = _range_sum(str(n["source"]["range"]))
+        assert expected is not None, ("A1:C16 안의 숫자 범위여야 한다", n)
+        assert abs(float(n["value"]) - expected) < 1e-6, ("기록 값이 원본 범위 값과 같아야 한다", n)
         assert n["location"], n
+    recorded = Counter(float(n["value"]) for n in entries)
+    assert not inserted - recorded, ("넣은 숫자마다 provenance가 있어야 한다", inserted, recorded)
 
 
 @pytest.mark.fr("FR-44")
@@ -141,6 +204,8 @@ def test_source_change_after_drop_offers_refresh_for_that_document(
                     b'<c r="C2" t="n"><v>1200</v>', b'<c r="C2" t="n"><v>1500</v>', 1
                 )
             zout.writestr(item, data)
+    with zipfile.ZipFile(changed) as z:
+        assert b'<c r="C2" t="n"><v>1500</v>' in z.read("xl/worksheets/sheet1.xml")
     shutil.copy(changed, ws / "sales_q3.xlsx")  # 원본이 저장된 것과 같은 효과
     page.get_by_text("원본이 바뀌었어요").wait_for(timeout=60_000)
     page.get_by_role("button", name="새 숫자로 고치기").wait_for()

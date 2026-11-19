@@ -16,5 +16,5 @@
 - FR-44·FR-46(PDF)·FR-47 studio 테스트: `DOCMILL_ONLYOFFICE_URL`(없으면 실패).
 - 모든 studio 테스트: `npm --prefix studio run build`로 만든 `studio/out/server.js`.
 - 채팅 에이전트는 테스트가 만든 가짜 stream-json 명령(`DOCMILL_STUDIO_AGENT_CMD`)을 쓴다. 실제 Claude는 부르지 않는다.
-- 이 초안은 `tests/acceptance_draft/` 아래에 있어 `start_studio`·`page` 픽스처가 없다.
-  `tests/acceptance/phase8/`로 옮기면 `tests/acceptance/conftest.py`의 픽스처가 적용된다.
+- `tests/acceptance/conftest.py`의 `start_studio`·`page` 픽스처를 쓴다.
+- `company_intro.pptx`는 개인정보(이메일) 점검이 실패하므로 FR-46 PDF 테스트는 확인 창에서 `그래도 내보내기`를 누른다.

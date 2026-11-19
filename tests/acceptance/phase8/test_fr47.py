@@ -144,6 +144,38 @@ def _slide_shapes(pptx: Path) -> dict[tuple[int, str], str]:
     return found
 
 
+def _summary_lines(pptx: Path) -> list[str]:
+    """제목이 '요약'인 슬라이드의 본문 줄(문단·줄바꿈 단위). 보고서 요약 문장의 독립적인 기대 목록이다."""
+    with zipfile.ZipFile(pptx) as z:
+        names = [n for n in z.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n)]
+        for name in names:
+            shapes: list[list[str]] = []
+            for sp in ET.fromstring(z.read(name)).iter(f"{_P}sp"):
+                lines: list[str] = []
+                for para in sp.iter(f"{_A}p"):
+                    text = ""
+                    for child in para:
+                        if child.tag == f"{_A}br":
+                            text += "\n"
+                        else:
+                            text += "".join(t.text or "" for t in child.iter(f"{_A}t"))
+                    lines += [line.strip() for line in text.split("\n") if line.strip()]
+                shapes.append(lines)
+            if ["요약"] in shapes:
+                return [line for lines in shapes if lines != ["요약"] for line in lines]
+    return []
+
+
+def _range_ok(rng: str) -> bool:
+    """A1:C16 안의 범위이고 시작이 끝보다 뒤에 있지 않다."""
+    m = _RANGE.fullmatch(rng)
+    if not m:
+        return False
+    c1, r1 = m.group(1), int(m.group(2))
+    c2, r2 = m.group(3) or c1, int(m.group(4) or r1)
+    return len(c1) == len(c2) == 1 and c1 <= c2 <= "C" and 1 <= r1 <= r2 <= 16
+
+
 def _inject_unsourced(src: Path, dst: Path) -> None:
     shape = (
         '<p:sp><p:nvSpPr><p:cNvPr id="900" name="Injected"/><p:cNvSpPr/><p:nvPr/></p:nvSpPr>'
@@ -180,15 +212,18 @@ def test_task_table_rows_record_meeting_paragraph(tmp_path: Path) -> None:
 def test_report_summary_sentences_record_source_range(tmp_path: Path) -> None:
     report = _report(tmp_path)
     entries = _sentences(report)
-    assert entries, "요약 문장마다 근거가 기록돼야 한다"
+    expected = _summary_lines(report)
+    assert expected, "보고서에 요약 문장이 있어야 한다"
     shapes = _slide_shapes(report)
     for e in entries:
+        assert str(e["text"]).strip(), ("문장이 비면 안 된다", e)
         loc = e["location"]
         assert e["text"] in shapes[(int(loc["slide"]), str(loc["shape"]))], e
         assert str(e["source"]["file"]).endswith("sales_q3.xlsx"), e
-        m = _RANGE.fullmatch(str(e["source"]["range"]))
-        assert m, e
-        assert 1 <= int(m.group(2)) <= int(m.group(4) or m.group(2)) <= 16, e
+        assert _range_ok(str(e["source"]["range"])), e
+    recorded = {str(e["text"]).strip() for e in entries}
+    missing = [line for line in expected if line not in recorded]
+    assert not missing, ("요약 문장마다 근거가 기록돼야 한다", missing)
 
 
 @pytest.mark.fr("FR-47")
@@ -234,7 +269,9 @@ def test_studio_click_sentence_activates_source_tab_and_highlights(
     for name in ("sales_q3.xlsx", "report.pptx"):
         page.get_by_role("listitem").filter(has_text=name).first.click()
         page.get_by_role("tab", name=name).wait_for()
-    page.get_by_role("region", name="문장 출처").get_by_role("button", name=entry["text"]).click()
+    page.get_by_role("region", name="문장 출처").get_by_role(
+        "button", name=entry["text"], exact=True
+    ).click()
     page.get_by_role("tab", name="sales_q3.xlsx", selected=True).wait_for(timeout=30_000)
     highlight = page.locator('[data-role="source-highlight"]')
     highlight.first.wait_for(timeout=30_000)

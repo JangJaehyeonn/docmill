@@ -22,6 +22,7 @@ import os
 import shutil
 import sys
 import textwrap
+import time
 import zipfile
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
@@ -38,6 +39,8 @@ DEPT = "영업기획팀"
 NAME = "김민수"
 TITLE = "대리"
 LINE = "기안자 > 팀장 > 부장"
+TEMPLATE = "주간 보고 양식"
+TONE = "공문서체"
 
 FAKE_AGENT = textwrap.dedent(
     """
@@ -109,13 +112,26 @@ def _make_docx(path: Path, paragraphs: list[str]) -> Path:
     return path
 
 
-def _save_settings(page: Any) -> None:
-    page.get_by_role("button", name="설정").click()
-    page.get_by_label("부서").fill(DEPT)
-    page.get_by_label("이름").fill(NAME)
-    page.get_by_label("직함").fill(TITLE)
-    page.get_by_label("결재 라인").fill(LINE)
-    page.get_by_role("button", name="저장").click()
+def _save_settings(page: Any, ws: Path) -> dict[str, Any]:
+    page.get_by_role("button", name="설정", exact=True).click()
+    page.get_by_label("부서", exact=True).fill(DEPT)
+    page.get_by_label("이름", exact=True).fill(NAME)
+    page.get_by_label("직함", exact=True).fill(TITLE)
+    page.get_by_label("결재 라인", exact=True).fill(LINE)
+    page.get_by_label("기본 양식", exact=True).fill(TEMPLATE)
+    page.get_by_label("문체", exact=True).fill(TONE)
+    page.get_by_role("button", name="저장", exact=True).click()
+    path = ws / ".docmill" / "settings.json"
+    end = time.monotonic() + 30
+    while time.monotonic() < end:
+        try:
+            saved = dict(json.loads(path.read_text(encoding="utf-8")))
+            if saved.get("tone") == TONE:
+                return saved
+        except (OSError, ValueError):
+            pass
+        time.sleep(0.5)
+    raise AssertionError("설정 파일이 저장돼야 한다")
 
 
 @pytest.mark.fr("FR-45")
@@ -125,16 +141,19 @@ def test_settings_survive_restart(
     ws = tmp_path / "ws"
     ws.mkdir()
     page.goto(start_studio(workspace=ws))
-    _save_settings(page)
-    saved = json.loads((ws / ".docmill" / "settings.json").read_text(encoding="utf-8"))
-    assert saved["department"] == DEPT and saved["name"] == NAME
+    saved = _save_settings(page, ws)
+    assert saved["department"] == DEPT and saved["name"] == NAME and saved["title"] == TITLE
+    assert saved["approval_line"] == ["기안자", "팀장", "부장"]
+    assert saved["default_template"] == TEMPLATE and saved["tone"] == TONE
     # 앱을 다시 띄운다 (같은 작업 폴더, 새 서버).
     page.goto(start_studio(workspace=ws))
-    page.get_by_role("button", name="설정").click()
-    assert page.get_by_label("부서").input_value() == DEPT
-    assert page.get_by_label("이름").input_value() == NAME
-    assert page.get_by_label("직함").input_value() == TITLE
-    assert page.get_by_label("결재 라인").input_value() == LINE
+    page.get_by_role("button", name="설정", exact=True).click()
+    assert page.get_by_label("부서", exact=True).input_value() == DEPT
+    assert page.get_by_label("이름", exact=True).input_value() == NAME
+    assert page.get_by_label("직함", exact=True).input_value() == TITLE
+    assert page.get_by_label("결재 라인", exact=True).input_value() == LINE
+    assert page.get_by_label("기본 양식", exact=True).input_value() == TEMPLATE
+    assert page.get_by_label("문체", exact=True).input_value() == TONE
 
 
 @pytest.mark.fr("FR-45")
@@ -151,7 +170,7 @@ def test_agent_input_contains_saved_department_and_approval_line(
     conf.write_text(json.dumps({"dump": str(dump)}), encoding="utf-8")
     env = {"DOCMILL_STUDIO_AGENT_CMD": f'"{sys.executable}" "{script}" "{conf}"'}
     page.goto(start_studio(workspace=ws, env=env))
-    _save_settings(page)
+    _save_settings(page, ws)
     page.get_by_label("메시지").fill("안녕")
     page.get_by_role("button", name="보내기", exact=True).click()
     page.locator('[data-role="assistant"]').first.wait_for(timeout=60_000)
@@ -171,7 +190,7 @@ def test_preflight_warns_when_document_title_differs_from_settings(tmp_path: Pat
         "title": TITLE,
         "approval_line": ["기안자", "팀장", "부장"],
         "default_template": "",
-        "tone": "공문서체",
+        "tone": TONE,
     }
     (ws / ".docmill" / "settings.json").write_text(
         json.dumps(settings, ensure_ascii=False), encoding="utf-8"
