@@ -16,6 +16,7 @@ from docmill.recipes import SessionRecorder, make_save_recipe, recording
 from docmill.runlog import logged
 from docmill.runner import run_recipe
 from docmill.tools.guard import guarded_edit
+from docmill.tools.mask import mask_text, unmask_text
 from docmill.tools.official_style import check_official_style
 from docmill.tools.preflight import preflight
 from docmill.tools.refresh import refresh_links
@@ -93,6 +94,12 @@ def _register_official_style(server: MCPServer) -> None:
     server.tool()(check_official_style)
 
 
+def _register_mask(server: MCPServer) -> None:
+    """`mask_text`·`unmask_text` 업무 도구(FR-39)를 등록한다."""
+    server.tool()(mask_text)
+    server.tool()(unmask_text)
+
+
 TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_ping,
     _register_report,
@@ -105,6 +112,7 @@ TOOL_REGISTRARS: tuple[ToolRegistrar, ...] = (
     _register_preflight,
     _register_refresh,
     _register_official_style,
+    _register_mask,
 )
 
 

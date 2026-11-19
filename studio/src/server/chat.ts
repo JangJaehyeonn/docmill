@@ -11,6 +11,8 @@ export interface ChatRequest {
   message: string;
   tabs: string[];
   active: string | null;
+  /** 개인정보를 가린 열린 문서 내용 (경로는 작업 폴더 기준 상대 경로). */
+  documents?: { path: string; text: string }[];
 }
 
 /** 클라이언트로 흘려보내는 채팅 이벤트. */
@@ -47,6 +49,7 @@ export function buildPrompt(workspace: string, req: ChatRequest): string {
     "열린 탭:",
     ...req.tabs.map((t) => `- ${path.basename(t)} → ${abs(t)}`),
     "사용자가 파일 이름으로 다른 탭을 가리키면 위 목록의 경로를 쓰고, 결과 파일은 새 파일로 저장하세요.",
+    ...(req.documents ?? []).flatMap((d) => ["", `문서 내용 (${path.basename(d.path)}, 개인정보는 [주민번호1] 같은 자리표로 가림):`, d.text]),
     "",
     "사용자 메시지:",
     req.message,
@@ -113,9 +116,13 @@ export function parseLine(line: string): ChatEvent[] {
   return events;
 }
 
+/** 시간 초과·중단 뒤 에이전트 프로세스가 닫히기를 기다리는 최대 시간. */
+export const KILL_WAIT_MS = 5_000;
+
 /**
  * 에이전트를 실행하고 이벤트를 `emit` 으로 보낸다. 실패·시간 초과도 error 이벤트로 알리고 예외는 던지지 않는다.
- * `signal` 이 중단되면 프로세스를 정리한다.
+ * `signal` 이 중단되면 프로세스를 정리한다. 시간 초과·중단 때도 프로세스(트리)가 닫힌 뒤에 `done` 을 보내고
+ * 끝나므로, 호출부는 반환 뒤 에이전트가 더 이상 파일을 쓰지 않는다고 볼 수 있다 (닫히지 않으면 `killWaitMs` 뒤 끝낸다).
  */
 export function runAgent(opts: {
   command: string;
@@ -124,8 +131,10 @@ export function runAgent(opts: {
   emit: (e: ChatEvent) => void;
   signal?: AbortSignal;
   timeoutMs?: number;
+  killWaitMs?: number;
 }): Promise<void> {
   const timeoutMs = opts.timeoutMs ?? AGENT_TIMEOUT_MS;
+  const killWaitMs = opts.killWaitMs ?? KILL_WAIT_MS;
   return new Promise((resolve) => {
     const win = process.platform === "win32";
     const child = spawn(opts.command, {
@@ -135,34 +144,60 @@ export function runAgent(opts: {
       detached: !win,
       stdio: ["pipe", "pipe", "pipe"],
     });
-    let finished = false;
+    let stopped = false; // 더 이상 이벤트를 내보내지 않는다
+    let settled = false;
     let stderr = "";
     let buffer = "";
-    const kill = (): void => {
+    let markClosed: () => void = () => undefined;
+    const closed = new Promise<void>((r) => (markClosed = r));
+    /** 프로세스 트리를 끝낸다. Windows 는 taskkill 이 끝날 때까지 기다린다. */
+    const kill = (): Promise<void> => {
       try {
-        if (win && child.pid) spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"]);
-        else if (child.pid) process.kill(-child.pid, "SIGKILL");
+        if (win && child.pid) {
+          const tk = spawn("taskkill", ["/pid", String(child.pid), "/t", "/f"], { stdio: "ignore" });
+          return new Promise((r) => {
+            tk.once("exit", () => r());
+            tk.once("error", () => r());
+          });
+        }
+        if (child.pid) process.kill(-child.pid, "SIGKILL");
       } catch {
         child.kill("SIGKILL");
       }
+      return Promise.resolve();
     };
-    const finish = (error?: string): void => {
-      if (finished) return;
-      finished = true;
+    const settle = (): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
-      if (error) opts.emit({ type: "error", message: error });
       opts.emit({ type: "done" });
       resolve();
     };
-    const timer = setTimeout(() => {
-      kill();
-      finish(`에이전트가 ${Math.round(timeoutMs / 1000)}초 안에 끝나지 않아 중단했어요 (시간 초과).`);
-    }, timeoutMs);
-    const onAbort = (): void => {
-      kill();
-      finish();
+    /** 정상 종료·실행 실패: 프로세스가 이미 끝났으므로 바로 마친다. */
+    const finish = (error?: string): void => {
+      if (stopped) return;
+      stopped = true;
+      if (error) opts.emit({ type: "error", message: error });
+      settle();
     };
+    /** 시간 초과·중단: 오류는 바로 알리고, 프로세스가 닫힌 뒤(또는 상한 뒤)에 마친다. */
+    const stop = (error?: string): void => {
+      if (stopped) return;
+      stopped = true;
+      clearTimeout(timer);
+      if (error) opts.emit({ type: "error", message: error });
+      let cap: NodeJS.Timeout | undefined;
+      const limit = new Promise<void>((r) => (cap = setTimeout(r, killWaitMs)));
+      void Promise.race([Promise.all([kill(), closed]), limit]).then(() => {
+        clearTimeout(cap);
+        settle();
+      });
+    };
+    const timer = setTimeout(() => {
+      stop(`에이전트가 ${Math.round(timeoutMs / 1000)}초 안에 끝나지 않아 중단했어요 (시간 초과).`);
+    }, timeoutMs);
+    const onAbort = (): void => stop();
     opts.signal?.addEventListener("abort", onAbort);
     child.stdout.on("data", (chunk: Buffer) => {
       buffer += chunk.toString("utf-8");
@@ -170,16 +205,21 @@ export function runAgent(opts: {
       while ((nl = buffer.indexOf("\n")) >= 0) {
         const line = buffer.slice(0, nl).trim();
         buffer = buffer.slice(nl + 1);
-        if (line && !finished) parseLine(line).forEach(opts.emit);
+        if (line && !stopped) parseLine(line).forEach(opts.emit);
       }
     });
     child.stderr.on("data", (chunk: Buffer) => {
       stderr = (stderr + chunk.toString("utf-8")).slice(-2000);
     });
     child.stdin.on("error", () => undefined);
-    child.on("error", (err) => finish(`에이전트를 실행하지 못했어요: ${err.message}`));
+    child.on("error", (err) => {
+      markClosed();
+      finish(`에이전트를 실행하지 못했어요: ${err.message}`);
+    });
     child.on("close", (code) => {
-      if (buffer.trim() && !finished) parseLine(buffer.trim()).forEach(opts.emit);
+      markClosed();
+      if (stopped) return;
+      if (buffer.trim()) parseLine(buffer.trim()).forEach(opts.emit);
       if (code === 0) return finish();
       const detail = stderr.trim();
       finish(`에이전트가 오류로 끝났어요 (종료 코드 ${code ?? "알 수 없음"})${detail ? `: ${detail}` : ""}`);

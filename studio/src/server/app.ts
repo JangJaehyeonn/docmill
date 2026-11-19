@@ -28,6 +28,7 @@ import {
   type PendingPreview,
 } from "./preview.js";
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
+import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
@@ -278,6 +279,9 @@ async function refreshLinks(
   sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
 }
 
+/** 자리표 → 원래 값 대응표. 서버 메모리에만 두고 로그·파일에 쓰지 않는다 (FR-39). */
+let maskTable: MaskTable = {};
+
 /** 채팅 한 턴: 에이전트를 실행하고 이벤트를 줄 단위 JSON(NDJSON)으로 흘려보낸다. */
 async function chat(
   opts: AppOptions,
@@ -306,7 +310,22 @@ async function chat(
   } catch {
     active = null;
   }
-  const prompt = buildPrompt(root, { message: body.message, tabs, active });
+  // 개인정보를 가린 문서 내용만 에이전트에 넘긴다. 가리지 못하면 원문을 보내지 않고 멈춘다.
+  const masked = await maskInput({
+    paths: tabs.map((t) => path.join(root, ...t.split("/"))),
+    message: body.message,
+    names: registeredNames(process.env),
+    table: maskTable,
+  });
+  if (!masked) return sendJson(res, 502, { error: "개인정보를 가리지 못해 에이전트에 보내지 않았어요." });
+  maskTable = masked.table;
+  const table = maskTable;
+  const prompt = buildPrompt(root, {
+    message: masked.message,
+    tabs,
+    active,
+    documents: masked.documents.map((d, i) => ({ path: tabs[i] ?? d.path, text: d.text })),
+  });
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
     "cache-control": "no-store",
@@ -318,10 +337,26 @@ async function chat(
   const send = async (e: ChatEvent): Promise<void> => {
     const info = e.type === "tool_result" ? parsePreview(e.text) : null;
     const reg = info ? await registerPreview(pendingPreviews, root, info) : null;
+    const failed: string[] = [];
     if (e.type === "tool_result" && info && reg) {
-      // 사본에 적용된 결과: 원본은 건드리지 않고(경로 알림 없이) 결과 뒤에 미리보기 카드를 보낸다.
-      if (!res.writableEnded) res.write(JSON.stringify({ ...e, paths: [] }) + "\n");
-      e = { type: "preview", id: reg.id, path: reg.rel, summary: info.summary };
+      // 사본에 적용된 결과: 적용하기 전에 사본의 자리표를 원래 값으로 되돌린다.
+      const copyRel = pendingPreviews.get(reg.id)?.copy;
+      const restored = copyRel ? await unmaskFile(path.join(root, ...copyRel.split("/")), table) : false;
+      if (!restored) {
+        pendingPreviews.delete(reg.id);
+        if (!res.writableEnded) {
+          res.write(
+            JSON.stringify({ type: "error", message: `개인정보 자리표를 되돌리지 못해 미리보기를 취소했어요: ${reg.rel}` }) +
+              "\n",
+          );
+        }
+        return;
+      }
+      // 원본은 건드리지 않고(경로 알림 없이) 결과 뒤에 미리보기 카드를 보낸다.
+      if (!res.writableEnded) {
+        res.write(JSON.stringify({ ...e, text: unmaskText(e.text, table), paths: [] }) + "\n");
+      }
+      e = { type: "preview", id: reg.id, path: reg.rel, summary: info.summary.map((s) => unmaskText(s, table)) };
     } else if (e.type === "tool_result") {
       // 작업 폴더 안의 문서 파일만 상대 경로로 바꿔 알린다.
       const rel: string[] = [];
@@ -333,21 +368,39 @@ async function chat(
         }
       }
       // 파일이 바뀌었을 수 있으니 열린 편집 세션 키를 버려 다시 열 때 새 내용을 읽게 한다.
-      for (const r of rel) sessionKeys.delete(r);
-      e = { ...e, paths: rel };
+      for (const r of rel) {
+        sessionKeys.delete(r);
+        // 에이전트가 문서에 쓴 자리표는 원래 값으로 되돌린다. 되돌리지 못하면 완료로 알리지 않는다.
+        if (!(await unmaskFile(path.join(root, ...r.split("/")), table))) failed.push(r);
+      }
+      e = { ...e, paths: rel.filter((r) => !failed.includes(r)) };
     }
+    if (failed.length > 0 && !res.writableEnded) {
+      const message = `개인정보 자리표를 되돌리지 못한 문서가 있어요: ${failed.join(", ")}`;
+      res.write(JSON.stringify({ type: "error", message }) + "\n");
+    }
+    if (e.type === "assistant") e = { ...e, text: unmaskText(e.text, table) };
+    else if (e.type === "tool_result") e = { ...e, text: unmaskText(e.text, table) };
     if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
   };
+  const held: ChatEvent[] = [];
   await runAgent({
     command: opts.agentCmd || defaultAgentCommand(),
     cwd: root,
     prompt,
     signal: abort.signal,
     emit: (e) => {
+      // 문서를 되돌리는 결과는 에이전트가 끝날 때까지 붙잡아 둔다. 실행 중에 복원하면 에이전트의 저장을 덮어쓸 수 있다.
+      // 순서가 바뀌지 않도록 한 번 붙잡기 시작하면 뒤따르는 이벤트도 함께 붙잡는다.
+      if (held.length > 0 || (e.type === "tool_result" && (e.paths.length > 0 || parsePreview(e.text)))) {
+        held.push(e);
+        return;
+      }
       queue = queue.then(() => send(e));
     },
   });
   await queue;
+  for (const e of held) await send(e);
   res.end();
 }
 

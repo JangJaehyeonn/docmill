@@ -74,6 +74,31 @@ def refresh_links_command(path: str = typer.Argument(..., help="새 숫자로 �
     typer.echo(logged(refresh_links, ai_used=False)(path))
 
 
+@app.command("mask-doc")
+def mask_doc_command() -> None:
+    """stdin의 JSON 요청(문서 경로·메시지·이름·대응표)을 가려 JSON으로 출력합니다. FR-39."""
+    import json
+    import sys
+
+    from docmill.tools.mask import mask_documents
+
+    request = json.loads(sys.stdin.read() or "{}")
+    typer.echo(json.dumps(mask_documents(request), ensure_ascii=False))
+
+
+@app.command("unmask-doc")
+def unmask_doc_command(path: str = typer.Argument(..., help="자리표를 되돌릴 문서 경로")) -> None:
+    """stdin의 대응표(JSON)로 문서 안의 자리표를 원래 값으로 되돌립니다 (studio가 쓴다). FR-39."""
+    import json
+    import sys
+    from pathlib import Path
+
+    from docmill.tools.mask import unmask_document
+
+    table = json.loads(sys.stdin.read() or "{}")
+    typer.echo(json.dumps({"restored": unmask_document(Path(path), table)}))
+
+
 @app.command()
 def setup() -> None:
     """고정된 버전의 엔진(GridCraft·DeckCraft·WordCraft)을 설치하고 버전을 출력합니다. FR-04."""
