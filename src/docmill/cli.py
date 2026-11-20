@@ -109,9 +109,26 @@ def recover_insert_command(
     document: str = typer.Argument(..., help="끊긴 삽입을 되돌릴 pptx 문서 경로"),
 ) -> None:
     """끊긴 범위 넣기(문서만 바뀌고 출처는 옛것)를 되돌리고 결과를 JSON으로 출력합니다. FR-44."""
+    import functools
+    import json
+
+    from docmill.runlog import logged
     from docmill.tools.dropin import recover_insert
 
-    typer.echo(recover_insert(document))
+    class _Failed(Exception):
+        """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
+
+    @functools.wraps(recover_insert)
+    def failing_on_error(document: str) -> str:
+        result = recover_insert(document)
+        if "error" in json.loads(result):
+            raise _Failed(result)
+        return result
+
+    try:
+        typer.echo(logged(failing_on_error, ai_used=False)(document))
+    except _Failed as failed:
+        typer.echo(str(failed))  # studio reads the error JSON from stdout
 
 
 @app.command("mask-doc")
