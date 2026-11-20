@@ -499,3 +499,24 @@ def test_too_long_cells_are_refused() -> None:
     with pytest.raises(DropInError) as err:
         _layout([["아주 긴 설명 " * 40] for _ in range(30)], 8229600)
     assert err.value.step == "range"
+
+
+def test_recover_insert_rolls_back_half_insert_at_once(tmp_path: Path) -> None:
+    import subprocess
+    import sys
+
+    from docmill.tools.dropin import recover_insert
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C4")
+    before_doc = pptx.read_bytes()
+    before_prov = provenance_path(pptx).read_bytes()
+    killed = subprocess.run(
+        [sys.executable, "-c", _KILL_BETWEEN_PUBLISHES, str(pptx), str(xlsx)], check=False
+    )
+    assert killed.returncode == 9
+    out = CliRunner().invoke(app, ["recover-insert", str(pptx)])
+    assert out.exit_code == 0 and json.loads(out.stdout) == {"recovered": True}
+    assert pptx.read_bytes() == before_doc
+    assert provenance_path(pptx).read_bytes() == before_prov
+    assert json.loads(recover_insert(str(pptx))) == {"recovered": False}  # nothing left to undo

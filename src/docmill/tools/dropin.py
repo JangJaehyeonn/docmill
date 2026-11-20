@@ -382,7 +382,7 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _recover(document: Path) -> None:
+def _recover(document: Path) -> bool:
     """지난 삽입이 문서만 바꾸고 끊겼으면(문서는 새것, 출처 파일은 옛것) 두 파일을
     이전으로 되돌린다.
 
@@ -391,17 +391,18 @@ def _recover(document: Path) -> None:
     """
     journal = _journal(document)
     if not journal.is_dir():
-        return
+        return False
     try:
         marks = json.loads((journal / "ready.json").read_text(encoding="utf-8"))
         doc_hash, prov_hash = str(marks["document"]), str(marks["provenance"])
     except (OSError, ValueError, KeyError, TypeError):
         shutil.rmtree(journal, ignore_errors=True)  # journal incomplete: nothing was published
-        return
+        return False
     prov = provenance_path(document)
     doc_new = document.is_file() and _sha(document.read_bytes()) == doc_hash
     prov_new = prov.is_file() and _sha(prov.read_bytes()) == prov_hash
-    if doc_new and not prov_new:
+    rolled_back = doc_new and not prov_new
+    if rolled_back:
         backup = journal / "provenance.bak"
         if backup.is_file():
             _publish(backup.read_bytes(), prov)
@@ -409,6 +410,22 @@ def _recover(document: Path) -> None:
             prov.unlink(missing_ok=True)
         _publish((journal / "document.bak").read_bytes(), document)
     shutil.rmtree(journal, ignore_errors=True)
+    return rolled_back
+
+
+def recover_insert(document: str) -> str:
+    """끊긴 삽입(문서만 바뀌고 출처 파일은 옛것)이 있으면 같은 잠금 안에서 두 파일을 되돌린다.
+
+    studio가 `docmill insert-range`의 응답을 못 받았을 때(시간 초과 등) 곧바로 불러,
+    출처 없는 표가 남은 문서를 사용자가 편집하기 전에 정리한다. 결과는 JSON 문자열
+    (`recovered`: 되돌렸는지)이다.
+    """
+    try:
+        with _document_lock(Path(document)):
+            recovered = _recover(Path(document))
+    except Exception as exc:  # recovery failures must not kill the caller
+        return json.dumps({"error": f"{type(exc).__name__}: {exc}", "step": "recover"})
+    return json.dumps({"recovered": recovered})
 
 
 @contextlib.contextmanager

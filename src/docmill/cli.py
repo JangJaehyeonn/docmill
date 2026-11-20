@@ -104,6 +104,16 @@ def insert_range_command(
         typer.echo(str(failed))  # studio reads the error JSON from stdout
 
 
+@app.command("recover-insert")
+def recover_insert_command(
+    document: str = typer.Argument(..., help="끊긴 삽입을 되돌릴 pptx 문서 경로"),
+) -> None:
+    """끊긴 범위 넣기(문서만 바뀌고 출처는 옛것)를 되돌리고 결과를 JSON으로 출력합니다. FR-44."""
+    from docmill.tools.dropin import recover_insert
+
+    typer.echo(recover_insert(document))
+
+
 @app.command("mask-doc")
 def mask_doc_command() -> None:
     """stdin의 JSON 요청(문서 경로·메시지·이름·대응표)을 가려 JSON으로 출력합니다. FR-39."""
