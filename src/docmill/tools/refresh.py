@@ -22,6 +22,7 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -222,11 +223,15 @@ def _value(src: dict[str, Any], table: Table | None, cells: dict[str, Any]) -> f
 
 
 def number_digits(value: float) -> int:
-    """표시 소수 자릿수. 정수는 0, 소수는 값이 0으로 사라지지 않게 최대 6자리까지 쓴다."""
+    """표시 소수 자릿수. 정수는 0, 소수는 유효 숫자 15자리 값이 사라지지 않을 만큼(최소 2자리).
+
+    `0.004` → 3, `0.0000004` → 7, `1200.5` → 2. 엑셀이 저장한 값을 그대로 보이게 한다.
+    """
     if value == int(value):
         return 0
-    text = f"{value:.6f}".rstrip("0")
-    return max(2, len(text.split(".")[1]) if "." in text else 0)
+    text = format(Decimal(f"{value:.15g}"), "f")
+    decimals = text.split(".")[1].rstrip("0") if "." in text else ""
+    return max(2, len(decimals))
 
 
 def _display(number: float) -> int | float:
@@ -240,7 +245,8 @@ def _shown(src: dict[str, Any], value: float) -> tuple[float, dict[str, Any]]:
         return float(f"{value:.1f}"), src
     if agg == "count_distinct" or "digits" not in src:
         return value, src
-    digits = number_digits(value)
+    # 끌어다 놓은 칸은 값을 보존하는 자릿수, 보고서 집계는 보고서 자릿수(정수 0, 소수 2)를 쓴다.
+    digits = number_digits(value) if src.get("literal") else (0 if value == int(value) else 2)
     return float(f"{value:.{digits}f}"), {**src, "digits": digits}
 
 

@@ -203,10 +203,10 @@ _DOC_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 _PKG_REL = "http://schemas.openxmlformats.org/package/2006/relationships"
 
 
-def _two_sheet_xlsx(path: Path, first: int, second: int) -> Path:
+def _two_sheet_xlsx(path: Path, first: float, second: float) -> Path:
     """`요약`(B2=first)과 `3분기`(B2=second) 두 시트가 있는 최소 엑셀 파일."""
 
-    def sheet(value: int) -> str:
+    def sheet(value: float) -> str:
         return (
             f'<worksheet xmlns="{_MAIN}"><sheetData><row r="2">'
             f'<c r="B2"><v>{value}</v></c></row></sheetData></worksheet>'
@@ -427,3 +427,61 @@ def test_refresh_uses_recorded_cell_not_same_text(tmp_path: Path) -> None:
     with zipfile.ZipFile(pptx) as z:
         slide = z.read("ppt/slides/slide4.xml").decode("utf-8")
     assert "<a:t>1200</a:t>" in slide and "1,500" in slide
+
+
+def _set_b2(book: Path, value: str) -> None:
+    """첫 시트 B2 값을 바꾼다."""
+    with zipfile.ZipFile(book) as z:
+        files = {i.filename: z.read(i.filename) for i in z.infolist()}
+    sheet1 = files["xl/worksheets/sheet1.xml"].decode()
+    head, rest = sheet1.split('<c r="B2"><v>', 1)
+    files["xl/worksheets/sheet1.xml"] = (
+        head + f'<c r="B2"><v>{value}' + rest[rest.index("</v>") :]
+    ).encode()
+    with zipfile.ZipFile(book, "w") as z:
+        for name, data in files.items():
+            z.writestr(name, data)
+
+
+def test_tiny_decimal_survives_insert_and_refresh(tmp_path: Path) -> None:
+    pptx, _ = _workspace(tmp_path)
+    book = _two_sheet_xlsx(tmp_path / "book.xlsx", 0, 0)
+    _set_b2(book, "0.0000004")
+    assert "error" not in json.loads(insert_range(str(pptx), str(book), "B2"))
+    with zipfile.ZipFile(pptx) as z:
+        assert "<a:t>0.0000004</a:t>" in z.read("ppt/slides/slide4.xml").decode("utf-8")
+    number = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"][0]
+    assert number["value"] == 4e-07 and number["source"]["digits"] == 7
+    _set_b2(book, "0.0000005")
+    result = json.loads(refresh_links(str(pptx)))
+    assert [c["new"] for c in result["changes"]] == [5e-07]
+    with zipfile.ZipFile(pptx) as z:
+        assert "<a:t>0.0000005</a:t>" in z.read("ppt/slides/slide4.xml").decode("utf-8")
+    number = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"][0]
+    assert number["value"] == 5e-07 and number["source"]["digits"] == 7
+
+
+def test_report_numbers_keep_report_digits() -> None:
+    from docmill.tools.refresh import _shown
+
+    src = {"aggregation": "sumif", "digits": 2}
+    assert _shown(src, 1234.567) == (1234.57, {**src, "digits": 2})
+    assert _shown({**src, "literal": True}, 1234.567)[0] == 1234.567
+
+
+def test_long_cells_grow_rows_and_still_fit() -> None:
+    from docmill.tools.dropin import _BOTTOM, _TOP, _layout, _row_heights
+
+    grid: list[list[Any]] = [["긴 설명 " * 12, 1200] for _ in range(10)]
+    font, heights = _layout(grid, 4114800)
+    single = _row_heights([["짧음", 1]], 4114800, font)[0]
+    assert all(h > single for h in heights)  # 줄바꿈된 줄 수만큼 행이 높다
+    assert sum(heights) <= _BOTTOM - _TOP
+
+
+def test_too_long_cells_are_refused() -> None:
+    from docmill.tools.dropin import DropInError, _layout
+
+    with pytest.raises(DropInError) as err:
+        _layout([["아주 긴 설명 " * 40] for _ in range(30)], 8229600)
+    assert err.value.step == "range"

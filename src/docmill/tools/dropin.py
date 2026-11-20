@@ -14,11 +14,13 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import math
 import re
 import shutil
 import signal
 import sys
 import tempfile
+import unicodedata
 import zipfile
 from collections.abc import Iterator
 from pathlib import Path
@@ -52,6 +54,7 @@ _TABLE_STYLE = "{5C22544A-7EE6-4342-B048-85BDC9FD1C3A}"
 _FONT_SIZE = 1200
 _MIN_FONT = 800
 _CELL_MARGIN = 18288
+_CELL_SIDE = 91440  # 표 칸 왼쪽·오른쪽 기본 여백
 _MARGIN = 457200
 _TOP = 1600200
 _BOTTOM = 6400800
@@ -131,6 +134,41 @@ def _font_size(rows: int) -> int:
     return max(_MIN_FONT, min(_FONT_SIZE, int(fit) * 100))
 
 
+def _text_width(text: str, font: int) -> float:
+    """글자 너비 추정(EMU). 한글·전각은 글꼴 크기, 그 밖은 0.6배로 본다."""
+    em = font / 100 * 12700
+    return sum(em if unicodedata.east_asian_width(c) in "WF" else 0.6 * em for c in text)
+
+
+def _row_heights(grid: list[list[Any]], col_w: int, font: int) -> list[int]:
+    """칸 글자가 줄바꿈되는 줄 수까지 셈한 행 높이(EMU) 목록."""
+    usable = max(1, col_w - 2 * _CELL_SIDE)
+    line = font / 100 * 12700 * 1.2
+    heights = []
+    for row in grid:
+        lines = max(
+            sum(max(1, math.ceil(_text_width(part, font) / usable)) for part in text.split("\n"))
+            for text in (_cell_text(v) for v in row)
+        )
+        heights.append(math.ceil(lines * line + 2 * _CELL_MARGIN))
+    return heights
+
+
+def _layout(grid: list[list[Any]], col_w: int) -> tuple[int, list[int]]:
+    """표가 표 영역에 들어가는 가장 큰 글꼴과 행 높이. 가장 작은 글꼴로도 넘치면 거부한다."""
+    font = _font_size(len(grid))
+    while True:
+        heights = _row_heights(grid, col_w, font)
+        if sum(heights) <= _BOTTOM - _TOP:
+            return font, heights
+        if font <= _MIN_FONT:
+            raise DropInError(
+                "range",
+                "긴 글자 때문에 표가 슬라이드에 넘친다. 범위를 줄이거나 나눠서 넣으세요",
+            )
+        font -= 100
+
+
 def _cell_xml(text: str, numeric: bool, font: int) -> str:
     align = ' algn="r"' if numeric else ""
     size = f'lang="ko-KR" sz="{font}"'
@@ -144,22 +182,21 @@ def _cell_xml(text: str, numeric: bool, font: int) -> str:
 
 
 def _table_xml(grid: list[list[Any]], width: int, shape_id: int) -> str:
-    rows, cols = len(grid), len(grid[0])
+    cols = len(grid[0])
     col_w = width // cols
-    row_h = min(370840, (_BOTTOM - _TOP) // rows)
-    font = _font_size(rows)
+    font, heights = _layout(grid, col_w)
     trs = "".join(
-        f'<a:tr h="{row_h}">'
+        f'<a:tr h="{h}">'
         + "".join(_cell_xml(_cell_text(v), _is_number(v), font) for v in row)
         + "</a:tr>"
-        for row in grid
+        for row, h in zip(grid, heights, strict=True)
     )
     grid_cols = f'<a:gridCol w="{col_w}"/>' * cols
     return (
         f'<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="{shape_id}" name="Table {shape_id}"/>'
         '<p:cNvGraphicFramePr><a:graphicFrameLocks noGrp="1"/></p:cNvGraphicFramePr><p:nvPr/>'
         f'</p:nvGraphicFramePr><p:xfrm><a:off x="{_MARGIN}" y="{_TOP}"/>'
-        f'<a:ext cx="{col_w * cols}" cy="{row_h * rows}"/></p:xfrm><a:graphic>'
+        f'<a:ext cx="{col_w * cols}" cy="{sum(heights)}"/></p:xfrm><a:graphic>'
         '<a:graphicData uri="http://schemas.openxmlformats.org/drawingml/2006/table"><a:tbl>'
         '<a:tblPr firstRow="1" bandRow="1">'
         f"<a:tableStyleId>{_TABLE_STYLE}</a:tableStyleId></a:tblPr>"
