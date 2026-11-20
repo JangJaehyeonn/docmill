@@ -80,20 +80,25 @@ def insert_range_command(
     source: str = typer.Argument(..., help="원본 xlsx 경로"),
     cell_range: str = typer.Argument(..., help="넣을 셀 범위 (예: A1:C16)"),
     sheet: str = typer.Option("", "--sheet", help="범위를 읽을 시트 이름 (비우면 첫 시트)"),
+    receipt: str = typer.Option(
+        "", "--receipt", help="발행을 마치면 완료 표시를 쓸 파일 (studio가 응답을 잃었을 때 쓴다)"
+    ),
 ) -> None:
     """엑셀 셀 범위를 pptx에 표로 넣고 숫자 출처를 기록해 결과를 JSON으로 출력합니다. FR-44."""
     import functools
     import json
 
     from docmill.runlog import logged
-    from docmill.tools.dropin import insert_range
+    from docmill.tools.dropin import insert_range, insert_range_with_receipt
 
     class _Failed(Exception):
         """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
 
     @functools.wraps(insert_range)
     def failing_on_error(document: str, source: str, cell_range: str, sheet: str) -> str:
-        result = insert_range(document, source, cell_range, sheet or None)
+        result = insert_range_with_receipt(
+            document, source, cell_range, sheet or None, receipt or None
+        )
         if "error" in json.loads(result):
             raise _Failed(result)
         return result

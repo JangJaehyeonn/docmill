@@ -27,7 +27,7 @@ import {
   registerPreview,
   type PendingPreview,
 } from "./preview.js";
-import { isCellRange, runInsert } from "./dropin.js";
+import { hasInsertJournal, isCellRange, runInsert, runRecover } from "./dropin.js";
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
 import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
@@ -479,6 +479,14 @@ async function editorConfig(
   const file = await resolveQuery(opts, res, query);
   if (!file) return;
   if (!isOnlyofficeFile(file.rel)) return sendJson(res, 400, { error: "지원하지 않는 형식입니다." });
+  if (/\.pptx$/i.test(file.rel) && (await hasInsertJournal(file.abs))) {
+    // studio가 삽입 중에 꺼졌다면, 편집을 열기 전에 끊긴 삽입부터 정리한다.
+    const root = await fs.realpath(opts.workspace);
+    const state = await withFileLock(file.rel, () => runRecover(file.abs, root));
+    if (state === "failed") {
+      return sendJson(res, 409, { error: "지난 범위 넣기를 정리하지 못해 열 수 없어요. 잠시 뒤 다시 열어 주세요." });
+    }
+  }
   const info = await fs.stat(file.abs);
   // 열린 편집 세션이 있으면 같은 키를 쓴다 (강제 저장으로 파일이 바뀌어도 세션을 유지).
   const key = sessionKeys.get(file.rel) ?? documentKey(file.rel, info.mtimeMs, info.size);

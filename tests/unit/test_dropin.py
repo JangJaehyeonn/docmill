@@ -516,7 +516,43 @@ def test_recover_insert_rolls_back_half_insert_at_once(tmp_path: Path) -> None:
     )
     assert killed.returncode == 9
     out = CliRunner().invoke(app, ["recover-insert", str(pptx)])
-    assert out.exit_code == 0 and json.loads(out.stdout) == {"recovered": True}
+    assert out.exit_code == 0
+    assert json.loads(out.stdout) == {"recovered": True, "state": "rolled_back"}
     assert pptx.read_bytes() == before_doc
     assert provenance_path(pptx).read_bytes() == before_prov
-    assert json.loads(recover_insert(str(pptx))) == {"recovered": False}  # nothing left to undo
+    assert json.loads(recover_insert(str(pptx)))["state"] == "none"  # nothing left to undo
+
+
+def test_receipt_marks_a_published_insert(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    receipt = tmp_path / "receipt.json"
+    out = CliRunner().invoke(
+        app, ["insert-range", str(pptx), str(xlsx), "C2", "--receipt", str(receipt)]
+    )
+    assert out.exit_code == 0 and "error" not in json.loads(out.stdout.strip().splitlines()[-1])
+    assert json.loads(receipt.read_text(encoding="utf-8")) == {"published": True}
+    failed = tmp_path / "failed.json"
+    out = CliRunner().invoke(
+        app, ["insert-range", str(pptx), str(xlsx), "C3:A1", "--receipt", str(failed)]
+    )
+    assert not failed.exists()  # 실패한 호출은 완료 표시를 쓰지 않는다
+
+
+def test_recover_reports_complete_publish_left_uncleaned(tmp_path: Path) -> None:
+    import hashlib
+
+    from docmill.tools import dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C2")
+    doc, prov = pptx.read_bytes(), provenance_path(pptx).read_bytes()
+    journal = dropin._journal(pptx)  # 두 파일 발행 뒤 정리 전에 끊긴 상태를 만든다
+    journal.mkdir(parents=True)
+    marks = {
+        "document": hashlib.sha256(doc).hexdigest(),
+        "provenance": hashlib.sha256(prov).hexdigest(),
+    }
+    (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
+    assert json.loads(dropin.recover_insert(str(pptx))) == {"recovered": False, "state": "complete"}
+    assert pptx.read_bytes() == doc and provenance_path(pptx).read_bytes() == prov
+    assert not journal.exists()

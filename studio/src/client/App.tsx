@@ -341,6 +341,7 @@ export function App() {
       return;
     }
     droppingRef.current = true;
+    let keepLocked = false; // 끊긴 삽입을 정리하지 못하면 편집기를 잠근 채 둔다
     setInsertingInto(target); // 넣는 동안 대상 편집기 입력을 막는다
     setDropMessage(`${baseName(from.source)}의 ${from.range}를 ${baseName(target)}에 넣는 중…`);
     try {
@@ -353,8 +354,9 @@ export function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ target, source: from.source, range: from.range, sheet: from.sheet }),
       });
-      const body = (await res.json()) as { summary?: string; error?: string };
+      const body = (await res.json()) as { summary?: string; error?: string; locked?: boolean };
       if (!res.ok || body.error) {
+        keepLocked = body.locked === true;
         setDropMessage(body.error ?? "범위를 문서에 넣지 못했어요.");
         return;
       }
@@ -371,7 +373,7 @@ export function App() {
       setDropMessage("범위를 문서에 넣지 못했어요.");
     } finally {
       droppingRef.current = false;
-      setInsertingInto(null);
+      if (!keepLocked) setInsertingInto(null);
     }
   };
 
@@ -407,7 +409,11 @@ export function App() {
               <button
                 className="close"
                 aria-label={`탭 닫기: ${t.name}`}
-                onClick={() => setTabState((s) => closeTab(s, t.path))}
+                onClick={() => {
+                  setTabState((s) => closeTab(s, t.path));
+                  // 끊긴 삽입 때문에 잠근 편집기는 탭을 닫으면 풀린다 (다시 열 때 서버가 정리한다).
+                  setInsertingInto((cur) => (cur === t.path && !droppingRef.current ? null : cur));
+                }}
               >
                 ×
               </button>

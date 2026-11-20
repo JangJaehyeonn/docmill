@@ -1,4 +1,5 @@
-import { mkdtempSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import http from "node:http";
 import net from "node:net";
@@ -50,6 +51,41 @@ describe("createApp", () => {
     server?.close();
     server = null;
   });
+
+  it.skipIf(process.platform === "win32")(
+    "끊긴 삽입 저널이 남은 pptx는 열기 전에 정리하고, 정리에 실패하면 열지 않는다",
+    async () => {
+      server = makeApp({ onlyofficeUrl: "http://localhost" });
+      const port = await listen(server);
+      const doc = path.join(lastWorkspace, "deck.pptx");
+      writeFileSync(doc, "p");
+      const bin = mkdtempSync(path.join(tmpdir(), "fake-docmill-"));
+      const log = path.join(bin, "calls.txt");
+      writeFileSync(
+        path.join(bin, "docmill"),
+        `#!/bin/sh\necho "$1" >> "${log}"\n[ "$FAKE_RECOVER" = fail ] && exit 1\necho '{"recovered": true, "state": "rolled_back"}'\n`,
+        { mode: 0o755 },
+      );
+      const real = realpathSync(doc);
+      const digest = createHash("sha256").update(real, "utf8").digest("hex").slice(0, 24);
+      const journal = path.join(tmpdir(), `docmill-insert-${digest}`);
+      const oldPath = process.env.PATH;
+      process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ""}`;
+      mkdirSync(journal, { recursive: true });
+      try {
+        const url = `http://127.0.0.1:${port}/api/editor-config?path=deck.pptx`;
+        process.env.FAKE_RECOVER = "fail";
+        expect((await fetch(url)).status).toBe(409);
+        delete process.env.FAKE_RECOVER;
+        expect((await fetch(url)).status).toBe(200);
+        expect(readFileSync(log, "utf-8").trim().split("\n")).toEqual(["recover-insert", "recover-insert"]);
+      } finally {
+        process.env.PATH = oldPath;
+        delete process.env.FAKE_RECOVER;
+        rmSync(journal, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("주소를 해석할 수 없는 요청에는 400을 돌려주고 서버는 계속 동작한다", async () => {
     server = makeApp();

@@ -382,7 +382,7 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _recover(document: Path) -> bool:
+def _recover(document: Path) -> str:
     """지난 삽입이 문서만 바꾸고 끊겼으면(문서는 새것, 출처 파일은 옛것) 두 파일을
     이전으로 되돌린다.
 
@@ -391,13 +391,13 @@ def _recover(document: Path) -> bool:
     """
     journal = _journal(document)
     if not journal.is_dir():
-        return False
+        return "none"
     try:
         marks = json.loads((journal / "ready.json").read_text(encoding="utf-8"))
         doc_hash, prov_hash = str(marks["document"]), str(marks["provenance"])
     except (OSError, ValueError, KeyError, TypeError):
         shutil.rmtree(journal, ignore_errors=True)  # journal incomplete: nothing was published
-        return False
+        return "none"
     prov = provenance_path(document)
     doc_new = document.is_file() and _sha(document.read_bytes()) == doc_hash
     prov_new = prov.is_file() and _sha(prov.read_bytes()) == prov_hash
@@ -410,7 +410,9 @@ def _recover(document: Path) -> bool:
             prov.unlink(missing_ok=True)
         _publish((journal / "document.bak").read_bytes(), document)
     shutil.rmtree(journal, ignore_errors=True)
-    return rolled_back
+    if rolled_back:
+        return "rolled_back"
+    return "complete" if doc_new and prov_new else "none"
 
 
 def recover_insert(document: str) -> str:
@@ -418,14 +420,15 @@ def recover_insert(document: str) -> str:
 
     studio가 `docmill insert-range`의 응답을 못 받았을 때(시간 초과 등) 곧바로 불러,
     출처 없는 표가 남은 문서를 사용자가 편집하기 전에 정리한다. 결과는 JSON 문자열
-    (`recovered`: 되돌렸는지)이다.
+    (`recovered`: 되돌렸는지, `state`: `none`·`rolled_back`·`complete`)이다.
+    `complete`는 지난 삽입이 두 파일을 모두 발행한 뒤 정리 전에 끊긴 경우다.
     """
     try:
         with _document_lock(Path(document)):
-            recovered = _recover(Path(document))
+            state = _recover(Path(document))
     except Exception as exc:  # recovery failures must not kill the caller
         return json.dumps({"error": f"{type(exc).__name__}: {exc}", "step": "recover"})
-    return json.dumps({"recovered": recovered})
+    return json.dumps({"recovered": state == "rolled_back", "state": state})
 
 
 @contextlib.contextmanager
@@ -442,7 +445,9 @@ def _signals_deferred() -> Iterator[None]:
         signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
-def _publish_pair(document: Path, data: bytes, original: bytes, sidecar: bytes) -> None:
+def _publish_pair(
+    document: Path, data: bytes, original: bytes, sidecar: bytes, receipt: Path | None = None
+) -> None:
     """pptx와 출처 파일을 함께 발행한다. 중간에 끊기면 다음 삽입이 저널로 둘 다 되돌린다."""
     journal = _journal(document)
     shutil.rmtree(journal, ignore_errors=True)
@@ -455,11 +460,18 @@ def _publish_pair(document: Path, data: bytes, original: bytes, sidecar: bytes) 
     (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
     with _signals_deferred():
         _commit(document, data, original, sidecar)
+        if receipt is not None:  # 이 호출이 두 파일을 다 발행했다는 표시 (응답을 잃은 호출자용)
+            receipt.write_text(json.dumps({"published": True}), encoding="utf-8")
         shutil.rmtree(journal, ignore_errors=True)
 
 
 def _insert(
-    document: Path, source: Path, cell_range: str, sheet_name: str | None, run_id: str
+    document: Path,
+    source: Path,
+    cell_range: str,
+    sheet_name: str | None,
+    run_id: str,
+    receipt: Path | None = None,
 ) -> dict[str, Any]:
     if document.suffix.lower() != ".pptx" or not document.is_file():
         raise DropInError("input", f"지금은 pptx 문서에만 넣을 수 있다: {document.name}")
@@ -483,7 +495,7 @@ def _insert(
         raise DropInError("document", f"문서에 표를 넣지 못했다: {exc}") from exc
     added = _numbers(grid, (r1, c1), (source, sheet, source_digest(raw)), slide, shape)
     sidecar = dump([*_existing(document), *added])
-    _publish_pair(document, data, original, sidecar)
+    _publish_pair(document, data, original, sidecar, receipt)
     return {
         "document": str(document),
         "provenance": str(provenance_path(document)),
@@ -510,10 +522,22 @@ def insert_range(document: str, source: str, cell_range: str, sheet: str | None 
     `refresh_links`가 이 숫자도 고친다. 결과는 JSON 문자열이며, 실패하면 error와 실패한
     단계(step)를 담고 문서는 바뀌지 않는다.
     """
+    return insert_range_with_receipt(document, source, cell_range, sheet, None)
+
+
+def insert_range_with_receipt(
+    document: str, source: str, cell_range: str, sheet: str | None, receipt: str | None
+) -> str:
+    """`insert_range`와 같지만, receipt가 있으면 두 파일 발행을 마친 순간 완료 표시를 쓴다.
+
+    studio가 `docmill insert-range --receipt`로 불러, 응답을 잃었을 때(시간 초과 등) 이 호출이
+    실제로 표를 넣었는지 판단한다. 잠금을 기다리다 끝나면 표시가 없다.
+    """
     run_id = current_run_id() or new_run_id()
+    mark = Path(receipt) if receipt else None
     try:
         with _document_lock(Path(document)):
-            result = _insert(Path(document), Path(source), cell_range, sheet, run_id)
+            result = _insert(Path(document), Path(source), cell_range, sheet, run_id, mark)
     except DropInError as exc:
         result = {"error": exc.message, "step": exc.step, "run_id": run_id}
     except Exception as exc:  # file failures must not kill the caller

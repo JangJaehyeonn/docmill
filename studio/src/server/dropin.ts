@@ -1,6 +1,8 @@
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
 /** 범위 넣기 결과: 요약과 새 슬라이드 번호 또는 실패 이유. */
 export interface InsertResult {
@@ -8,6 +10,8 @@ export interface InsertResult {
   slide?: number;
   numbers?: number;
   error?: string;
+  /** 끊긴 삽입을 정리하지 못해 편집기를 잠근 채 두어야 할 때 true. */
+  locked?: boolean;
 }
 
 /** 엑셀 셀 범위(`A1:C16`, `B2`)의 모양만 확인한다. 실제 해석은 docmill 도구가 한다. */
@@ -37,16 +41,12 @@ export function parseInsert(stdout: string): InsertResult {
   };
 }
 
-/** 응답을 잃었지만 파일 두 개(문서·출처)가 모두 바뀐 삽입을 성공으로 알릴 때의 요약. */
+/** 응답을 잃었지만 이 호출이 두 파일 발행을 마친 삽입을 성공으로 알릴 때의 요약. */
 export const LATE_SUMMARY = "범위를 넣었어요. 응답이 늦게 와서 자세한 결과는 표시하지 못했어요.";
 
-async function digest(file: string): Promise<string> {
-  try {
-    return createHash("sha256").update(await fs.readFile(file)).digest("hex");
-  } catch {
-    return "";
-  }
-}
+/** 응답을 잃은 뒤 복구까지 실패했을 때의 안내. 편집기는 잠긴 채로 둔다. */
+export const RECOVER_FAILED =
+  "범위를 넣다가 끊겼고 문서를 정리하지 못했어요. 탭을 닫고 다시 열어 주세요 (열 때 다시 정리해요).";
 
 function run(cwd: string, args: string[], timeoutMs: number): Promise<{ ok: boolean; stdout: string }> {
   return new Promise((resolve) => {
@@ -59,12 +59,42 @@ function run(cwd: string, args: string[], timeoutMs: number): Promise<{ ok: bool
   });
 }
 
+/** 복구 결과 상태: none(할 일 없음)·rolled_back(되돌림)·complete(지난 삽입이 다 발행됨)·failed. */
+export type RecoverState = "none" | "rolled_back" | "complete" | "failed";
+
+/** `docmill recover-insert` 로 끊긴 삽입을 문서 잠금 안에서 정리한다. */
+export async function runRecover(docAbs: string, cwd: string): Promise<RecoverState> {
+  const r = await run(cwd, ["recover-insert", docAbs], 30_000);
+  try {
+    const state = (JSON.parse(r.stdout) as { state?: unknown }).state;
+    if (r.ok && (state === "none" || state === "rolled_back" || state === "complete")) return state;
+  } catch {
+    // fall through
+  }
+  return "failed";
+}
+
+/**
+ * Python `_journal` 과 같은 규칙의 삽입 저널 폴더 (임시 폴더의 `docmill-insert-<실제 경로 해시 24자>`).
+ * 이 폴더가 있으면 지난 삽입이 정리되지 않은 것이다.
+ */
+export async function hasInsertJournal(docAbs: string): Promise<boolean> {
+  try {
+    const real = await fs.realpath(docAbs);
+    const digest = createHash("sha256").update(real, "utf8").digest("hex").slice(0, 24);
+    return (await fs.stat(path.join(os.tmpdir(), `docmill-insert-${digest}`))).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
 /**
  * docmill 도구 `insert_range` 를 CLI(`docmill insert-range`)로 불러 범위를 문서에 표로 넣는다.
  *
- * 응답을 잃으면(시간 초과로 끝남 등) 곧바로 `docmill recover-insert` 로 반쯤 발행된 삽입을 되돌린다.
- * 그 뒤 문서와 출처 파일이 둘 다 바뀌어 있으면 삽입은 끝난 것이므로 성공으로 알려, 다시 시도해
- * 표가 겹치지 않게 한다.
+ * `--receipt` 로 완료 표시 파일을 넘긴다. 응답을 잃으면(시간 초과 등) 곧바로 `docmill recover-insert` 로
+ * 반쯤 발행된 삽입을 되돌린다. 이 호출의 완료 표시가 있거나 복구가 "다 발행됨"을 알리면 성공으로
+ * 알려 다시 시도해도 표가 겹치지 않게 한다. 잠금을 기다리다 끝났으면 표시가 없어 실패다.
+ * 복구도 실패하면 `locked` 를 붙여 편집기를 잠근 채 둔다.
  */
 export async function runInsert(
   docAbs: string,
@@ -74,14 +104,22 @@ export async function runInsert(
   sheet = "",
   timeoutMs = 60_000,
 ): Promise<InsertResult> {
-  const args = ["insert-range", docAbs, sourceAbs, range.trim()];
-  if (sheet !== "") args.push("--sheet", sheet); // keep the exact name: sheets may have edge spaces
-  const prov = `${docAbs}.provenance.json`;
-  const before = [await digest(docAbs), await digest(prov)];
-  const r = await run(cwd, args, timeoutMs);
-  if (r.ok) return parseInsert(r.stdout);
-  await run(cwd, ["recover-insert", docAbs], 30_000);
-  const after = [await digest(docAbs), await digest(prov)];
-  if (after[0] !== before[0] && after[1] !== before[1]) return { summary: LATE_SUMMARY };
-  return { summary: "", error: "범위를 문서에 넣지 못했어요." };
+  const temp = await fs.mkdtemp(path.join(os.tmpdir(), "docmill-receipt-"));
+  const receipt = path.join(temp, "receipt.json");
+  try {
+    const args = ["insert-range", docAbs, sourceAbs, range.trim(), "--receipt", receipt];
+    if (sheet !== "") args.push("--sheet", sheet); // keep the exact name: sheets may have edge spaces
+    const r = await run(cwd, args, timeoutMs);
+    if (r.ok) return parseInsert(r.stdout);
+    const state = await runRecover(docAbs, cwd);
+    const published = await fs.stat(receipt).then(
+      () => true,
+      () => false,
+    );
+    if (published || state === "complete") return { summary: LATE_SUMMARY };
+    if (state === "failed") return { summary: "", error: RECOVER_FAILED, locked: true };
+    return { summary: "", error: "범위를 문서에 넣지 못했어요." };
+  } finally {
+    await fs.rm(temp, { recursive: true, force: true });
+  }
 }
