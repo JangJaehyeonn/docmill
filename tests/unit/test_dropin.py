@@ -461,6 +461,20 @@ def test_tiny_decimal_survives_insert_and_refresh(tmp_path: Path) -> None:
     assert number["value"] == 5e-07 and number["source"]["digits"] == 7
 
 
+def test_sub_tolerance_literal_change_updates_document(tmp_path: Path) -> None:
+    pptx, _ = _workspace(tmp_path)
+    book = _two_sheet_xlsx(tmp_path / "book.xlsx", 0, 0)
+    _set_b2(book, "0.0000000004")
+    assert "error" not in json.loads(insert_range(str(pptx), str(book), "B2"))
+    _set_b2(book, "0.0000000005")  # 차이 1e-10은 보고서 허용오차(1e-9)보다 작다
+    result = json.loads(refresh_links(str(pptx)))
+    assert [c["new"] for c in result["changes"]] == [5e-10]
+    with zipfile.ZipFile(pptx) as z:
+        assert "<a:t>0.0000000005</a:t>" in z.read("ppt/slides/slide4.xml").decode("utf-8")
+    number = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))["numbers"][0]
+    assert number["value"] == 5e-10
+
+
 def test_report_numbers_keep_report_digits() -> None:
     from docmill.tools.refresh import _shown
 

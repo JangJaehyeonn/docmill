@@ -644,8 +644,14 @@ def _commit(
         raise
 
 
-def _differs(shown: float, old: float) -> bool:
-    """보이는 값이 달라졌는지 (반올림한 값끼리 정확히 비교한다)."""
+def _differs(shown: float, old: float, *, literal: bool = False) -> bool:
+    """보이는 값이 달라졌는지 본다.
+
+    끌어다 놓은 셀 값(literal)은 원본 자릿수로 반올림한 값끼리 허용오차 없이 비교해
+    아주 작은 소수의 변경도 놓치지 않는다. 보고서 집계 값은 허용오차 안의 차이를 무시한다.
+    """
+    if literal:
+        return shown != old
     return abs(shown - old) > _TOLERANCE
 
 
@@ -661,7 +667,7 @@ def _refresh(document: Path, run_id: str) -> dict[str, Any]:
     for item in numbers:
         new_item, shown, text = _renewed(item, sources)
         renewed.append(new_item)
-        moved = _differs(shown, float(item["value"]))
+        moved = _differs(shown, float(item["value"]), literal=bool(item["source"].get("literal")))
         texts.append(text if moved else None)
         if moved:
             changes.append(
