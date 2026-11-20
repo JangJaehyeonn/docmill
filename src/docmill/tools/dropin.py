@@ -14,7 +14,9 @@ from __future__ import annotations
 import contextlib
 import hashlib
 import json
+import logging
 import math
+import os
 import re
 import shutil
 import signal
@@ -40,6 +42,8 @@ from docmill.tools.refresh import (
     number_digits,
     source_digest,
 )
+
+logger = logging.getLogger(__name__)
 
 MAX_ROWS = 30
 MAX_SHEET_ROW = 1048576
@@ -460,9 +464,35 @@ def _publish_pair(
     (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
     with _signals_deferred():
         _commit(document, data, original, sidecar)
-        if receipt is not None:  # 이 호출이 두 파일을 다 발행했다는 표시 (응답을 잃은 호출자용)
-            receipt.write_text(json.dumps({"published": True}), encoding="utf-8")
+        if receipt is not None and not _write_receipt(receipt):
+            return  # keep the journal: recovery then reports "complete" to a caller that lost us
         shutil.rmtree(journal, ignore_errors=True)
+
+
+def _write_receipt(receipt: Path) -> bool:
+    """두 파일을 다 발행했다는 표시를 쓴다. 실패해도 삽입은 이미 끝났으므로 오류로 올리지 않는다."""
+    try:
+        receipt.write_text(json.dumps({"published": True}), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("완료 표시를 쓰지 못했다 (삽입은 끝났다): %s", exc)
+        return False
+    return True
+
+
+def _same_file(a: Path, b: Path) -> bool:
+    if a.resolve() == b.resolve():
+        return True
+    try:
+        return a.exists() and b.exists() and os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _check_receipt(receipt: Path, document: Path, source: Path) -> None:
+    """완료 표시 파일이 문서·원본·출처 파일과 겹치면 아무것도 바꾸기 전에 거부한다."""
+    for target in (document, source, provenance_path(document)):
+        if _same_file(receipt, target):
+            raise DropInError("input", f"완료 표시 파일이 작업 대상 파일과 겹친다: {receipt.name}")
 
 
 def _insert(
@@ -478,6 +508,8 @@ def _insert(
     if source.suffix.lower() != ".xlsx" or not source.is_file():
         raise DropInError("input", f"읽을 수 있는 .xlsx 파일이 아니다: {source}")
     r1, c1, r2, c2 = parse_range(cell_range)
+    if receipt is not None:
+        _check_receipt(receipt, document, source)
     _recover(document)
     raw = source.read_bytes()  # read once: values, sheet and version all come from these bytes
     sheet = _pick_sheet(raw, source, sheet_name)

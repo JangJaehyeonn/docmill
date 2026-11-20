@@ -538,6 +538,37 @@ def test_receipt_marks_a_published_insert(tmp_path: Path) -> None:
     assert not failed.exists()  # 실패한 호출은 완료 표시를 쓰지 않는다
 
 
+def test_receipt_write_failure_keeps_insert_success_and_journal(tmp_path: Path) -> None:
+    from docmill.tools import dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    receipt = tmp_path / "missing" / "receipt.json"  # parent folder does not exist
+    result = json.loads(
+        dropin.insert_range_with_receipt(str(pptx), str(xlsx), "C2", None, str(receipt))
+    )
+    assert "error" not in result and result["numbers"] == 1
+    assert dropin._journal(pptx).is_dir()  # 응답을 잃은 호출자가 복구로 완료를 확인할 수 있다
+    assert json.loads(dropin.recover_insert(str(pptx))) == {"recovered": False, "state": "complete"}
+    with zipfile.ZipFile(pptx) as z:
+        assert f"ppt/slides/slide{result['slide']}.xml" in z.namelist()
+
+
+def test_receipt_overlapping_targets_is_rejected_before_any_change(tmp_path: Path) -> None:
+    from docmill.tools import dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    doc, src = pptx.read_bytes(), xlsx.read_bytes()
+    alias = tmp_path / "sub" / ".." / pptx.name
+    (tmp_path / "sub").mkdir()
+    for receipt in (alias, xlsx, provenance_path(pptx)):
+        out = json.loads(
+            dropin.insert_range_with_receipt(str(pptx), str(xlsx), "C2", None, str(receipt))
+        )
+        assert out["step"] == "input"
+    assert pptx.read_bytes() == doc and xlsx.read_bytes() == src
+    assert not provenance_path(pptx).exists()
+
+
 def test_recover_reports_complete_publish_left_uncleaned(tmp_path: Path) -> None:
     import hashlib
 
