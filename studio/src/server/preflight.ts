@@ -34,11 +34,11 @@ export function parsePreflight(stdout: string): PreflightResult {
 }
 
 /** docmill 도구 `preflight` 를 CLI(`docmill preflight`)로 불러 점검 결과를 받는다. */
-export function runPreflight(abs: string, timeoutMs = 60_000): Promise<PreflightResult> {
+export function runPreflight(abs: string, workspace?: string, timeoutMs = 60_000): Promise<PreflightResult> {
   return new Promise((resolve) => {
     execFile(
       "docmill",
-      ["preflight", abs],
+      ["preflight", abs, ...(workspace ? ["--workspace", workspace] : [])],
       { timeout: timeoutMs, encoding: "utf-8", env: { ...process.env, PYTHONIOENCODING: "utf-8" } },
       (err, stdout) =>
         resolve(err ? { checks: [], error: "보내기 전 점검을 실행하지 못했어요." } : parsePreflight(stdout)),

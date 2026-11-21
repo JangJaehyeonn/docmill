@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
+import { SettingsPanel } from "./SettingsPanel";
 import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
@@ -70,6 +71,7 @@ export function App() {
   const [dropMessage, setDropMessage] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [keyTarget, setKeyTarget] = useState("");
+  const [showSettings, setShowSettings] = useState(false);
   const dragged = useRef<DraggedRange | null>(null);
   const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
@@ -475,6 +477,8 @@ export function App() {
         </section>
       )}
 
+      {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
+
       {choices.length > 0 && (
         <section role="region" aria-label="열 파일 고르기" className="alert">
           <p>
@@ -514,6 +518,9 @@ export function App() {
               e.target.value = "";
             }}
           />
+          <button type="button" onClick={() => setShowSettings((v) => !v)}>
+            설정
+          </button>
           <h2>작업 폴더 파일</h2>
           <ul aria-label="작업 폴더 파일">
             {files.map((f) => (

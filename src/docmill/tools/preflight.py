@@ -18,6 +18,7 @@ from typing import Any
 from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
+from docmill.settings import UserSettings, load_settings
 from docmill.tools.hwp import HwpError, is_hwp, read_hwp_paragraphs
 from docmill.tools.provenance import slide_parts
 from docmill.tools.review import (
@@ -39,6 +40,7 @@ WEEKDAY = "날짜 요일"
 PRIVACY = "개인정보"
 PLACEHOLDER = "자리표시자"
 EMPTY_TITLE = "빈 제목"
+TITLE_CHECK = "직함"
 
 _WEEKDAYS = "월화수목금토일"
 _DATE = re.compile(
@@ -217,6 +219,18 @@ def check_empty_titles(document: Path) -> dict[str, Any]:
     return _check(EMPTY_TITLE, _status(found, WARN), found)
 
 
+def check_title(segments: list[Segment], settings: UserSettings) -> dict[str, Any]:
+    """문서의 `직함 이름` 서명이 설정의 직함과 다르면 주의로 알린다 (FR-45)."""
+    pattern = re.compile(r"([^\s:：,;()\[\]]+)\s+" + re.escape(settings.name))
+    found = [
+        _entry(seg.location, f"{m.group(1)} {settings.name}")
+        for seg in segments
+        for m in pattern.finditer(seg.text)
+        if m.group(1) != settings.title
+    ]
+    return _check(TITLE_CHECK, _status(found, WARN), found)
+
+
 def check_numbers(document: Path, source: str | None, group_by: str, value: str) -> dict[str, Any]:
     """원본 엑셀이 있으면 verify_numbers로 그래프 숫자를 대조한다. 없으면 건너뛴다(통과)."""
     if not source:
@@ -236,7 +250,11 @@ def check_numbers(document: Path, source: str | None, group_by: str, value: str)
 
 
 def build_preflight(
-    document: Path, source: str | None = None, group_by: str = "", value: str = ""
+    document: Path,
+    source: str | None = None,
+    group_by: str = "",
+    value: str = "",
+    workspace: Path | None = None,
 ) -> dict[str, Any]:
     """점검 항목 목록(checks)을 만든다. 문서를 읽지 못하면 ReviewError를 낸다."""
     segments = [s for s in read_segments(document) if s.kind == "text"]
@@ -247,6 +265,9 @@ def build_preflight(
         check_placeholders(segments),
         check_empty_titles(document),
     ]
+    settings = load_settings(workspace) if workspace else None
+    if settings and settings.name and settings.title:
+        checks.append(check_title(segments, settings))
     return {"checks": checks}
 
 
@@ -255,17 +276,27 @@ def _summary(checks: list[dict[str, Any]]) -> str:
     return "보내기 전 점검: " + ", ".join(f"{s} {n}" for s, n in counts)
 
 
-def preflight(document: str, source: str | None = None, group_by: str = "", value: str = "") -> str:
+def preflight(
+    document: str,
+    source: str | None = None,
+    group_by: str = "",
+    value: str = "",
+    workspace: str | None = None,
+) -> str:
     """문서를 보내기 전에 안전 점검을 한 번에 한다 (규칙 기반, AI 없음).
 
     document는 pptx·docx 경로다. 원본 엑셀(source)과 group_by·value를 주면 그래프 숫자를 다시
     계산해 대조한다. 결과 JSON의 checks에 항목(name: 숫자 검증·날짜 요일·개인정보·자리표시자·
     빈 제목), status(통과·주의·실패), locations(위치와 해당 글자)가 담긴다. 개인정보는 원래
-    값을 쓰지 않고 가려서 돌려준다. 실패하면 error와 실패한 단계(step)를 담는다.
+    값을 쓰지 않고 가려서 돌려준다. workspace(설정 파일이 있는 작업 폴더)를 주고 설정에 이름·직함이
+    있으면 문서의 `직함 이름` 서명이 설정 직함과 다른지 `직함` 항목으로 점검한다.
+    실패하면 error와 실패한 단계(step)를 담는다.
     """
     run_id = current_run_id() or new_run_id()
     try:
-        result = build_preflight(Path(document), source, group_by, value)
+        result = build_preflight(
+            Path(document), source, group_by, value, Path(workspace) if workspace else None
+        )
         result["summary"] = _summary(result["checks"])
     except ReviewError as exc:
         result = {"error": exc.message, "step": exc.step}

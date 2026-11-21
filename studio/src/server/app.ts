@@ -34,6 +34,7 @@ import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
+import { readSettings, settingsLines, writeSettings } from "./settings.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
 
 export interface AppOptions {
@@ -187,6 +188,16 @@ async function handleApi(
       throw err;
     }
   }
+  if (req.method === "GET" && pathname === "/api/settings") {
+    return sendJson(res, 200, await readSettings(await fs.realpath(opts.workspace)));
+  }
+  if (req.method === "PUT" && pathname === "/api/settings") {
+    if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+      return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+    }
+    const saved = await writeSettings(await fs.realpath(opts.workspace), await readBody(req));
+    return sendJson(res, 200, saved);
+  }
   if (req.method === "GET" && pathname === "/api/onlyoffice") {
     return sendJson(res, 200, { url: normalizeUrl(opts.onlyofficeUrl) });
   }
@@ -201,7 +212,7 @@ async function handleApi(
   if (req.method === "GET" && pathname === "/api/preflight") {
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
-    return sendJson(res, 200, await runPreflight(file.abs));
+    return sendJson(res, 200, await runPreflight(file.abs, await fs.realpath(opts.workspace)));
   }
   if (req.method === "GET" && pathname === "/api/links") {
     const file = await resolveQuery(opts, res, query);
@@ -373,6 +384,7 @@ async function chat(
     tabs,
     active,
     documents: masked.documents.map((d, i) => ({ path: tabs[i] ?? d.path, text: d.text })),
+    settingsLines: settingsLines(await readSettings(root)),
   });
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",
