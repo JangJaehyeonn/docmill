@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
+import { ExportDialog } from "./ExportDialog";
 import { SettingsPanel } from "./SettingsPanel";
 import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
@@ -72,6 +73,7 @@ export function App() {
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [keyTarget, setKeyTarget] = useState("");
   const [showSettings, setShowSettings] = useState(false);
+  const [showExport, setShowExport] = useState(false);
   const dragged = useRef<DraggedRange | null>(null);
   const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
@@ -326,6 +328,7 @@ export function App() {
 
   // 편집기에 방금 한 편집이 파일에 닿도록 먼저 저장한다. 저장하지 못했으면 false.
   const saveBefore = async (path: string): Promise<boolean> => {
+    if (isHwpPath(path)) return saveHwp(path);
     if (!/\.(xlsx|pptx|docx)$/i.test(path)) return true;
     const synced = await waitOfficeSynced(path, 15_000);
     return synced && (await save(path)) !== "failed";
@@ -477,6 +480,15 @@ export function App() {
         </section>
       )}
 
+      {showExport && active && (
+        <ExportDialog
+          key={active.path}
+          path={active.path}
+          saveBefore={saveBefore}
+          onClose={() => setShowExport(false)}
+        />
+      )}
+
       {showSettings && <SettingsPanel onClose={() => setShowSettings(false)} />}
 
       {choices.length > 0 && (
@@ -518,6 +530,9 @@ export function App() {
               e.target.value = "";
             }}
           />
+          <button type="button" disabled={!activeEditing} onClick={() => setShowExport((v) => !v)}>
+            내보내기
+          </button>
           <button type="button" onClick={() => setShowSettings((v) => !v)}>
             설정
           </button>
