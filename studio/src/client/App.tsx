@@ -328,6 +328,7 @@ export function App() {
 
   // 편집기에 방금 한 편집이 파일에 닿도록 먼저 저장한다. 저장하지 못했으면 false.
   const saveBefore = async (path: string): Promise<boolean> => {
+    if (isHwpPath(path)) return saveHwp(path);
     if (!/\.(xlsx|pptx|docx)$/i.test(path)) return true;
     const synced = await waitOfficeSynced(path, 15_000);
     return synced && (await save(path)) !== "failed";

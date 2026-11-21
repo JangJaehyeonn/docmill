@@ -56,10 +56,13 @@ def export_document(
         target = _mail_draft(doc, doc.resolve().parent, subject)
     elif kind == "folder":
         dest = (root / (folder.strip() or _FOLDER_DEFAULT)).resolve()
-        if folder and (Path(folder).is_absolute() or not _inside(root, dest)):
+        if Path(folder.strip()).is_absolute() or not _inside(root, dest):
             return _fail("작업 폴더 안의 폴더만 지정할 수 있어요.")
         dest.mkdir(parents=True, exist_ok=True)
         target = dest / doc.name
+        # 대상 파일이 작업 폴더 밖을 가리키는 링크이면 쓰지 않는다.
+        if not _inside(root, target.resolve()):
+            return _fail("작업 폴더 밖의 파일에는 쓸 수 없어요.")
         shutil.copyfile(doc, target)
     else:
         return _fail("내보내기 종류는 mail 또는 folder여야 해요.")

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { rebaseDownloadUrl } from "./onlyoffice.js";
@@ -63,14 +64,55 @@ export function looksLikePdf(data: Buffer): boolean {
   return data.length > 8 && data.subarray(0, 5).toString("latin1") === "%PDF-";
 }
 
-/** ONLYOFFICE 변환 서비스(ConvertService.ashx)로 문서를 PDF로 바꿔 문서 옆 `<이름>.pdf` 로 쓴다. 결과 path는 절대 경로. */
+/** 문서 옆 PDF 경로 (`<이름>.pdf`, 절대 경로). */
+export function pdfTargetOf(abs: string): string {
+  return abs.slice(0, abs.length - path.extname(abs).length) + ".pdf";
+}
+
+/** 경로가 작업 폴더(실제 경로) 안인지. */
+function insideRoot(root: string, abs: string): boolean {
+  const rel = path.relative(root, abs);
+  return rel !== "" && !rel.startsWith("..") && !path.isAbsolute(rel);
+}
+
+/** 링크를 따라간 실제 경로. 파일이 아직 없으면 폴더의 실제 경로에 이름을 붙인다. */
+async function realTarget(abs: string): Promise<string> {
+  try {
+    return await fs.realpath(abs);
+  } catch {
+    return path.join(await fs.realpath(path.dirname(abs)), path.basename(abs));
+  }
+}
+
+/**
+ * PDF 바이트를 `target` 에 쓴다. 대상(링크 해석 포함)이 작업 폴더 밖이면 쓰지 않는다.
+ * 요청마다 다른 임시 파일을 새로(`wx`) 만들어 쓴 뒤 바꿔 넣고, 실패하면 임시 파일을 지운다.
+ * 호출하는 쪽은 같은 `target` 에 대한 쓰기를 잠금으로 차례로 실행해야 한다.
+ */
+export async function writePdf(root: string, target: string, bytes: Buffer): Promise<ExportResult> {
+  const realRoot = await fs.realpath(root);
+  if (!insideRoot(realRoot, await realTarget(target))) {
+    return { error: "작업 폴더 밖의 파일에는 쓸 수 없어요." };
+  }
+  const tmp = `${target}.${randomUUID()}.docmill-tmp`;
+  try {
+    await fs.writeFile(tmp, bytes, { flag: "wx" });
+    await fs.rename(tmp, target);
+  } catch {
+    await fs.rm(tmp, { force: true });
+    return { error: "PDF 파일을 쓰지 못했어요." };
+  }
+  return { path: target };
+}
+
+/** ONLYOFFICE 변환 서비스(ConvertService.ashx)로 문서를 PDF로 바꿔 그 바이트를 돌려준다. */
 export async function convertToPdf(opts: {
   server: string;
   fileUrl: string;
   key: string;
   abs: string;
   timeoutMs?: number;
-}): Promise<ExportResult> {
+}): Promise<{ bytes?: Buffer; error?: string }> {
   const ext = path.extname(opts.abs).slice(1).toLowerCase();
   const signal = AbortSignal.timeout(opts.timeoutMs ?? 60_000);
   try {
@@ -95,11 +137,7 @@ export async function convertToPdf(opts: {
     if (!download.ok) return { error: "PDF를 내려받지 못했어요." };
     const bytes = Buffer.from(await download.arrayBuffer());
     if (!looksLikePdf(bytes)) return { error: "문서 서버가 올바른 PDF를 주지 않았어요." };
-    const target = opts.abs.slice(0, opts.abs.length - path.extname(opts.abs).length) + ".pdf";
-    const tmp = `${target}.docmill-tmp`;
-    await fs.writeFile(tmp, bytes);
-    await fs.rename(tmp, target);
-    return { path: target };
+    return { bytes };
   } catch {
     return { error: "PDF로 바꾸지 못했어요. 문서 서버 연결을 확인해 주세요." };
   }

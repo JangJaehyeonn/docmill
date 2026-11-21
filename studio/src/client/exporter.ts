@@ -7,6 +7,8 @@ export interface ExportReply {
   error?: string;
   needsConfirm?: boolean;
   failures?: string[];
+  /** 점검한 문서 상태. 확인 후 다시 보낼 때 함께 보내, 그 사이 내용이 바뀌었으면 서버가 다시 점검한다. */
+  checked?: string;
 }
 
 /** 내보내기 결과를 사용자에게 보일 한국어 문장으로 바꾼다. 메일은 직접 보내지 않는다. */

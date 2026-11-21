@@ -20,6 +20,7 @@ export function ExportDialog({ path, saveBefore, onClose }: Props) {
   const [folder, setFolder] = useState("");
   const [busy, setBusy] = useState(false);
   const [failures, setFailures] = useState<string[] | null>(null);
+  const [checked, setChecked] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   const run = async (confirmed: boolean): Promise<void> => {
@@ -34,11 +35,12 @@ export function ExportDialog({ path, saveBefore, onClose }: Props) {
       const res = await fetch("/api/export", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ path, kind, folder, confirmed }),
+        body: JSON.stringify({ path, kind, folder, confirmed, checked: confirmed ? checked : null }),
       });
       const reply = (await res.json()) as ExportReply;
       if (res.ok && reply.needsConfirm) {
         setFailures(reply.failures ?? []);
+        setChecked(reply.checked ?? null);
         return;
       }
       setFailures(null);

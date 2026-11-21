@@ -31,7 +31,7 @@ import { hasInsertJournal, isCellRange, runInsert, runRecover } from "./dropin.j
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
 import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
-import { convertToPdf, failedChecks, failureLine, parseKind, runExportDoc } from "./export.js";
+import { convertToPdf, failedChecks, failureLine, parseKind, pdfTargetOf, runExportDoc, writePdf } from "./export.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
@@ -330,6 +330,7 @@ async function exportDocument(
     kind?: unknown;
     folder?: unknown;
     confirmed?: unknown;
+    checked?: unknown;
   };
   const kind = parseKind(body.kind);
   if (!kind) return sendJson(res, 400, { error: "내보내기 종류를 고르세요." });
@@ -341,30 +342,36 @@ async function exportDocument(
     return sendJson(res, 400, { error: "PDF 내보내기는 엑셀·PPT·워드 문서에서만 할 수 있어요." });
   }
   if (kind === "pdf" && !server) return sendJson(res, 409, { error: NO_SERVER_ERROR });
-  if (body.confirmed !== true) {
-    const check = await runPreflight(file.abs, root);
-    if (check.error) return sendJson(res, 502, { error: check.error });
-    const failures = failedChecks(check.checks);
-    if (failures.length > 0) {
-      return sendJson(res, 200, { needsConfirm: true, failures: failures.map(failureLine) });
+  type Reply = { path?: string; error?: string; needsConfirm?: boolean; failures?: string[]; checked?: string };
+  const result = await withFileLock(file.rel, async (): Promise<Reply> => {
+    // 점검은 잠금 안에서 내보내기 직전에 한다. 확인 뒤 내용이 바뀌었으면 다시 점검해 확인을 다시 받는다.
+    const before = await fs.stat(file.abs);
+    const checked = `${before.mtimeMs}:${before.size}`;
+    if (body.confirmed !== true || body.checked !== checked) {
+      const check = await runPreflight(file.abs, root);
+      if (check.error) return { error: check.error };
+      const failures = failedChecks(check.checks);
+      if (failures.length > 0) return { needsConfirm: true, failures: failures.map(failureLine), checked };
     }
-  }
-  const result = await withFileLock(file.rel, async () => {
     if (kind !== "pdf") {
       const folder = typeof body.folder === "string" ? body.folder : "";
       return runExportDoc(file.abs, kind, root, folder);
     }
-    const info = await fs.stat(file.abs);
     const origin = `http://${opts.publicHost || "127.0.0.1"}:${req.socket.localPort ?? 0}`;
     const sig = signPath(secretOf(opts), file.rel);
-    const r = await convertToPdf({
+    const converted = await convertToPdf({
       server: server as string,
       fileUrl: `${origin}/onlyoffice/file?path=${encodeURIComponent(file.rel)}&sig=${sig}`,
       // 변환 전용 키: 열린 편집 세션과 겹치지 않게 접두사를 붙인다.
-      key: "pdf" + documentKey(file.rel, info.mtimeMs, info.size),
+      key: "pdf" + documentKey(file.rel, before.mtimeMs, before.size),
       abs: file.abs,
     });
-    return r.path ? { path: path.relative(root, r.path).split(path.sep).join("/") } : r;
+    if (!converted.bytes) return { error: converted.error };
+    const target = pdfTargetOf(file.abs);
+    const rel = path.relative(root, target).split(path.sep).join("/");
+    // 같은 PDF(예: report.docx·report.pptx → report.pdf)를 만드는 작업은 출력 경로 잠금으로 차례로 쓴다.
+    const r = await withFileLock(`pdf:${rel}`, () => writePdf(root, target, converted.bytes as Buffer));
+    return r.path ? { path: rel } : r;
   });
   sendJson(res, result.error ? 502 : 200, { kind, ...result });
 }
