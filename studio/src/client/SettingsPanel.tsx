@@ -70,6 +70,9 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
     }
   };
 
+  // 저장된 값을 불러온 뒤에 입력칸을 보여, 빈 칸을 보고 덮어쓰는 일이 없게 한다.
+  if (!ready) return message ? <p role="alert" className="alert">{message}</p> : null;
+
   return (
     <section role="region" aria-label="설정" className="alert settings">
       <label>
@@ -96,7 +99,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
       <label>
         문체 <input type="text" value={tone} onChange={(e) => setTone(e.target.value)} />
       </label>
-      <button type="button" disabled={!ready} onClick={() => void save()}>
+      <button type="button" onClick={() => void save()}>
         저장
       </button>
       <button type="button" onClick={onClose}>
