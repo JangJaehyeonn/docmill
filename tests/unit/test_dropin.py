@@ -517,7 +517,7 @@ def test_recover_insert_rolls_back_half_insert_at_once(tmp_path: Path) -> None:
     assert killed.returncode == 9
     out = CliRunner().invoke(app, ["recover-insert", str(pptx)])
     assert out.exit_code == 0
-    assert json.loads(out.stdout) == {"recovered": True, "state": "rolled_back"}
+    assert json.loads(out.stdout) == {"recovered": True, "state": "rolled_back", "mine": False}
     assert pptx.read_bytes() == before_doc
     assert provenance_path(pptx).read_bytes() == before_prov
     assert json.loads(recover_insert(str(pptx)))["state"] == "none"  # nothing left to undo
@@ -548,7 +548,11 @@ def test_receipt_write_failure_keeps_insert_success_and_journal(tmp_path: Path) 
     )
     assert "error" not in result and result["numbers"] == 1
     assert dropin._journal(pptx).is_dir()  # 응답을 잃은 호출자가 복구로 완료를 확인할 수 있다
-    assert json.loads(dropin.recover_insert(str(pptx))) == {"recovered": False, "state": "complete"}
+    assert json.loads(dropin.recover_insert(str(pptx))) == {
+        "recovered": False,
+        "state": "complete",
+        "mine": False,
+    }
     with zipfile.ZipFile(pptx) as z:
         assert f"ppt/slides/slide{result['slide']}.xml" in z.namelist()
 
@@ -584,6 +588,59 @@ def test_recover_reports_complete_publish_left_uncleaned(tmp_path: Path) -> None
         "provenance": hashlib.sha256(prov).hexdigest(),
     }
     (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
-    assert json.loads(dropin.recover_insert(str(pptx))) == {"recovered": False, "state": "complete"}
+    assert json.loads(dropin.recover_insert(str(pptx))) == {
+        "recovered": False,
+        "state": "complete",
+        "mine": False,
+    }
     assert pptx.read_bytes() == doc and provenance_path(pptx).read_bytes() == prov
     assert not journal.exists()
+
+
+def test_recover_tells_whose_completed_journal_it_was(tmp_path: Path) -> None:
+    import hashlib
+
+    from docmill.tools import dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    _run(pptx, xlsx, "C2")
+    marks = {
+        "document": hashlib.sha256(pptx.read_bytes()).hexdigest(),
+        "provenance": hashlib.sha256(provenance_path(pptx).read_bytes()).hexdigest(),
+        "caller": str(tmp_path / "a" / "receipt.json"),  # 다른 호출(A)이 남긴 완료 저널
+    }
+
+    def leave_journal() -> None:
+        journal = dropin._journal(pptx)
+        journal.mkdir(parents=True, exist_ok=True)
+        (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
+
+    leave_journal()
+    other = json.loads(dropin.recover_insert(str(pptx), str(tmp_path / "b" / "receipt.json")))
+    assert other == {"recovered": False, "state": "complete", "mine": False}
+    leave_journal()
+    mine = json.loads(dropin.recover_insert(str(pptx), marks["caller"]))
+    assert mine == {"recovered": False, "state": "complete", "mine": True}
+    leave_journal()
+    out = CliRunner().invoke(app, ["recover-insert", str(pptx), "--receipt", marks["caller"]])
+    assert json.loads(out.stdout)["mine"] is True
+
+
+def test_journal_records_the_calling_receipt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docmill.tools import dropin
+
+    pptx, xlsx = _workspace(tmp_path)
+    receipt = tmp_path / "r" / "receipt.json"
+    receipt.parent.mkdir()
+    seen: list[dict[str, Any]] = []
+    real = dropin._commit
+
+    def spy(*args: Any, **kwargs: Any) -> None:
+        seen.append(json.loads((dropin._journal(pptx) / "ready.json").read_text(encoding="utf-8")))
+        real(*args, **kwargs)
+
+    monkeypatch.setattr(dropin, "_commit", spy)
+    dropin.insert_range_with_receipt(str(pptx), str(xlsx), "C2", None, str(receipt))
+    assert seen and seen[0]["caller"] == str(receipt)

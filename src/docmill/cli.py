@@ -112,6 +112,11 @@ def insert_range_command(
 @app.command("recover-insert")
 def recover_insert_command(
     document: str = typer.Argument(..., help="끊긴 삽입을 되돌릴 pptx 문서 경로"),
+    receipt: str = typer.Option(
+        "",
+        "--receipt",
+        help="응답을 잃은 insert-range에 넘긴 완료 표시 경로 (그 호출의 결과인지 확인)",
+    ),
 ) -> None:
     """끊긴 범위 넣기(문서만 바뀌고 출처는 옛것)를 되돌리고 결과를 JSON으로 출력합니다. FR-44."""
     import functools
@@ -125,7 +130,7 @@ def recover_insert_command(
 
     @functools.wraps(recover_insert)
     def failing_on_error(document: str) -> str:
-        result = recover_insert(document)
+        result = recover_insert(document, receipt or None)
         if "error" in json.loads(result):
             raise _Failed(result)
         return result

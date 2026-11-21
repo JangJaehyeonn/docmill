@@ -51,7 +51,8 @@ describe("runInsert", () => {
 if [ "$1" = "recover-insert" ]; then
   [ "$FAKE_RECOVER" = "fail" ] && exit 1
   if [ -f "$2.orig" ]; then cp "$2.orig" "$2"; echo '{"recovered": true, "state": "rolled_back"}'; exit 0; fi
-  if [ "$FAKE_RECOVER" = "complete" ]; then echo '{"recovered": false, "state": "complete"}'; exit 0; fi
+  if [ "$FAKE_RECOVER" = "complete" ]; then echo '{"recovered": false, "state": "complete", "mine": true}'; exit 0; fi
+  if [ "$FAKE_RECOVER" = "other" ]; then echo '{"recovered": false, "state": "complete", "mine": false}'; exit 0; fi
   echo '{"recovered": false, "state": "none"}'; exit 0
 fi
 doc="$2"
@@ -106,7 +107,14 @@ esac
     expect(r.locked).toBeFalsy();
   });
 
-  it.skipIf(process.platform === "win32")("trusts recovery that finds a completed publish", async () => {
+  it.skipIf(process.platform === "win32")("does not take another insert's completed journal as this one", async () => {
+    process.env.FAKE_MODE = "none"; // this call timed out waiting for the lock
+    process.env.FAKE_RECOVER = "other";
+    const r = await runInsert(doc(), path.join(dir, "s.xlsx"), "B2", dir, "", 500);
+    expect(r.error).toBeTruthy();
+  });
+
+  it.skipIf(process.platform === "win32")("trusts recovery that finds this call's completed publish", async () => {
     process.env.FAKE_MODE = "none";
     process.env.FAKE_RECOVER = "complete";
     const r = await runInsert(doc(), path.join(dir, "s.xlsx"), "B2", dir, "", 500);
@@ -128,7 +136,7 @@ esac
     await fs.mkdir(journal, { recursive: true });
     try {
       expect(await hasInsertJournal(doc())).toBe(true);
-      expect(await runRecover(doc(), dir)).toBe("none");
+      expect(await runRecover(doc(), dir)).toEqual({ state: "none", mine: false });
     } finally {
       await fs.rm(journal, { recursive: true, force: true });
     }

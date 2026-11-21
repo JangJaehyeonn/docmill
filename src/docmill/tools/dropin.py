@@ -386,22 +386,24 @@ def _sha(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def _recover(document: Path) -> str:
+def _recover(document: Path) -> tuple[str, str | None]:
     """지난 삽입이 문서만 바꾸고 끊겼으면(문서는 새것, 출처 파일은 옛것) 두 파일을
-    이전으로 되돌린다.
+    이전으로 되돌린다. (상태, 저널을 쓴 호출의 완료 표시 경로)를 돌려준다.
 
     두 파일이 모두 새것(발행은 끝나고 정리 전에 끊김)이거나 그 뒤 문서가 다시 바뀌었으면
     손대지 않는다.
     """
     journal = _journal(document)
     if not journal.is_dir():
-        return "none"
+        return "none", None
     try:
         marks = json.loads((journal / "ready.json").read_text(encoding="utf-8"))
         doc_hash, prov_hash = str(marks["document"]), str(marks["provenance"])
-    except (OSError, ValueError, KeyError, TypeError):
+        caller = marks.get("caller")
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
         shutil.rmtree(journal, ignore_errors=True)  # journal incomplete: nothing was published
-        return "none"
+        return "none", None
+    owner = caller if isinstance(caller, str) else None
     prov = provenance_path(document)
     doc_new = document.is_file() and _sha(document.read_bytes()) == doc_hash
     prov_new = prov.is_file() and _sha(prov.read_bytes()) == prov_hash
@@ -415,24 +417,26 @@ def _recover(document: Path) -> str:
         _publish((journal / "document.bak").read_bytes(), document)
     shutil.rmtree(journal, ignore_errors=True)
     if rolled_back:
-        return "rolled_back"
-    return "complete" if doc_new and prov_new else "none"
+        return "rolled_back", owner
+    return ("complete" if doc_new and prov_new else "none"), owner
 
 
-def recover_insert(document: str) -> str:
+def recover_insert(document: str, receipt: str | None = None) -> str:
     """끊긴 삽입(문서만 바뀌고 출처 파일은 옛것)이 있으면 같은 잠금 안에서 두 파일을 되돌린다.
 
     studio가 `docmill insert-range`의 응답을 못 받았을 때(시간 초과 등) 곧바로 불러,
     출처 없는 표가 남은 문서를 사용자가 편집하기 전에 정리한다. 결과는 JSON 문자열
     (`recovered`: 되돌렸는지, `state`: `none`·`rolled_back`·`complete`)이다.
-    `complete`는 지난 삽입이 두 파일을 모두 발행한 뒤 정리 전에 끊긴 경우다.
+    `complete`는 지난 삽입이 두 파일을 모두 발행한 뒤 정리 전에 끊긴 경우다. receipt를 주면
+    `mine`은 그 `complete`가 같은 완료 표시 경로를 넘긴 호출(응답을 잃은 그 호출)의 것인지다.
     """
     try:
         with _document_lock(Path(document)):
-            state = _recover(Path(document))
+            state, owner = _recover(Path(document))
     except Exception as exc:  # recovery failures must not kill the caller
         return json.dumps({"error": f"{type(exc).__name__}: {exc}", "step": "recover"})
-    return json.dumps({"recovered": state == "rolled_back", "state": state})
+    mine = state == "complete" and receipt is not None and owner == str(Path(receipt))
+    return json.dumps({"recovered": state == "rolled_back", "state": state, "mine": mine})
 
 
 @contextlib.contextmanager
@@ -460,7 +464,11 @@ def _publish_pair(
     prov = provenance_path(document)
     if prov.is_file():
         (journal / "provenance.bak").write_bytes(prov.read_bytes())
-    marks = {"document": _sha(data), "provenance": _sha(sidecar)}
+    marks = {
+        "document": _sha(data),
+        "provenance": _sha(sidecar),
+        "caller": str(receipt) if receipt is not None else None,  # 어느 호출의 저널인지
+    }
     (journal / "ready.json").write_text(json.dumps(marks), encoding="utf-8")
     with _signals_deferred():
         _commit(document, data, original, sidecar)

@@ -482,7 +482,7 @@ async function editorConfig(
   if (/\.pptx$/i.test(file.rel) && (await hasInsertJournal(file.abs))) {
     // studio가 삽입 중에 꺼졌다면, 편집을 열기 전에 끊긴 삽입부터 정리한다.
     const root = await fs.realpath(opts.workspace);
-    const state = await withFileLock(file.rel, () => runRecover(file.abs, root));
+    const { state } = await withFileLock(file.rel, () => runRecover(file.abs, root));
     if (state === "failed") {
       return sendJson(res, 409, { error: "지난 범위 넣기를 정리하지 못해 열 수 없어요. 잠시 뒤 다시 열어 주세요." });
     }

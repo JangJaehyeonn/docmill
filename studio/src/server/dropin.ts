@@ -62,16 +62,28 @@ function run(cwd: string, args: string[], timeoutMs: number): Promise<{ ok: bool
 /** 복구 결과 상태: none(할 일 없음)·rolled_back(되돌림)·complete(지난 삽입이 다 발행됨)·failed. */
 export type RecoverState = "none" | "rolled_back" | "complete" | "failed";
 
-/** `docmill recover-insert` 로 끊긴 삽입을 문서 잠금 안에서 정리한다. */
-export async function runRecover(docAbs: string, cwd: string): Promise<RecoverState> {
-  const r = await run(cwd, ["recover-insert", docAbs], 30_000);
+/**
+ * `docmill recover-insert` 로 끊긴 삽입을 문서 잠금 안에서 정리한다.
+ * receipt를 주면 `mine` 은 정리한 저널이 그 완료 표시 경로를 넘긴 호출의 것인지다.
+ */
+export async function runRecover(
+  docAbs: string,
+  cwd: string,
+  receipt = "",
+): Promise<{ state: RecoverState; mine: boolean }> {
+  const args = ["recover-insert", docAbs];
+  if (receipt !== "") args.push("--receipt", receipt);
+  const r = await run(cwd, args, 30_000);
   try {
-    const state = (JSON.parse(r.stdout) as { state?: unknown }).state;
-    if (r.ok && (state === "none" || state === "rolled_back" || state === "complete")) return state;
+    const body = JSON.parse(r.stdout) as { state?: unknown; mine?: unknown };
+    const state = body.state;
+    if (r.ok && (state === "none" || state === "rolled_back" || state === "complete")) {
+      return { state, mine: body.mine === true };
+    }
   } catch {
     // fall through
   }
-  return "failed";
+  return { state: "failed", mine: false };
 }
 
 /**
@@ -92,7 +104,7 @@ export async function hasInsertJournal(docAbs: string): Promise<boolean> {
  * docmill 도구 `insert_range` 를 CLI(`docmill insert-range`)로 불러 범위를 문서에 표로 넣는다.
  *
  * `--receipt` 로 완료 표시 파일을 넘긴다. 응답을 잃으면(시간 초과 등) 곧바로 `docmill recover-insert` 로
- * 반쯤 발행된 삽입을 되돌린다. 이 호출의 완료 표시가 있거나 복구가 "다 발행됨"을 알리면 성공으로
+ * 반쯤 발행된 삽입을 되돌린다. 이 호출의 완료 표시가 있거나, 복구가 이 호출의 저널이 "다 발행됨"을 알리면 성공으로
  * 알려 다시 시도해도 표가 겹치지 않게 한다. 잠금을 기다리다 끝났으면 표시가 없어 실패다.
  * 복구도 실패하면 `locked` 를 붙여 편집기를 잠근 채 둔다.
  */
@@ -111,12 +123,13 @@ export async function runInsert(
     if (sheet !== "") args.push("--sheet", sheet); // keep the exact name: sheets may have edge spaces
     const r = await run(cwd, args, timeoutMs);
     if (r.ok) return parseInsert(r.stdout);
-    const state = await runRecover(docAbs, cwd);
+    const { state, mine } = await runRecover(docAbs, cwd, receipt);
     const published = await fs.stat(receipt).then(
       () => true,
       () => false,
     );
-    if (published || state === "complete") return { summary: LATE_SUMMARY };
+    // 다른 삽입의 저널이 complete로 정리됐어도 이 호출의 것이 아니면 성공으로 보지 않는다.
+    if (published || (state === "complete" && mine)) return { summary: LATE_SUMMARY };
     if (state === "failed") return { summary: "", error: RECOVER_FAILED, locked: true };
     return { summary: "", error: "범위를 문서에 넣지 못했어요." };
   } finally {
