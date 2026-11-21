@@ -35,11 +35,22 @@ export type EditorState = "loading" | "ready" | "unavailable";
 export function OfficeEditor(props: {
   path: string;
   onState: (state: EditorState) => void;
+  /** true 면 편집기 입력을 막는다 (범위를 이 문서에 넣는 동안 편집이 사라지지 않게). */
+  locked?: boolean;
 }) {
-  const { path, onState } = props;
+  const { path, onState, locked = false } = props;
   const holder = useRef<HTMLDivElement>(null);
   const notify = useRef(onState);
   notify.current = onState;
+
+  useEffect(() => {
+    const el = holder.current;
+    if (!el) return;
+    // inert 는 편집기 iframe 까지 포커스·입력을 막는다. 이미 포커스가 편집기 안이면 내보낸다.
+    el.inert = locked;
+    const focused = document.activeElement;
+    if (locked && focused instanceof HTMLElement && el.contains(focused)) focused.blur();
+  }, [locked]);
 
   useEffect(() => {
     let editor: DocEditor | null = null;
@@ -76,5 +87,14 @@ export function OfficeEditor(props: {
     };
   }, [path]);
 
-  return <div ref={holder} className="office-editor" />;
+  return (
+    <>
+      {locked && (
+        <p role="status" className="hint">
+          범위를 이 문서에 넣는 중이라 잠시 편집할 수 없어요.
+        </p>
+      )}
+      <div ref={holder} className="office-editor" aria-busy={locked || undefined} />
+    </>
+  );
 }

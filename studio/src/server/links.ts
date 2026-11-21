@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import path from "node:path";
 import { resolveInWorkspace } from "./workspace.js";
@@ -43,8 +44,33 @@ export function linkedFiles(provenance: string): string[] {
 }
 
 /**
+ * 출처 항목에 적힌 "읽은 원본의 판"(`source.read_version`, `sha256:<hex>`)을 원본 경로별로 모은다.
+ * 범위 넣기(FR-44)와 새로 고침이 실제로 읽은 바이트의 판이라, 읽은 뒤 원본이 바뀌었는지 알 수 있다.
+ */
+export function readVersions(provenance: string): Map<string, Set<string>> {
+  const found = new Map<string, Set<string>>();
+  let data: { numbers?: unknown };
+  try {
+    data = JSON.parse(provenance) as typeof data;
+  } catch {
+    return found;
+  }
+  if (!Array.isArray(data.numbers)) return found;
+  for (const n of data.numbers as { source?: { file?: unknown; read_version?: unknown } }[]) {
+    const file = n?.source?.file;
+    const version = n?.source?.read_version;
+    if (typeof file !== "string" || typeof version !== "string") continue;
+    const set = found.get(file) ?? new Set<string>();
+    set.add(version);
+    found.set(file, set);
+  }
+  return found;
+}
+
+/**
  * 문서와 연결된 원본 중 작업 폴더 안에 있는 파일의 상태를 돌려준다.
- * 원본이 출처 파일보다 나중에 저장됐으면 newer 가 true 다. 출처 파일이 없으면 빈 목록.
+ * 원본이 출처 파일보다 나중에 저장됐거나, 출처에 적힌 읽은 판과 지금 원본의 내용이 다르면 newer 가 true 다.
+ * 출처 파일이 없으면 빈 목록.
  */
 /** `docmill refresh-links` 와 같은 규칙으로 원본 경로를 푼다: 절대 경로는 그대로, 상대 경로는 작업 폴더 기준(없으면 문서 폴더 기준). */
 async function resolveSource(root: string, docAbs: string, file: string): Promise<string> {
@@ -87,11 +113,19 @@ export async function linkStatus(root: string, docAbs: string): Promise<LinkSour
     return [];
   }
   const out: LinkSource[] = [];
+  const read = readVersions(text);
   for (const file of linkedFiles(text)) {
     try {
       const rel = await resolveInWorkspace(root, await resolveSource(root, docAbs, file));
-      const info = await fs.stat(path.join(root, ...rel.split("/")));
-      out.push({ path: rel, version: `${info.mtimeMs}:${info.size}`, newer: info.mtimeMs > provTime });
+      const abs = path.join(root, ...rel.split("/"));
+      const info = await fs.stat(abs);
+      let newer = info.mtimeMs > provTime;
+      const recorded = read.get(file);
+      if (!newer && recorded) {
+        const now = `sha256:${createHash("sha256").update(await fs.readFile(abs)).digest("hex")}`;
+        newer = [...recorded].some((v) => v !== now);
+      }
+      out.push({ path: rel, version: `${info.mtimeMs}:${info.size}`, newer });
     } catch {
       // 작업 폴더 밖이거나 없는 원본은 알리지 않는다.
     }

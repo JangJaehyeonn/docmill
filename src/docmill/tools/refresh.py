@@ -22,6 +22,7 @@ import sys
 import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
@@ -104,7 +105,21 @@ def _shared_strings(parts: dict[str, bytes]) -> list[str]:
 def read_cells(xlsx: Path, sheet: str) -> dict[str, Any]:
     """엑셀 시트 하나의 셀 값(`C2` → 값)을 읽는다. 수식 셀은 저장된 결과 값을 쓴다."""
     try:
-        parts = Package.read(xlsx.read_bytes()).parts
+        data = xlsx.read_bytes()
+    except OSError as exc:
+        raise RefreshError("source", f"원본 엑셀을 읽지 못했다: {xlsx} ({exc})") from exc
+    return cells_from_bytes(data, sheet, xlsx)
+
+
+def source_digest(data: bytes) -> str:
+    """원본 파일 바이트의 판 표시(`sha256:<hex>`). 출처에 적어 두면 읽은 뒤 바뀐 원본을 알아챈다."""
+    return "sha256:" + hashlib.sha256(data).hexdigest()
+
+
+def cells_from_bytes(data: bytes, sheet: str, xlsx: Path) -> dict[str, Any]:
+    """이미 읽은 엑셀 바이트에서 시트 하나의 셀 값을 꺼낸다 (`xlsx`는 오류 문구용 경로)."""
+    try:
+        parts = Package.read(data).parts
         names = [
             s.get("name", "") for s in ET.fromstring(parts["xl/workbook.xml"]).iter(f"{_S}sheet")
         ]
@@ -207,6 +222,18 @@ def _value(src: dict[str, Any], table: Table | None, cells: dict[str, Any]) -> f
 # ---------------------------------------------------------------- shown numbers
 
 
+def number_digits(value: float) -> int:
+    """표시 소수 자릿수. 정수는 0, 소수는 유효 숫자 15자리 값이 사라지지 않을 만큼(최소 2자리).
+
+    `0.004` → 3, `0.0000004` → 7, `1200.5` → 2. 엑셀이 저장한 값을 그대로 보이게 한다.
+    """
+    if value == int(value):
+        return 0
+    text = format(Decimal(f"{value:.15g}"), "f")
+    decimals = text.split(".")[1].rstrip("0") if "." in text else ""
+    return max(2, len(decimals))
+
+
 def _display(number: float) -> int | float:
     return int(number) if number == int(number) else number
 
@@ -218,7 +245,8 @@ def _shown(src: dict[str, Any], value: float) -> tuple[float, dict[str, Any]]:
         return float(f"{value:.1f}"), src
     if agg == "count_distinct" or "digits" not in src:
         return value, src
-    digits = 0 if value == int(value) else 2
+    # 끌어다 놓은 칸은 값을 보존하는 자릿수, 보고서 집계는 보고서 자릿수(정수 0, 소수 2)를 쓴다.
+    digits = number_digits(value) if src.get("literal") else (0 if value == int(value) else 2)
     return float(f"{value:.{digits}f}"), {**src, "digits": digits}
 
 
@@ -298,10 +326,18 @@ def _shape_edits(
 ) -> list[tuple[int, int, str]]:
     """도형 하나의 숫자를 provenance 순서대로 짝지어, 바뀐 숫자의 글자 교체 목록을 만든다."""
     start, end = _shape_span(slide, shape, label)
-    tokens = _without_names(_tokens(slide, start, end), slide, start, end, items)
     edits: list[tuple[int, int, str]] = []
-    cursor = 0
+    plain: list[tuple[dict[str, Any], str | None]] = []
     for item, new_text in items:
+        if item["kind"] != "table":
+            plain.append((item, new_text))
+        elif new_text is not None:
+            edits.append(_cell_edit(slide, start, end, label, item, new_text))
+    if not plain:
+        return edits
+    tokens = _without_names(_tokens(slide, start, end), slide, start, end, plain)
+    cursor = 0
+    for item, new_text in plain:
         old = float(item["value"])
         while cursor < len(tokens) and not _same(tokens[cursor][2], old):
             cursor += 1
@@ -311,6 +347,31 @@ def _shape_edits(
             edits.append((tokens[cursor][0], tokens[cursor][1], new_text))
         cursor += 1
     return edits
+
+
+def _cell_edit(
+    slide: str, start: int, end: int, label: str, item: dict[str, Any], new_text: str
+) -> tuple[int, int, str]:
+    """표 칸의 숫자를 기록된 행·열로 찾아 글자 교체를 만든다 (같은 값의 다른 칸과 섞이지 않는다)."""
+    loc = item["location"]
+    row, column = int(loc.get("row", 0)), int(loc.get("column", 0))
+    fragment = slide[start:end]
+    rows = element_spans(fragment, lambda n, p: n == "tr")
+    if not 1 <= row <= len(rows):
+        raise RefreshError("locate", f"{label}의 {row}행을 찾지 못했다")
+    row_text = fragment[rows[row - 1].start : rows[row - 1].end]
+    cells = element_spans(row_text, lambda n, p: n == "tc")
+    if not 1 <= column <= len(cells):
+        raise RefreshError("locate", f"{label}의 {row}행 {column}열을 찾지 못했다")
+    base = start + rows[row - 1].start + cells[column - 1].start
+    cell_end = start + rows[row - 1].start + cells[column - 1].end
+    old = float(item["value"])
+    for at, stop, value in _tokens(slide, base, cell_end):
+        if _same(value, old):
+            return at, stop, new_text
+    raise RefreshError(
+        "locate", f"{label}의 {row}행 {column}열에서 숫자 {_display(old)}을(를) 찾지 못했다"
+    )
 
 
 def _point_edit(chart: str, series: int, point: int, new: str, label: str) -> tuple[int, int, str]:
@@ -371,15 +432,32 @@ class _Sources:
         self._document = document
         self._pairs = _pairs(numbers)
         self._cells: dict[tuple[str, str], dict[str, Any]] = {}
+        self._bytes: dict[str, bytes] = {}
         self._tables: dict[Pair, Table] = {}
+
+    def _read(self, file: str) -> bytes:
+        if file not in self._bytes:
+            path = _source_path(file, self._document)
+            try:
+                self._bytes[file] = path.read_bytes()
+            except OSError as exc:
+                raise RefreshError("source", f"원본 엑셀을 읽지 못했다: {path} ({exc})") from exc
+        return self._bytes[file]
+
+    def digest(self, file: str) -> str:
+        """이번 새로 고침에서 읽은 원본 바이트의 판 표시."""
+        return source_digest(self._read(file))
 
     def cells(self, file: str, sheet: str) -> dict[str, Any]:
         key = (file, sheet)
         if key not in self._cells:
-            self._cells[key] = read_cells(_source_path(file, self._document), sheet)
+            data = self._read(file)
+            self._cells[key] = cells_from_bytes(data, sheet, _source_path(file, self._document))
         return self._cells[key]
 
     def table(self, src: dict[str, Any]) -> Table | None:
+        if src.get("literal"):
+            return None  # 끌어다 놓은 단일 셀은 같은 범위의 보고서 집계와 섞지 않는다
         pair = self._pairs.get((src["file"], src["sheet"], src["range"]))
         if pair is None:
             return None
@@ -401,6 +479,9 @@ def _renewed(item: dict[str, Any], sources: _Sources) -> tuple[dict[str, Any], f
         new_src = {k: v for k, v in new_src.items() if k != "excluded_rows"}
         if table.excluded:
             new_src["excluded_rows"] = list(table.excluded)
+    if "read_version" in new_src:
+        # 읽은 원본의 판을 새로 적어 studio가 이 판을 기준으로 바뀐 원본을 알아채게 한다.
+        new_src = {**new_src, "read_version": sources.digest(src["file"])}
     new_item = {**item, "value": _display(shown), "source": new_src}
     text = _chart_text(shown) if item["kind"] == "chart" else _text(new_src, shown)
     return new_item, shown, text
@@ -563,12 +644,21 @@ def _commit(
         raise
 
 
-def _differs(shown: float, old: float) -> bool:
-    """보이는 값이 달라졌는지 (반올림한 값끼리 정확히 비교한다)."""
+def _differs(shown: float, old: float, *, literal: bool = False) -> bool:
+    """보이는 값이 달라졌는지 본다.
+
+    끌어다 놓은 셀 값(literal)은 원본 자릿수로 반올림한 값끼리 허용오차 없이 비교해
+    아주 작은 소수의 변경도 놓치지 않는다. 보고서 집계 값은 허용오차 안의 차이를 무시한다.
+    """
+    if literal:
+        return shown != old
     return abs(shown - old) > _TOLERANCE
 
 
 def _refresh(document: Path, run_id: str) -> dict[str, Any]:
+    from docmill.tools.dropin import _recover  # lazy: dropin imports this module
+
+    _recover(document)  # finish or undo an interrupted range insert before reading anything
     numbers = _load(document)
     sources = _Sources(document, numbers)
     renewed: list[dict[str, Any]] = []
@@ -577,7 +667,7 @@ def _refresh(document: Path, run_id: str) -> dict[str, Any]:
     for item in numbers:
         new_item, shown, text = _renewed(item, sources)
         renewed.append(new_item)
-        moved = _differs(shown, float(item["value"]))
+        moved = _differs(shown, float(item["value"]), literal=bool(item["source"].get("literal")))
         texts.append(text if moved else None)
         if moved:
             changes.append(

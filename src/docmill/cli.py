@@ -74,6 +74,73 @@ def refresh_links_command(path: str = typer.Argument(..., help="새 숫자로 �
     typer.echo(logged(refresh_links, ai_used=False)(path))
 
 
+@app.command("insert-range")
+def insert_range_command(
+    document: str = typer.Argument(..., help="표를 넣을 pptx 문서 경로"),
+    source: str = typer.Argument(..., help="원본 xlsx 경로"),
+    cell_range: str = typer.Argument(..., help="넣을 셀 범위 (예: A1:C16)"),
+    sheet: str = typer.Option("", "--sheet", help="범위를 읽을 시트 이름 (비우면 첫 시트)"),
+    receipt: str = typer.Option(
+        "", "--receipt", help="발행을 마치면 완료 표시를 쓸 파일 (studio가 응답을 잃었을 때 쓴다)"
+    ),
+) -> None:
+    """엑셀 셀 범위를 pptx에 표로 넣고 숫자 출처를 기록해 결과를 JSON으로 출력합니다. FR-44."""
+    import functools
+    import json
+
+    from docmill.runlog import logged
+    from docmill.tools.dropin import insert_range, insert_range_with_receipt
+
+    class _Failed(Exception):
+        """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
+
+    @functools.wraps(insert_range)
+    def failing_on_error(document: str, source: str, cell_range: str, sheet: str) -> str:
+        result = insert_range_with_receipt(
+            document, source, cell_range, sheet or None, receipt or None
+        )
+        if "error" in json.loads(result):
+            raise _Failed(result)
+        return result
+
+    try:
+        typer.echo(logged(failing_on_error, ai_used=False)(document, source, cell_range, sheet))
+    except _Failed as failed:
+        typer.echo(str(failed))  # studio reads the error JSON from stdout
+
+
+@app.command("recover-insert")
+def recover_insert_command(
+    document: str = typer.Argument(..., help="끊긴 삽입을 되돌릴 pptx 문서 경로"),
+    receipt: str = typer.Option(
+        "",
+        "--receipt",
+        help="응답을 잃은 insert-range에 넘긴 완료 표시 경로 (그 호출의 결과인지 확인)",
+    ),
+) -> None:
+    """끊긴 범위 넣기(문서만 바뀌고 출처는 옛것)를 되돌리고 결과를 JSON으로 출력합니다. FR-44."""
+    import functools
+    import json
+
+    from docmill.runlog import logged
+    from docmill.tools.dropin import recover_insert
+
+    class _Failed(Exception):
+        """도구가 오류 JSON을 돌려줬음을 실행 로그에 `error`로 남기기 위한 예외."""
+
+    @functools.wraps(recover_insert)
+    def failing_on_error(document: str) -> str:
+        result = recover_insert(document, receipt or None)
+        if "error" in json.loads(result):
+            raise _Failed(result)
+        return result
+
+    try:
+        typer.echo(logged(failing_on_error, ai_used=False)(document))
+    except _Failed as failed:
+        typer.echo(str(failed))  # studio reads the error JSON from stdout
+
+
 @app.command("mask-doc")
 def mask_doc_command() -> None:
     """stdin의 JSON 요청(문서 경로·메시지·이름·대응표)을 가려 JSON으로 출력합니다. FR-39."""

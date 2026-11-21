@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
-import { waitOfficeSynced } from "./officeSync";
+import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
@@ -14,6 +14,7 @@ import {
   type LinkChange,
   type LinkSource,
 } from "./links";
+import { DRAG_TYPE, canDropOn, isCellRange, type DraggedRange } from "./dropin";
 import { resolvePicked } from "./pick";
 import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
@@ -63,6 +64,14 @@ export function App() {
   const [linkAlerts, setLinkAlerts] = useState<Record<string, LinkSource[]>>({});
   const [linkResult, setLinkResult] = useState<LinkResult | null>(null);
   const [refreshing, setRefreshing] = useState<string | null>(null);
+  const [rangeText, setRangeText] = useState("");
+  const [sheetText, setSheetText] = useState("");
+  const [insertingInto, setInsertingInto] = useState<string | null>(null);
+  const [dropMessage, setDropMessage] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [keyTarget, setKeyTarget] = useState("");
+  const dragged = useRef<DraggedRange | null>(null);
+  const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
   const handledLinks = useRef<Handled>({});
   const picker = useRef<HTMLInputElement>(null);
@@ -313,6 +322,61 @@ export function App() {
     }
   };
 
+  // 편집기에 방금 한 편집이 파일에 닿도록 먼저 저장한다. 저장하지 못했으면 false.
+  const saveBefore = async (path: string): Promise<boolean> => {
+    if (!/\.(xlsx|pptx|docx)$/i.test(path)) return true;
+    const synced = await waitOfficeSynced(path, 15_000);
+    return synced && (await save(path)) !== "failed";
+  };
+
+  // 엑셀 탭에서 끌어 온 셀 범위를 놓은 탭의 문서에 표로 넣는다 (docmill 도구 insert_range).
+  const dropRange = async (target: string): Promise<void> => {
+    const from = dragged.current;
+    dragged.current = null;
+    setDropTarget(null);
+    if (!from || droppingRef.current) return;
+    const refusal = canDropOn(target);
+    if (refusal) {
+      setDropMessage(refusal);
+      return;
+    }
+    droppingRef.current = true;
+    let keepLocked = false; // 끊긴 삽입을 정리하지 못하면 편집기를 잠근 채 둔다
+    setInsertingInto(target); // 넣는 동안 대상 편집기 입력을 막는다
+    setDropMessage(`${baseName(from.source)}의 ${from.range}를 ${baseName(target)}에 넣는 중…`);
+    try {
+      if (!(await saveBefore(from.source)) || !(await saveBefore(target))) {
+        setDropMessage("열린 문서를 먼저 저장하지 못해 범위를 넣지 않았어요.");
+        return;
+      }
+      const res = await fetch("/api/insert-range", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ target, source: from.source, range: from.range, sheet: from.sheet }),
+      });
+      const body = (await res.json()) as { summary?: string; error?: string; locked?: boolean };
+      if (!res.ok || body.error) {
+        keepLocked = body.locked === true;
+        setDropMessage(body.error ?? "범위를 문서에 넣지 못했어요.");
+        return;
+      }
+      if (hasOfficePending(target)) {
+        // 넣는 사이 입력한 편집이 사라지지 않게 다시 불러오지 않는다.
+        setDropMessage(
+          `${baseName(target)}: ${body.summary ?? "범위를 넣었어요."} 넣는 동안 입력한 편집이 있어 화면은 그대로예요. 화면의 편집은 파일에 저장되지 않았으니, 탭을 닫았다 다시 열면 넣은 표가 보이는 대신 그 편집은 사라져요.`,
+        );
+        return;
+      }
+      reloadTab(target);
+      setDropMessage(`${baseName(target)}: ${body.summary ?? "범위를 넣었어요."}`);
+    } catch {
+      setDropMessage("범위를 문서에 넣지 못했어요.");
+    } finally {
+      droppingRef.current = false;
+      if (!keepLocked) setInsertingInto(null);
+    }
+  };
+
   return (
     <div className="app" onDragOver={(e) => e.preventDefault()} onDrop={onDrop}>
       <header className="topbar">
@@ -324,14 +388,32 @@ export function App() {
                 aria-selected={t.path === tabState.active}
                 title={t.path}
                 data-reloaded={reloads[t.path] ?? 0}
+                data-drop-target={dropTarget === t.path ? "true" : undefined}
                 onClick={() => setTabState((s) => openTab(s, t))}
+                onDragOver={(e) => {
+                  if (!dragged.current) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setDropTarget(t.path);
+                }}
+                onDragLeave={() => setDropTarget((d) => (d === t.path ? null : d))}
+                onDrop={(e) => {
+                  if (!dragged.current) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void dropRange(t.path);
+                }}
               >
                 {t.name}
               </button>
               <button
                 className="close"
                 aria-label={`탭 닫기: ${t.name}`}
-                onClick={() => setTabState((s) => closeTab(s, t.path))}
+                onClick={() => {
+                  setTabState((s) => closeTab(s, t.path));
+                  // 끊긴 삽입 때문에 잠근 편집기는 탭을 닫으면 풀린다 (다시 열 때 서버가 정리한다).
+                  setInsertingInto((cur) => (cur === t.path && !droppingRef.current ? null : cur));
+                }}
               >
                 ×
               </button>
@@ -365,6 +447,15 @@ export function App() {
           </button>
         </section>
       ))}
+
+      {dropMessage && (
+        <section role="status" aria-label="범위 넣기 결과" className="alert">
+          <p>{dropMessage}</p>
+          <button type="button" onClick={() => setDropMessage(null)}>
+            닫기
+          </button>
+        </section>
+      )}
 
       {linkResult && (
         <section role="status" aria-label="새 숫자로 고친 결과" className="alert">
@@ -469,6 +560,68 @@ export function App() {
                   저장
                 </button>
                 {saveMessage && <span className="hint">{saveMessage}</span>}
+                {/\.xlsx$/i.test(active.path) && (
+                  <span className="range-drag">
+                    <label>
+                      범위{" "}
+                      <input
+                        type="text"
+                        value={rangeText}
+                        placeholder="A1:C16"
+                        onChange={(e) => setRangeText(e.target.value)}
+                      />
+                    </label>
+                    <label>
+                      시트{" "}
+                      <input
+                        type="text"
+                        value={sheetText}
+                        placeholder="첫 시트"
+                        onChange={(e) => setSheetText(e.target.value)}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      draggable={isCellRange(rangeText)}
+                      title="PPT 탭으로 끌어다 놓으면 표로 들어가요"
+                      onDragStart={(e) => {
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText };
+                        e.dataTransfer.setData(DRAG_TYPE, JSON.stringify(dragged.current));
+                        e.dataTransfer.setData("text/plain", rangeText.trim());
+                        e.dataTransfer.effectAllowed = "copy";
+                      }}
+                      onDragEnd={() => {
+                        dragged.current = null;
+                        setDropTarget(null);
+                      }}
+                    >
+                      범위 끌기
+                    </button>
+                    <label>
+                      넣을 PPT 탭{" "}
+                      <select value={keyTarget} onChange={(e) => setKeyTarget(e.target.value)}>
+                        <option value="">선택</option>
+                        {tabState.tabs
+                          .filter((t) => /\.pptx$/i.test(t.path))
+                          .map((t) => (
+                            <option key={t.path} value={t.path}>
+                              {baseName(t.path)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={!isCellRange(rangeText) || keyTarget === ""}
+                      onClick={() => {
+                        dragged.current = { source: active.path, range: rangeText.trim(), sheet: sheetText };
+                        void dropRange(keyTarget);
+                      }}
+                    >
+                      범위 넣기
+                    </button>
+                  </span>
+                )}
               </div>
               {activeState === "unavailable" && (
                 <p role="status" className="alert">
@@ -478,6 +631,7 @@ export function App() {
               <OfficeEditor
                 key={`${active.path}#${reloads[active.path] ?? 0}`}
                 path={active.path}
+                locked={insertingInto === active.path}
                 onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
               />
             </>
