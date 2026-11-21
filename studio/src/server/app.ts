@@ -1,5 +1,5 @@
 import { promises as fs } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import http from "node:http";
 import path from "node:path";
 import {
@@ -345,8 +345,10 @@ async function exportDocument(
   type Reply = { path?: string; error?: string; needsConfirm?: boolean; failures?: string[]; checked?: string };
   const result = await withFileLock(file.rel, async (): Promise<Reply> => {
     // 점검은 잠금 안에서 내보내기 직전에 한다. 확인 뒤 내용이 바뀌었으면 다시 점검해 확인을 다시 받는다.
+    // 확인 기준은 내용 해시다: 같은 내용으로 다시 저장해 수정 시각만 바뀐 경우(확인 뒤 HWP 재저장 등)는
+    // 다시 묻지 않고, 실제로 내용이 바뀌었을 때만 다시 점검한다.
     const before = await fs.stat(file.abs);
-    const checked = `${before.mtimeMs}:${before.size}`;
+    const checked = createHash("sha256").update(await fs.readFile(file.abs)).digest("hex");
     if (body.confirmed !== true || body.checked !== checked) {
       const check = await runPreflight(file.abs, root);
       if (check.error) return { error: check.error };
