@@ -219,15 +219,32 @@ def check_empty_titles(document: Path) -> dict[str, Any]:
     return _check(EMPTY_TITLE, _status(found, WARN), found)
 
 
+_SIGN_BREAK = re.compile(r"[:：,;()\[\]]")
+
+
+def _title_before(text: str, end: int, words: int) -> tuple[str, str]:
+    """이름 앞 서명 구간(구분자 뒤 전체)과 보고용 끝 단어들(직함 단어 수만큼)을 돌려준다."""
+    chunk = _SIGN_BREAK.split(text[:end])[-1].strip()
+    return chunk, " ".join(chunk.split()[-words:])
+
+
 def check_title(segments: list[Segment], settings: UserSettings) -> dict[str, Any]:
-    """문서의 `직함 이름` 서명이 설정의 직함과 다르면 주의로 알린다 (FR-45)."""
-    pattern = re.compile(r"([^\s:：,;()\[\]]+)\s+" + re.escape(settings.name))
-    found = [
-        _entry(seg.location, f"{m.group(1)} {settings.name}")
-        for seg in segments
-        for m in pattern.finditer(seg.text)
-        if m.group(1) != settings.title
-    ]
+    """문서의 `직함 이름` 서명이 설정의 직함과 다르면 주의로 알린다 (FR-45).
+
+    공백이 있는 직함(`대표 이사`)도 전체 값으로 비교하고, 이름 뒤에 다른 글자가 이어지면
+    (`이진` → `이진우`) 다른 사람으로 보고 건너뛴다. 결과 문자열의 개인정보는 가린다.
+    """
+    title = " ".join(settings.title.split())
+    words = max(len(title.split()), 1)
+    pattern = re.compile(r"(?<=\s)" + re.escape(settings.name) + r"(?!\w)")
+    found = []
+    for seg in segments:
+        for m in pattern.finditer(seg.text):
+            chunk, shown = _title_before(seg.text, m.start(), words)
+            chunk = " ".join(chunk.split())
+            if not chunk or chunk == title or chunk.endswith(" " + title):
+                continue
+            found.append(_entry(seg.location, mask_privacy(f"{shown} {settings.name}")))
     return _check(TITLE_CHECK, _status(found, WARN), found)
 
 

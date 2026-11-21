@@ -39,3 +39,26 @@ def test_check_title_warns_on_different_title() -> None:
     assert wrong["status"] == "주의" and wrong["locations"]
     right = check_title([_seg("기안자: 대리 김민수"), _seg("김민수")], settings)
     assert right["status"] == "통과"
+
+
+def test_check_title_compares_spaced_title_whole() -> None:
+    settings = UserSettings(name="김민수", title="대표 이사")
+    right = check_title([_seg("기안자: 대표 이사 김민수")], settings)
+    assert right["status"] == "통과"
+    wrong = check_title([_seg("기안자: 전무 이사 김민수")], settings)
+    assert wrong["status"] == "주의"
+    assert wrong["locations"][0]["text"] == "전무 이사 김민수"
+
+
+def test_check_title_ignores_longer_name() -> None:
+    settings = UserSettings(name="이진", title="대리")
+    result = check_title([_seg("기안자: 과장 이진우")], settings)
+    assert result["status"] == "통과"
+    assert check_title([_seg("기안자: 과장 이진")], settings)["status"] == "주의"
+
+
+def test_check_title_masks_privacy_in_result() -> None:
+    settings = UserSettings(name="김민수", title="대리")
+    result = check_title([_seg("연락처 alice@example.com 김민수")], settings)
+    assert result["status"] == "주의"
+    assert "alice@example.com" not in json.dumps(result, ensure_ascii=False)
