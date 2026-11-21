@@ -1,4 +1,4 @@
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -20,6 +20,16 @@ describe("settings", () => {
     expect((await readSettings(ws)).approval_line).toEqual(["기안자", "팀장"]);
     const file = JSON.parse(await readFile(path.join(ws, ".docmill", "settings.json"), "utf-8"));
     expect(file.department).toBe("영업팀");
+  });
+
+  it("동시에 저장해도 실패하지 않고, 실패한 저장은 임시 파일을 남기지 않는다", async () => {
+    const ws = await mkdtemp(path.join(os.tmpdir(), "settings-"));
+    await Promise.all([writeSettings(ws, { name: "가" }), writeSettings(ws, { name: "나" })]);
+    expect(await readdir(path.join(ws, ".docmill"))).toEqual(["settings.json"]);
+    const blocked = await mkdtemp(path.join(os.tmpdir(), "settings-"));
+    await mkdir(path.join(blocked, ".docmill", "settings.json"), { recursive: true });
+    await writeSettings(blocked, { name: "가" }).catch(() => undefined);
+    expect(await readdir(path.join(blocked, ".docmill"))).toEqual(["settings.json"]);
   });
 
   it("에이전트 입력에 부서와 결재 라인이 들어간다", () => {

@@ -31,7 +31,10 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
   useEffect(() => {
     let stopped = false;
     fetch("/api/settings")
-      .then((r) => r.json() as Promise<Loaded>)
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`settings ${r.status}`);
+        return (await r.json()) as Loaded;
+      })
       .then((s) => {
         if (stopped) return;
         setDepartment(s.department ?? "");

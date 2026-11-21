@@ -1,4 +1,5 @@
 import { promises as fs } from "node:fs";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 
 /** 작업 폴더 설정 파일(.docmill/settings.json)의 내용. */
@@ -56,9 +57,14 @@ export async function writeSettings(workspace: string, raw: unknown): Promise<Us
   const settings = normalizeSettings(raw);
   const file = settingsFile(workspace);
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(tmp, JSON.stringify(settings, null, 2) + "\n", "utf-8");
-  await fs.rename(tmp, file);
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`;
+  try {
+    await fs.writeFile(tmp, JSON.stringify(settings, null, 2) + "\n", { encoding: "utf-8", flag: "wx" });
+    await fs.rename(tmp, file);
+  } catch (err) {
+    await fs.rm(tmp, { force: true });
+    throw err;
+  }
   return settings;
 }
 

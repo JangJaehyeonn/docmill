@@ -242,6 +242,21 @@ describe("createApp", () => {
     }
   });
 
+  it("설정 저장은 JSON 객체만 받고, 깨진 본문으로 기존 설정을 지우지 않는다", async () => {
+    server = makeApp();
+    const port = await listen(server);
+    const url = `http://127.0.0.1:${port}/api/settings`;
+    const put = (body: string): Promise<Response> =>
+      fetch(url, { method: "PUT", headers: { "content-type": "application/json" }, body });
+    expect((await put(JSON.stringify({ department: "영업팀" }))).status).toBe(200);
+    for (const bad of ['{"department":', "null", "[]", '"x"']) {
+      expect((await put(bad)).status).toBe(400);
+    }
+    expect(((await (await fetch(url)).json()) as { department: string }).department).toBe("영업팀");
+    expect((await put("{}")).status).toBe(200);
+    expect(((await (await fetch(url)).json()) as { department: string }).department).toBe("");
+  });
+
   it("편집기가 열리지 않은 파일의 저장 요청은 409를 돌려준다", async () => {
     server = makeApp({ onlyofficeUrl: "http://127.0.0.1:1" });
     const port = await listen(server);
