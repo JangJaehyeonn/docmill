@@ -242,7 +242,7 @@ def check_title(segments: list[Segment], settings: UserSettings) -> dict[str, An
         for m in pattern.finditer(seg.text):
             chunk, shown = _title_before(seg.text, m.start(), words)
             chunk = " ".join(chunk.split())
-            if not chunk or chunk == title or chunk.endswith(" " + title):
+            if not chunk or chunk == title:
                 continue
             found.append(_entry(seg.location, mask_privacy(f"{shown} {settings.name}")))
     return _check(TITLE_CHECK, _status(found, WARN), found)

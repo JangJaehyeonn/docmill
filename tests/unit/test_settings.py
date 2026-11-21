@@ -50,6 +50,13 @@ def test_check_title_compares_spaced_title_whole() -> None:
     assert wrong["locations"][0]["text"] == "전무 이사 김민수"
 
 
+def test_check_title_warns_when_only_suffix_matches() -> None:
+    settings = UserSettings(name="김민수", title="이사")
+    assert check_title([_seg("기안자: 이사 김민수")], settings)["status"] == "통과"
+    wrong = check_title([_seg("기안자: 대표 이사 김민수")], settings)
+    assert wrong["status"] == "주의"
+
+
 def test_check_title_ignores_longer_name() -> None:
     settings = UserSettings(name="이진", title="대리")
     result = check_title([_seg("기안자: 과장 이진우")], settings)
