@@ -31,6 +31,7 @@ import { hasInsertJournal, isCellRange, runInsert, runRecover } from "./dropin.j
 import { linkStatus, runRefresh, sourcesInside } from "./links.js";
 import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } from "./mask.js";
 import { addRecent, listRecent } from "./recent.js";
+import { convertToPdf, failedChecks, failureLine, parseKind, runExportDoc } from "./export.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
@@ -127,6 +128,8 @@ function notifySaveWaiter(token: unknown, ok: boolean): void {
 
 /** 적용·취소를 기다리는 미리보기 (ID → 원본·사본). */
 const pendingPreviews = new Map<string, PendingPreview>();
+
+const NO_SERVER_ERROR = "문서 서버에 연결되지 않아 PDF로 내보낼 수 없어요.";
 
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -237,6 +240,7 @@ async function handleApi(
     return sendJson(res, 200, { sources: await linkStatus(root, file.abs) });
   }
   if (req.method === "POST" && pathname === "/api/links/refresh") return refreshLinks(opts, req, res);
+  if (req.method === "POST" && pathname === "/api/export") return exportDocument(opts, req, res);
   if (req.method === "POST" && pathname === "/api/insert-range") return insertRange(opts, req, res);
   if (req.method === "POST" && pathname === "/api/chat") return chat(opts, req, res);
   if (req.method === "POST" && pathname === "/api/preview/apply") {
@@ -306,6 +310,63 @@ async function refreshLinks(
     return r;
   });
   sendJson(res, result.error ? 502 : 200, { path: file.rel, ...result });
+}
+
+/**
+ * 문서를 PDF·폴더·메일 초안(.eml)으로 내보낸다 (FR-46). 먼저 보내기 전 점검을 돌려, 실패가 있으면
+ * 파일을 만들지 않고 `needsConfirm` 으로 확인을 요청한다. `confirmed` 로 다시 부르면 그대로 진행한다.
+ * 메일은 .eml 파일만 만들고 직접 보내지 않는다.
+ */
+async function exportDocument(
+  opts: AppOptions,
+  req: http.IncomingMessage,
+  res: http.ServerResponse,
+): Promise<void> {
+  if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+    return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+  }
+  const body = (await readBody(req)) as {
+    path?: unknown;
+    kind?: unknown;
+    folder?: unknown;
+    confirmed?: unknown;
+  };
+  const kind = parseKind(body.kind);
+  if (!kind) return sendJson(res, 400, { error: "내보내기 종류를 고르세요." });
+  const file = await resolveQuery(opts, res, new URLSearchParams({ path: String(body.path ?? "") }));
+  if (!file) return;
+  const root = await fs.realpath(opts.workspace);
+  const server = normalizeUrl(opts.onlyofficeUrl);
+  if (kind === "pdf" && !isOnlyofficeFile(file.rel)) {
+    return sendJson(res, 400, { error: "PDF 내보내기는 엑셀·PPT·워드 문서에서만 할 수 있어요." });
+  }
+  if (kind === "pdf" && !server) return sendJson(res, 409, { error: NO_SERVER_ERROR });
+  if (body.confirmed !== true) {
+    const check = await runPreflight(file.abs, root);
+    if (check.error) return sendJson(res, 502, { error: check.error });
+    const failures = failedChecks(check.checks);
+    if (failures.length > 0) {
+      return sendJson(res, 200, { needsConfirm: true, failures: failures.map(failureLine) });
+    }
+  }
+  const result = await withFileLock(file.rel, async () => {
+    if (kind !== "pdf") {
+      const folder = typeof body.folder === "string" ? body.folder : "";
+      return runExportDoc(file.abs, kind, root, folder);
+    }
+    const info = await fs.stat(file.abs);
+    const origin = `http://${opts.publicHost || "127.0.0.1"}:${req.socket.localPort ?? 0}`;
+    const sig = signPath(secretOf(opts), file.rel);
+    const r = await convertToPdf({
+      server: server as string,
+      fileUrl: `${origin}/onlyoffice/file?path=${encodeURIComponent(file.rel)}&sig=${sig}`,
+      // 변환 전용 키: 열린 편집 세션과 겹치지 않게 접두사를 붙인다.
+      key: "pdf" + documentKey(file.rel, info.mtimeMs, info.size),
+      abs: file.abs,
+    });
+    return r.path ? { path: path.relative(root, r.path).split(path.sep).join("/") } : r;
+  });
+  sendJson(res, result.error ? 502 : 200, { kind, ...result });
 }
 
 /** 엑셀 탭의 셀 범위를 pptx 문서에 표로 넣는다 (docmill 도구 insert_range, AI 없음). */
