@@ -25,7 +25,7 @@ jobs:
       issues: write
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: 인수 테스트가 머지된 Phase의 이슈를 ready로
@@ -56,7 +56,7 @@ jobs:
       issues: write
       actions: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Phase가 끝났으면 다음 Phase 시작
         env:
           GH_TOKEN: ${{ github.token }}
