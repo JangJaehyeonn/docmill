@@ -1,6 +1,6 @@
 [project]
 name = "docmill"
-version = "0.0.1"
+version = "0.1.0"
 description = "엑셀·PPT·워드 작업을 AI 채팅에서 처리하고, 성공한 작업을 레시피로 저장해 AI 없이 반복 실행하는 MCP 서버"
 readme = "README.md"
 license = "MIT"
