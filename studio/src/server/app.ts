@@ -34,6 +34,7 @@ import { addRecent, listRecent } from "./recent.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
+import { readSettings, settingsLines, writeSettings } from "./settings.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
 
 export interface AppOptions {
@@ -150,6 +151,20 @@ async function readBody(req: http.IncomingMessage): Promise<unknown> {
   }
 }
 
+/** 설정 저장 본문: JSON 객체만 받는다. 구문 오류나 객체가 아니면 null. */
+async function readJsonObject(req: http.IncomingMessage): Promise<Record<string, unknown> | null> {
+  const chunks: Buffer[] = [];
+  for await (const chunk of req) chunks.push(chunk as Buffer);
+  try {
+    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf-8"));
+    return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 async function handleApi(
   opts: AppOptions,
   req: http.IncomingMessage,
@@ -187,6 +202,18 @@ async function handleApi(
       throw err;
     }
   }
+  if (req.method === "GET" && pathname === "/api/settings") {
+    return sendJson(res, 200, await readSettings(await fs.realpath(opts.workspace)));
+  }
+  if (req.method === "PUT" && pathname === "/api/settings") {
+    if (!String(req.headers["content-type"] ?? "").startsWith("application/json")) {
+      return sendJson(res, 415, { error: "요청 형식이 맞지 않습니다." });
+    }
+    const body = await readJsonObject(req);
+    if (body === null) return sendJson(res, 400, { error: "설정 형식이 맞지 않습니다." });
+    const saved = await writeSettings(await fs.realpath(opts.workspace), body);
+    return sendJson(res, 200, saved);
+  }
   if (req.method === "GET" && pathname === "/api/onlyoffice") {
     return sendJson(res, 200, { url: normalizeUrl(opts.onlyofficeUrl) });
   }
@@ -201,7 +228,7 @@ async function handleApi(
   if (req.method === "GET" && pathname === "/api/preflight") {
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
-    return sendJson(res, 200, await runPreflight(file.abs));
+    return sendJson(res, 200, await runPreflight(file.abs, await fs.realpath(opts.workspace)));
   }
   if (req.method === "GET" && pathname === "/api/links") {
     const file = await resolveQuery(opts, res, query);
@@ -373,6 +400,7 @@ async function chat(
     tabs,
     active,
     documents: masked.documents.map((d, i) => ({ path: tabs[i] ?? d.path, text: d.text })),
+    settingsLines: settingsLines(await readSettings(root)),
   });
   res.writeHead(200, {
     "content-type": "application/x-ndjson; charset=utf-8",

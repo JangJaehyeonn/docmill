@@ -13,6 +13,8 @@ export interface ChatRequest {
   active: string | null;
   /** 개인정보를 가린 열린 문서 내용 (경로는 작업 폴더 기준 상대 경로). */
   documents?: { path: string; text: string }[];
+  /** 사용자 설정(부서·결재 라인 등)을 옮긴 줄. 에이전트 입력에 그대로 들어간다. */
+  settingsLines?: string[];
 }
 
 /** 클라이언트로 흘려보내는 채팅 이벤트. */
@@ -49,6 +51,7 @@ export function buildPrompt(workspace: string, req: ChatRequest): string {
     "열린 탭:",
     ...req.tabs.map((t) => `- ${path.basename(t)} → ${abs(t)}`),
     "사용자가 파일 이름으로 다른 탭을 가리키면 위 목록의 경로를 쓰고, 결과 파일은 새 파일로 저장하세요.",
+    ...(req.settingsLines?.length ? ["", ...req.settingsLines] : []),
     ...(req.documents ?? []).flatMap((d) => ["", `문서 내용 (${path.basename(d.path)}, 개인정보는 [주민번호1] 같은 자리표로 가림):`, d.text]),
     "",
     "사용자 메시지:",
