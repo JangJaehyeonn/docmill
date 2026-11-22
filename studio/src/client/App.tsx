@@ -549,7 +549,7 @@ export function App() {
             설정
           </button>
           <h2>작업 폴더 파일</h2>
-          <ul aria-label="작업 폴더 파일">
+          <ul aria-label="문서 파일 목록">
             {files.map((f) => (
               <li key={f}>
                 <button className="file" onClick={() => void openPath(f)}>
