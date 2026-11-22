@@ -483,3 +483,50 @@ def test_provenance_time_marks_the_source_version_read(tmp_path: Path) -> None:
     os.utime(source, ns=(1_000_000_000_000_000_000, 1_000_000_000_000_000_000))
     _run(doc)
     assert provenance_path(doc).stat().st_mtime_ns == source.stat().st_mtime_ns
+
+
+def test_future_dated_source_does_not_hide_a_later_save_of_another(tmp_path: Path) -> None:
+    import os
+    import shutil
+    import time
+
+    a, doc = make_doc(tmp_path)
+    b = tmp_path / "other.xlsx"
+    shutil.copy(a, b)
+    numbers = [
+        {**n, "source": {**n["source"], "file": str(b)}} if n["kind"] == "chart" else n
+        for n in _numbers(doc)
+    ]
+    provenance_path(doc).write_bytes(dump(numbers))
+    day = 86_400 * 1_000_000_000
+    os.utime(a, ns=(time.time_ns() - day, time.time_ns() - day))
+    os.utime(b, ns=(time.time_ns() + day, time.time_ns() + day))  # 시계가 어긋난 미래 시각
+    before, prov = doc.read_bytes(), provenance_path(doc).read_bytes()
+    assert _run(doc)["changes"] == []
+    assert doc.read_bytes() == before  # 변경이 없으면 문서·출처 내용은 그대로
+    assert provenance_path(doc).read_bytes() == prov
+    marked = provenance_path(doc).stat().st_mtime_ns
+    assert marked < b.stat().st_mtime_ns
+    a.write_bytes(a.read_bytes())  # 원본 A를 다시 저장한다
+    assert a.stat().st_mtime_ns > marked  # studio linkStatus가 A의 저장을 알아챈다
+
+
+def test_workspace_is_the_base_for_relative_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from docmill.tools.refresh import refresh_links_within
+
+    root, team, elsewhere = tmp_path / "ws", tmp_path / "ws" / "team", tmp_path / "elsewhere"
+    team.mkdir(parents=True)
+    elsewhere.mkdir()
+    source, doc = make_doc(team)
+    source.rename(root / "sales.xlsx")
+    numbers = [{**n, "source": {**n["source"], "file": "sales.xlsx"}} for n in _numbers(doc)]
+    provenance_path(doc).write_bytes(dump(numbers))
+    monkeypatch.chdir(elsewhere)  # 현재 폴더가 아니라 작업 폴더 기준으로 찾는다
+    out = json.loads(refresh_links_within(str(doc), str(root)))
+    assert "error" not in out, out
+    write_xlsx(team / "sales.xlsx", [("가팀", 1), ("나팀", 2)])  # 문서 폴더에도 다른 원본
+    out = json.loads(refresh_links_within(str(doc), str(root)))
+    assert out["step"] == "source"
+    assert "연결을 다시" in out["error"]

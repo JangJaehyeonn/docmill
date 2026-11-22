@@ -471,12 +471,14 @@ def _inside(path: Path, workspace: Path | None, step: str, what: str) -> Path:
 
 
 def _source_path(file: str, document: Path, workspace: Path | None) -> Path:
-    """출처의 원본 경로를 푼다: 절대 경로는 그대로, 상대 경로는 현재 폴더와 문서 폴더 기준.
+    """출처의 원본 경로를 푼다: 절대 경로는 그대로, 상대 경로는 작업 폴더와 문서 폴더 기준.
 
+    작업 폴더가 주어지면 그 폴더를, 없으면 현재 폴더를 작업 폴더 기준으로 쓴다 (studio와 같은 규칙).
     두 기준에 서로 다른 파일이 모두 있으면 어느 쪽이 원본인지 정할 수 없으므로 고르지 않는다.
     """
     path = Path(file)
-    bases = [path] if path.is_absolute() else [path, document.parent / path]
+    first = workspace / path if workspace is not None else path
+    bases = [path] if path.is_absolute() else [first, document.parent / path]
     found: list[Path] = []
     for candidate in bases:
         if candidate.is_file() and candidate.resolve() not in found:
@@ -502,6 +504,7 @@ class _Sources:
         self._workspace = workspace
         self._pairs = _pairs(numbers)
         self.read_at_ns = 0  # 읽은 원본 중 가장 늦은 수정 시각 (읽기 전에 잰다)
+        self._started_ns = time.time_ns()  # 원본을 읽기 시작하기 전 시각 (판 표시의 상한)
         self._cells: dict[tuple[str, str], dict[str, Any]] = {}
         self._bytes: dict[str, bytes] = {}
         self._paths: dict[str, Path] = {}
@@ -512,7 +515,10 @@ class _Sources:
             path = _source_path(file, self._document, self._workspace)
             self._paths[file] = path
             with contextlib.suppress(OSError):  # 읽기 전에 잰 수정 시각 (읽은 판 표시용)
-                self.read_at_ns = max(self.read_at_ns, path.stat().st_mtime_ns)
+                # 시계가 어긋나 미래 시각으로 저장된 원본이 있어도 읽기 시작 시각을 넘지 않게 해,
+                # 읽은 뒤 저장된 다른 원본의 수정 시각이 출처 파일보다 늦도록 한다.
+                mtime = min(path.stat().st_mtime_ns, self._started_ns)
+                self.read_at_ns = max(self.read_at_ns, mtime)
             try:
                 self._bytes[file] = path.read_bytes()
             except OSError as exc:
