@@ -3,6 +3,10 @@
 워드 문서에서 `할 일: … / 담당: … / 마감: YYYY-MM-DD` 형식의 항목을 추출해 마감일 순 xlsx로
 저장한다. 담당자나 마감일이 없는 항목은 이유와 함께 제외 목록으로 돌려준다. 추출·정렬은
 입력만으로 정해지며(시각·난수 없음), 엔진은 `DocumentTool` 어댑터로만 호출한다.
+
+표의 행마다 근거가 된 원본 문단 위치를 결과 파일 옆 `<결과 파일 이름>.provenance.json`의
+`sentences`에 남긴다 (FR-47). docx는 `word/document.xml`의 `w:p` 순번(0부터), hwp·hwpx는
+본문 줄 순번(0부터)이다.
 """
 
 from __future__ import annotations
@@ -12,19 +16,23 @@ import os
 import re
 import shutil
 import tempfile
+import zipfile
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree as ET
 
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.runlog import current_run_id, get_home, new_run_id
 from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
+from docmill.tools.provenance import dump, provenance_path
 
 HEADERS = ["할 일", "담당자", "마감일", "상태"]
 DEFAULT_STATUS = "대기"
 _FIELD = re.compile(r"^\s*(할 일|담당|마감)\s*[:：]\s*(.*?)\s*$")
+_W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
 
 
 class TaskError(Exception):
@@ -122,6 +130,60 @@ def _read_text(source: Path, workdir: Path) -> str:
     return text if isinstance(text, str) else ""
 
 
+def source_paragraphs(source: Path) -> list[str]:
+    """원본 문단 목록. docx는 `w:p` 순서(표 안 문단 포함), hwp·hwpx는 본문 줄 순서다."""
+    if is_hwp(source):
+        try:
+            return read_hwp_lines(source)
+        except HwpError as exc:
+            raise TaskError("read", str(exc)) from exc
+    try:
+        with zipfile.ZipFile(source) as archive:
+            root = ET.fromstring(archive.read("word/document.xml"))
+    except (zipfile.BadZipFile, KeyError, ET.ParseError, OSError) as exc:
+        raise TaskError("provenance", f"원본 문단을 읽지 못했다: {exc}") from exc
+    paragraphs: list[str] = []
+    for p in root.iter(f"{_W}p"):
+        parts = [
+            (e.text or "") if e.tag == f"{_W}t" else ("\t" if e.tag == f"{_W}tab" else "\n")
+            for e in p.iter()
+            if e.tag in (f"{_W}t", f"{_W}tab", f"{_W}br", f"{_W}cr")
+        ]
+        paragraphs.append("".join(parts))
+    return paragraphs
+
+
+def locate_tasks(tasks: list[Task], paragraphs: list[str]) -> list[int | None]:
+    """항목마다 그 항목이 적힌 원본 문단 순번(0부터)을 찾는다. 못 찾으면 None.
+
+    같은 내용의 항목이 여러 번 나오면 아직 짝짓지 않은 문단 중 문서 순서로 앞의 것을 고른다.
+    """
+    found = [(no, task) for no, text in enumerate(paragraphs) for task in parse_tasks(text)]
+    used: set[int] = set()
+    located: list[int | None] = []
+    for task in tasks:
+        index = next((i for i, (_, c) in enumerate(found) if i not in used and c == task), None)
+        if index is not None:
+            used.add(index)
+        located.append(found[index][0] if index is not None else None)
+    return located
+
+
+def task_sentences(kept: list[Task], source: Path, paragraphs: list[str]) -> list[dict[str, Any]]:
+    """표의 행마다 문장 출처 항목을 만든다. 1행은 머리글이라 항목은 2행부터다."""
+    last_col = chr(ord("A") + len(HEADERS) - 1)
+    sentences: list[dict[str, Any]] = []
+    for row, (task, paragraph) in enumerate(
+        zip(kept, locate_tasks(kept, paragraphs), strict=True), start=2
+    ):
+        origin: dict[str, Any] = {"file": str(source)}
+        if paragraph is not None:
+            origin["paragraph"] = paragraph
+        location = {"row": row, "range": f"A{row}:{last_col}{row}"}
+        sentences.append({"text": task.item, "location": location, "source": origin})
+    return sentences
+
+
 def _write_table(kept: list[Task], target: Path, workdir: Path) -> None:
     rows = [HEADERS] + [[t.item, t.owner, t.due, DEFAULT_STATUS] for t in kept]
     with get_tool(target, workdir) as grid:
@@ -155,12 +217,16 @@ def _generate(input: str, out_dir: str | None, run_id: str) -> dict[str, Any]:
             raise TaskError("extract", "담당자와 마감일이 모두 있는 항목이 없다", excluded)
         built = workdir / "tasks.xlsx"
         _write_table(kept, built, workdir)
+        sidecar = provenance_path(built)
+        sidecar.write_bytes(dump([], task_sentences(kept, source, source_paragraphs(source))))
         target_dir = Path(out_dir) if out_dir else get_home() / "outputs"
         target_dir.mkdir(parents=True, exist_ok=True)
         final = target_dir / f"{run_id}.xlsx"
+        _publish(sidecar, provenance_path(final))
         _publish(built, final)  # publish only after everything else succeeded
     return {
         "path": str(final),
+        "provenance": str(provenance_path(final)),
         "summary": f"할 일 {len(kept)}개를 마감일 순으로 저장, {len(excluded)}개 제외",
         "run_id": run_id,
         "tasks": [{"item": t.item, "owner": t.owner, "due": t.due} for t in kept],
@@ -172,7 +238,8 @@ def doc_to_task_table(input: str, out_dir: str | None = None) -> str:
     """워드 문서에서 할 일·담당자·마감일을 뽑아 마감일 순 xlsx로 저장한다.
 
     입력 형식은 `할 일: … / 담당: … / 마감: YYYY-MM-DD`이다. 담당자나 마감일이 없는 항목은
-    표에 넣지 않고 결과의 excluded(item·reason)에 돌려준다. out_dir을 주지 않으면
+    표에 넣지 않고 결과의 excluded(item·reason)에 돌려준다. 행마다 원본 문단 위치를 기록한
+    `<결과 파일 이름>.provenance.json` 경로는 provenance에 담긴다. out_dir을 주지 않으면
     DOCMILL_HOME/outputs에 저장한다. 결과는 JSON 문자열이며, 실패하면 error와 실패한
     단계(step)를 담는다.
     """

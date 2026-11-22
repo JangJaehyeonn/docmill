@@ -14,10 +14,14 @@
 그룹 이름은 집계 전에 `strip`으로 앞뒤 공백을 제거한다(`normalize`: "strip"). criteria와
 criteria_range·count_distinct 범위의 값 모두 이 규칙을 적용해 비교·계산한다.
 합계에 `digits`가 있으면 재계산한 합계를 그 소수 자릿수로 반올림해 문서 숫자와 비교한다.
+
+문장 출처(FR-47): 도구가 만든 문장(요약·상세 줄, 할 일 행)마다 `sentences` 목록에
+`text`(문장)·`location`(결과 문서 위치)·`source`(근거: 원본 파일과 셀 범위 또는 문단 순번)를 남긴다.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import posixpath
 import re
@@ -35,6 +39,7 @@ _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _RANGE = re.compile(r"\$?([A-Z]+)\$?(\d+)(?::\$?[A-Z]+\$?\d+)?")
 _CHART_REL = "/relationships/chart"
+_DIGITS = re.compile(r"\d[\d,]*(?:\.\d+)?")
 
 
 class ProvenanceError(Exception):
@@ -292,10 +297,100 @@ def collect(
     return numbers
 
 
-def dump(numbers: list[dict[str, Any]]) -> bytes:
-    """출처 목록을 provenance.json 바이트로 만든다. 같은 입력이면 바이트 단위로 같다."""
-    text = json.dumps({"numbers": numbers}, ensure_ascii=False, indent=2)
+def dump(numbers: list[dict[str, Any]], sentences: list[dict[str, Any]] | None = None) -> bytes:
+    """출처 목록을 provenance.json 바이트로 만든다. 같은 입력이면 바이트 단위로 같다.
+
+    sentences(FR-47 문장 출처)를 주면 `sentences` 키로 함께 저장한다.
+    """
+    data: dict[str, Any] = {"numbers": numbers}
+    if sentences is not None:
+        data["sentences"] = sentences
+    text = json.dumps(data, ensure_ascii=False, indent=2)
     return (text + "\n").encode("utf-8")
+
+
+def load_sentences(document: Path) -> list[dict[str, Any]] | None:
+    """문서 옆 출처 파일의 문장 출처(`sentences`)를 읽는다. 파일이나 키가 없으면 None.
+
+    출처 파일을 다시 쓰는 도구(새로 고침·범위 넣기)가 문장 출처를 잃지 않게 할 때 쓴다.
+    """
+    path = provenance_path(document)
+    if not path.is_file():
+        return None
+    data = json.loads(path.read_text(encoding="utf-8"))
+    sentences = data.get("sentences") if isinstance(data, dict) else None
+    return list(sentences) if isinstance(sentences, list) else None
+
+
+@dataclass(frozen=True)
+class SentenceSpec:
+    """도구가 만든 문장 하나와 그 근거. `text`는 문서에 보이는 문장 그대로다."""
+
+    text: str
+    source: dict[str, Any]
+
+
+def collect_sentences(
+    pptx: Path, plan: list[str], specs: dict[int, list[SentenceSpec]]
+) -> list[dict[str, Any]]:
+    """pptx에서 문장이 든 도형을 찾아 문장 출처 항목을 문서 순서대로 만든다 (FR-47).
+
+    specs는 슬라이드 순번(0부터) → 그 슬라이드 본문에 넣은 문장과 근거다.
+    """
+    with zipfile.ZipFile(pptx) as archive:
+        parts = slide_parts(archive)
+        if len(parts) != len(plan):
+            raise ProvenanceError(f"슬라이드 수가 계획({len(plan)})과 다르다: {len(parts)}")
+        sentences: list[dict[str, Any]] = []
+        for index, part in enumerate(parts):
+            wanted = specs.get(index, [])
+            if not wanted:
+                continue
+            root = ET.fromstring(archive.read(part))
+            shapes = [(s, _shape_text(s).split("\n")) for s in root.iter(f"{_P}sp")]
+            for spec in wanted:
+                shape = next((s for s, lines in shapes if spec.text in lines), None)
+                if shape is None:
+                    raise ProvenanceError(f"{part}에서 문장이 든 도형을 찾지 못했다: {spec.text!r}")
+                location = {"slide": _slide_number(part), "shape": _shape_id(shape)}
+                sentences.append({"text": spec.text, "location": location, "source": spec.source})
+    return sentences
+
+
+def sentence_key(text: str) -> str:
+    """숫자를 `#`로 바꾼 문장. 원본 값이 바뀌어 숫자만 달라진 문장을 같은 문장으로 본다."""
+    return _DIGITS.sub("#", text.strip())
+
+
+def _shape_lines(archive: zipfile.ZipFile) -> dict[tuple[int, str], list[str]]:
+    found: dict[tuple[int, str], list[str]] = {}
+    for part in slide_parts(archive):
+        slide = _slide_number(part)
+        for shape in ET.fromstring(archive.read(part)).iter(f"{_P}sp"):
+            c_nv = next(shape.iter(f"{_P}cNvPr"), None)
+            if c_nv is not None and c_nv.get("id"):
+                found[(slide, str(c_nv.get("id")))] = _shape_text(shape).split("\n")
+    return found
+
+
+def retext_sentences(pptx: bytes, sentences: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """숫자를 새로 고친 문서에 맞춰 문장 출처의 text를 고친다 (숫자만 바뀐 같은 문장).
+
+    같은 도형에서 숫자를 뺀 모양이 같은 줄을 찾으면 그 줄로 바꾸고, 못 찾으면 그대로 둔다.
+    """
+    with zipfile.ZipFile(io.BytesIO(pptx)) as archive:
+        lines = _shape_lines(archive)
+    renewed: list[dict[str, Any]] = []
+    for item in sentences:
+        loc = item.get("location", {}) if isinstance(item, dict) else {}
+        text = str(item.get("text", "")) if isinstance(item, dict) else ""
+        candidates = lines.get((int(loc.get("slide", 0)), str(loc.get("shape", ""))), [])
+        if text and text not in candidates:
+            match = next((c for c in candidates if sentence_key(c) == sentence_key(text)), None)
+            if match is not None:
+                item = {**item, "text": match}
+        renewed.append(item)
+    return renewed
 
 
 def load_chart_sources(document: Path) -> dict[tuple[str, int, int], dict[str, Any]] | None:

@@ -25,10 +25,12 @@ from docmill.inputschema import map_header
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.provenance import (
     ProvenanceError,
+    SentenceSpec,
     SheetTable,
     Sources,
     TextNumber,
     collect,
+    collect_sentences,
     dump,
     provenance_path,
     range_origin,
@@ -125,23 +127,61 @@ def plan_slides(count: int) -> list[str]:
     return {2: ["cover", "chart"], 3: ["cover", "summary", "chart"], 4: fixed}[count]
 
 
-def _detail_lines(groups: list[Group], index: int, parts: int) -> str:
+def _detail_chunk(groups: list[Group], index: int, parts: int) -> list[Group]:
     size = -(-len(groups) // parts)
-    chunk = groups[index * size : (index + 1) * size]
-    lines = [f"{g.name}: {_fmt(g.total)} ({g.share:.1f}%)" for g in chunk]
+    return groups[index * size : (index + 1) * size]
+
+
+def _detail_line(group: Group) -> str:
+    return f"{group.name}: {_fmt(group.total)} ({group.share:.1f}%)"
+
+
+def _detail_lines(groups: list[Group], index: int, parts: int) -> str:
+    lines = [_detail_line(g) for g in _detail_chunk(groups, index, parts)]
     return "\n".join(lines) or "추가 항목 없음"
 
 
-def _summary_text(groups: list[Group], value: str, group_by: str) -> str:
+def _top(groups: list[Group]) -> Group:
+    return max(groups, key=lambda g: (g.total, g.name))
+
+
+def _summary_lines(groups: list[Group], value: str, group_by: str) -> list[str]:
     total = sum(g.total for g in groups)
-    top = max(groups, key=lambda g: (g.total, g.name))
-    return "\n".join(
-        [
-            f"{value} 합계: {_fmt(total)}",
-            f"{group_by} 수: {len(groups)}개",
-            f"최대: {top.name} {_fmt(top.total)} ({top.share:.1f}%)",
-        ]
-    )
+    top = _top(groups)
+    return [
+        f"{value} 합계: {_fmt(total)}",
+        f"{group_by} 수: {len(groups)}개",
+        f"최대: {top.name} {_fmt(top.total)} ({top.share:.1f}%)",
+    ]
+
+
+def _summary_text(groups: list[Group], value: str, group_by: str) -> str:
+    return "\n".join(_summary_lines(groups, value, group_by))
+
+
+def sentence_specs(
+    groups: list[Group], args: dict[str, Any], sources: Sources
+) -> dict[int, list[SentenceSpec]]:
+    """슬라이드 순번(0부터) → 그 슬라이드의 요약·상세 문장과 근거 셀 범위 (FR-47)."""
+    found: dict[int, list[SentenceSpec]] = {}
+    parts = max(args["slides"] - 4, 1)
+    detail_no = 0
+    for index, kind in enumerate(plan_slides(args["slides"])):
+        if kind == "summary":
+            lines = _summary_lines(groups, args["value"], args["group_by"])
+            origins = [
+                sources.total(),
+                sources.group_count(),
+                sources.group_total(_top(groups).name),
+            ]
+            found[index] = [SentenceSpec(t, s) for t, s in zip(lines, origins, strict=True)]
+        elif kind == "detail":
+            chunk = _detail_chunk(groups, detail_no, parts)
+            found[index] = [
+                SentenceSpec(_detail_line(g), sources.group_total(g.name)) for g in chunk
+            ]
+            detail_no += 1
+    return found
 
 
 def _shown(number: float, digits: int) -> float:
@@ -170,7 +210,7 @@ def text_numbers(
         if kind == "summary":
             body = _summary_text(groups, args["value"], args["group_by"])
             total = sum(g.total for g in groups)
-            top = max(groups, key=lambda g: (g.total, g.name))
+            top = _top(groups)
             digits = 0 if total == int(total) else 2
             found[index] = [
                 TextNumber(kind, body, _shown(total, digits), sources.total(digits)),
@@ -178,8 +218,7 @@ def text_numbers(
                 *_group_numbers(kind, body, top, sources),
             ]
         elif kind == "detail":
-            size = -(-len(groups) // parts)
-            chunk = groups[detail_no * size : (detail_no + 1) * size]
+            chunk = _detail_chunk(groups, detail_no, parts)
             body = _detail_lines(groups, detail_no, parts)
             found[index] = [n for g in chunk for n in _group_numbers(kind, body, g, sources)]
             detail_no += 1
@@ -322,14 +361,16 @@ def _render_preview(built: Path, workdir: Path) -> Path | str:
 
 
 def _provenance(built: Path, groups: list[Group], args: dict[str, Any], sources: Sources) -> bytes:
-    """만든 pptx의 숫자마다 문서 위치와 원본 출처를 기록한 provenance.json 내용 (FR-21)."""
+    """만든 pptx의 숫자(FR-21)와 요약·상세 문장(FR-47)마다 문서 위치와 원본 출처를 기록한
+    provenance.json 내용."""
     names = [g.name for g in groups]
     plan = plan_slides(args["slides"])
     try:
         numbers = collect(built, plan, text_numbers(groups, args, sources), sources, names)
+        sentences = collect_sentences(built, plan, sentence_specs(groups, args, sources))
     except (ProvenanceError, KeyError, ValueError, zipfile.BadZipFile, ET.ParseError) as exc:
-        raise ReportError("provenance", f"숫자 출처를 기록하지 못했다: {exc}") from exc
-    return dump(numbers)
+        raise ReportError("provenance", f"출처를 기록하지 못했다: {exc}") from exc
+    return dump(numbers, sentences)
 
 
 def _generate(args: dict[str, Any], run_id: str) -> dict[str, Any]:
