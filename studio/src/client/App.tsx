@@ -198,6 +198,7 @@ export function App() {
 
   // 활성 탭 문서의 문장 출처(FR-47)를 불러온다. 출처 파일이 없으면 빈 목록이다.
   const activePath = tabState.active;
+  const activeReload = activePath ? (reloads[activePath] ?? 0) : 0;
   useEffect(() => {
     setSentenceRefs([]);
     setSentenceMessage(null);
@@ -211,7 +212,7 @@ export function App() {
     return () => {
       stopped = true;
     };
-  }, [activePath]);
+  }, [activePath, activeReload]);
 
   // 문장을 누르면 근거 원본 탭을 활성으로 만들고(없으면 연다) 근거 위치를 강조한다.
   const showSource = async (ref: SentenceRef): Promise<void> => {
