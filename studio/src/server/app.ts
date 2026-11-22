@@ -33,11 +33,11 @@ import { maskInput, registeredNames, unmaskFile, unmaskText, type MaskTable } fr
 import { addRecent, listRecent } from "./recent.js";
 import { convertToPdf, failedChecks, failureLine, parseKind, pdfTargetOf, runExportDoc, writePdf } from "./export.js";
 import { runPreflight } from "./preflight.js";
-import { sentenceRefs } from "./sentences.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
 import { fetchSuggestions } from "./suggest.js";
 import { readSettings, settingsLines, writeSettings } from "./settings.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
+import { sentenceRefs } from "./sentences.js";
 
 export interface AppOptions {
   workspace: string;
