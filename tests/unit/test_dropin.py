@@ -339,14 +339,14 @@ import os, sys
 import docmill.tools.refresh as refresh
 from docmill.tools.dropin import insert_range
 
-real = refresh._publish
+real = os.replace
 
-def publish(data, final):
-    if final.name.endswith(".provenance.json"):
+def replace(src, dst):
+    if str(dst).endswith(".provenance.json"):
         os._exit(9)  # hard kill: the document is published, the provenance is not
-    real(data, final)
+    real(src, dst)
 
-refresh._publish = publish
+refresh.os.replace = replace
 insert_range(sys.argv[1], sys.argv[2], "A1:C3")
 """
 

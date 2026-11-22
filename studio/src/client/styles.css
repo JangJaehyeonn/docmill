@@ -35,3 +35,18 @@ body { margin: 0; font-family: system-ui, "Noto Sans KR", sans-serif; color: #1f
 .suggestions { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px 0; }
 .range-drag { display: inline-flex; gap: 8px; align-items: center; margin-left: 12px; }
 .tabs [role="tab"][data-drop-target="true"] { outline: 2px dashed currentColor; }
+
+/* 새 숫자로 고치는 동안 편집기 입력을 막는 덮개 (FR-37) */
+.main.editing {
+  position: relative;
+}
+.editor-lock {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(255 255 255 / 0.6);
+  font-weight: 600;
+}

@@ -138,7 +138,14 @@ export function App() {
       for (const p of paths) {
         if (!tabsRef.current.tabs.some((t) => t.path === p)) {
           openChain.current = openChain.current.then(() => openPath(p)).catch(() => undefined);
-        } else if (!isHwpPath(p)) {
+          continue;
+        }
+        // 이미 열린 파일도 같은 줄에서 활성으로 만들어, 마지막 결과가 활성 탭이 되게 한다.
+        const tab = tabsRef.current.tabs.find((t) => t.path === p);
+        if (tab) {
+          openChain.current = openChain.current.then(() => setTabState((s) => openTab(s, tab)));
+        }
+        if (!isHwpPath(p)) {
           reloadTab(p);
         } else {
           // 저장하지 않은 편집이 있으면 자동으로 교체하지 않고 사용자에게 고르게 한다.
@@ -287,6 +294,9 @@ export function App() {
     if (refreshingRef.current) return; // 한 번에 하나만: 같은 문서를 겹쳐 고치지 않는다.
     refreshingRef.current = true;
     setRefreshing(doc);
+    // 고치는 동안 편집기 입력을 막는다: 저장 뒤에 친 글자가 편집기 교체로 사라지지 않게 한다.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement) focused.blur();
     try {
       if (/\.(xlsx|pptx|docx)$/i.test(doc)) {
         // 편집이 문서 서버에 다 닿았다고 확인되고 저장도 끝나야 숫자를 고친다 (편집기 교체로 편집이 사라지지 않게).
@@ -634,6 +644,11 @@ export function App() {
                 <p role="status" className="alert">
                   {NO_SERVER_NOTICE}. 문서 서버 주소(DOCMILL_ONLYOFFICE_URL)를 확인한 뒤 다시 열어 주세요.
                 </p>
+              )}
+              {refreshing === active.path && (
+                <div className="editor-lock" role="status">
+                  새 숫자로 고치는 중이에요. 끝날 때까지 편집할 수 없어요.
+                </div>
               )}
               <OfficeEditor
                 key={`${active.path}#${reloads[active.path] ?? 0}`}
