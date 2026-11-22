@@ -56,6 +56,17 @@ def suggest(path: str = typer.Argument(..., help="제안을 받을 문서 경로
     typer.echo(suggest_actions(path))
 
 
+@app.command("similar")
+def similar_command(
+    workspace: str = typer.Argument(..., help="작업 폴더"),
+    query: str = typer.Argument(..., help="시작할 작업 이름"),
+) -> None:
+    """작업 폴더에서 비슷한 예전 문서를 JSON으로 출력합니다 (studio가 쓴다). FR-48."""
+    from docmill.tools.similar import find_similar_documents
+
+    typer.echo(find_similar_documents(workspace, query))
+
+
 @app.command("preflight")
 def preflight_command(
     path: str = typer.Argument(..., help="점검할 문서 경로"),

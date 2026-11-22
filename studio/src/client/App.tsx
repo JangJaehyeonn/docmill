@@ -53,6 +53,8 @@ export function App() {
     () => (window as unknown as { __DOCMILL_FILES__?: string[] }).__DOCMILL_FILES__ ?? [],
   );
   const [recent, setRecent] = useState<string[]>([]);
+  const [taskName, setTaskName] = useState("");
+  const [similar, setSimilar] = useState<{ path: string; title: string }[] | null>(null);
   const [tabState, setTabState] = useState<TabState>({ tabs: [], active: null });
   const [error, setError] = useState<string | null>(null);
   const [loadFailed, setLoadFailed] = useState(false);
@@ -689,6 +691,38 @@ export function App() {
                 ))}
               </ul>
               {recent.length === 0 && <p className="hint">아직 연 파일이 없습니다.</p>}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const q = taskName.trim();
+                  if (q === "") return;
+                  getJson<{ similar: { path: string; title: string }[] }>(`/api/similar?q=${encodeURIComponent(q)}`)
+                    .then((r) => setSimilar(r.similar))
+                    .catch(() => setSimilar([]));
+                }}
+              >
+                <label>
+                  작업
+                  <input value={taskName} onChange={(e) => setTaskName(e.target.value)} />
+                </label>
+                <button type="submit">작업 시작</button>
+              </form>
+              {similar !== null && similar.length > 0 && (
+                <section role="region" aria-label="비슷한 문서">
+                  <h2>비슷한 문서</h2>
+                  <p className="hint">이걸로 시작할까요?</p>
+                  <ul>
+                    {similar.map((d) => (
+                      <li key={d.path}>
+                        <button className="file" onClick={() => void openPath(d.path)}>
+                          {d.path}
+                          {d.title ? ` — ${d.title}` : ""}
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+              )}
             </section>
           )}
           {/* 열린 한글 탭은 닫을 때까지 편집기를 유지하고, 활성 탭이 아니면 숨긴다. */}
