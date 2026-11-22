@@ -834,6 +834,11 @@ def _refresh(document: Path, run_id: str, workspace: Path | None = None) -> dict
                     "new": new_item["value"],
                 }
             )
+    if changes:  # 저장할 때 읽은 원본마다 그 바이트의 판을 적는다 (옛 항목 포함, 원본별 비교용)
+        renewed = [
+            {**n, "source": {**n["source"], "read_version": sources.digest(n["source"]["file"])}}
+            for n in renewed
+        ]
     original = document.read_bytes()
     new_document: bytes | None = None
     if changes:
@@ -884,6 +889,7 @@ def refresh_links_within(document: str, workspace: str | None) -> str:
     root = Path(workspace) if workspace else None
     try:
         _check_input(Path(document))
+        _inside(Path(document), root, "input", "문서")
         with _document_lock(Path(document)):
             result = _refresh(Path(document), run_id, root)
     except RefreshError as exc:

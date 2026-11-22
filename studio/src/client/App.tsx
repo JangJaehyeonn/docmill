@@ -653,7 +653,7 @@ export function App() {
               <OfficeEditor
                 key={`${active.path}#${reloads[active.path] ?? 0}`}
                 path={active.path}
-                locked={insertingInto === active.path}
+                locked={insertingInto === active.path || refreshing === active.path}
                 onState={(s) => setEditorStates((m) => ({ ...m, [active.path]: s }))}
               />
             </>
