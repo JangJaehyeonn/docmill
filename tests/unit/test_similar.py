@@ -42,7 +42,10 @@ def test_recent_first_and_stable(tmp_path: Path) -> None:
 
 
 def _xlsx(path: Path, first_cell: str, core_title: str | None = None) -> None:
-    book = f'<workbook xmlns="{_S}" xmlns:r="{_R}"><sheets><sheet name="S" r:id="rId1"/></sheets></workbook>'
+    book = (
+        f'<workbook xmlns="{_S}" xmlns:r="{_R}">'
+        '<sheets><sheet name="S" r:id="rId1"/></sheets></workbook>'
+    )
     rels = (
         '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
         '<Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>'
