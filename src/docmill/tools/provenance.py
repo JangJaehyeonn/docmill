@@ -364,7 +364,8 @@ def sentence_key(text: str) -> str:
 
 def _shape_lines(archive: zipfile.ZipFile) -> dict[tuple[int, str], list[str]]:
     found: dict[tuple[int, str], list[str]] = {}
-    for part in slide_parts(archive):
+    names = sorted(n for n in archive.namelist() if re.fullmatch(r"ppt/slides/slide\d+\.xml", n))
+    for part in names:
         slide = _slide_number(part)
         for shape in ET.fromstring(archive.read(part)).iter(f"{_P}sp"):
             c_nv = next(shape.iter(f"{_P}cNvPr"), None)

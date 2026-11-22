@@ -644,3 +644,14 @@ def test_journal_records_the_calling_receipt(
     monkeypatch.setattr(dropin, "_commit", spy)
     dropin.insert_range_with_receipt(str(pptx), str(xlsx), "C2", None, str(receipt))
     assert seen and seen[0]["caller"] == str(receipt)
+
+
+def test_insert_keeps_existing_sentence_provenance(tmp_path: Path) -> None:
+    pptx, xlsx = _workspace(tmp_path)
+    sentences = [{"text": "문장", "location": {"slide": 1, "shape": "2"}, "source": {"file": "x"}}]
+    provenance_path(pptx).write_text(
+        json.dumps({"numbers": [], "sentences": sentences}), encoding="utf-8"
+    )
+    assert "error" not in _run(pptx, xlsx, "A1:C3")
+    data = json.loads(provenance_path(pptx).read_text(encoding="utf-8"))
+    assert data["sentences"] == sentences and data["numbers"]
