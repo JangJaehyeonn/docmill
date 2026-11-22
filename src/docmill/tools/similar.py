@@ -13,12 +13,17 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from docmill.tools.compare import read_snapshot
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
+from docmill.tools.review import ReviewError
+
 MAX_SUGGESTIONS = 5
 MIN_SCORE = 0.5
 MAX_XML_BYTES = 20 * 1024 * 1024
 _EXTENSIONS = {".xlsx", ".pptx", ".docx", ".hwp", ".hwpx"}
 _SKIP_PREFIXES = (".", "~$")
 _TEXT_RUN = re.compile(r"<(?:w|a):t(?:\s[^>]*)?>([^<]*)")
+_CORE_TITLE = re.compile(r"<dc:title(?:\s[^>]*)?>([^<]*)</dc:title>")
 
 
 def _normalize(text: str) -> str:
@@ -58,15 +63,41 @@ def _first_text(xml: str, paragraph_end: str) -> str:
     return ""
 
 
-def document_title(path: Path) -> str:
-    """문서의 제목으로 볼 첫 글을 읽는다 (docx 첫 문단, pptx 첫 슬라이드 첫 글).
+def _xlsx_title(path: Path) -> str:
+    """문서 속성 title, 없으면 첫 시트(비어 있으면 다음 시트)의 첫 비어 있지 않은 셀."""
+    match = _CORE_TITLE.search(_read_member(path, "docProps/core.xml"))
+    title = html.unescape(match.group(1)).strip() if match else ""
+    if title:
+        return title
+    try:
+        cells = read_snapshot(path).cells
+    except (ReviewError, ValueError, SyntaxError):
+        return ""
+    return next((v.strip() for v in cells.values() if v.strip()), "")
 
-    읽지 못하면 빈 문자열."""
+
+def _hwp_title(path: Path) -> str:
+    try:
+        lines = read_hwp_lines(path)
+    except HwpError:
+        return ""
+    return next((line.strip() for line in lines if line.strip()), "")
+
+
+def document_title(path: Path) -> str:
+    """문서의 제목으로 볼 첫 글을 읽는다.
+
+    docx 첫 문단, pptx 첫 슬라이드 첫 글, xlsx 문서 속성 title 또는 첫 시트의 첫 셀,
+    hwp·hwpx 첫 문단. 읽지 못하면 빈 문자열."""
     suffix = path.suffix.lower()
     if suffix == ".docx":
         return _first_text(_read_member(path, "word/document.xml"), "</w:p>")
     if suffix == ".pptx":
         return _first_text(_read_member(path, "ppt/slides/slide1.xml"), "</a:p>")
+    if suffix == ".xlsx":
+        return _xlsx_title(path)
+    if is_hwp(path):
+        return _hwp_title(path)
     return ""
 
 

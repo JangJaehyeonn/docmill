@@ -3,6 +3,7 @@ import type { SaveResult } from "./chat";
 import { ChatPanel } from "./ChatPanel";
 import { ExportDialog } from "./ExportDialog";
 import { SettingsPanel } from "./SettingsPanel";
+import { createLatestGate } from "./similar";
 import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
@@ -79,6 +80,7 @@ export function App() {
   const dragged = useRef<DraggedRange | null>(null);
   const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
+  const similarGate = useRef(createLatestGate());
   const handledLinks = useRef<Handled>({});
   const picker = useRef<HTMLInputElement>(null);
   // 시작 주소의 ?open= 은 목록 조회가 처음 성공했을 때 한 번만 연다.
@@ -696,9 +698,15 @@ export function App() {
                   e.preventDefault();
                   const q = taskName.trim();
                   if (q === "") return;
+                  const seq = similarGate.current.begin();
+                  setSimilar(null);
                   getJson<{ similar: { path: string; title: string }[] }>(`/api/similar?q=${encodeURIComponent(q)}`)
-                    .then((r) => setSimilar(r.similar))
-                    .catch(() => setSimilar([]));
+                    .then((r) => {
+                      if (similarGate.current.isLatest(seq)) setSimilar(r.similar);
+                    })
+                    .catch(() => {
+                      if (similarGate.current.isLatest(seq)) setSimilar([]);
+                    });
                 }}
               >
                 <label>
