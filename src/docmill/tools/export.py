@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import json
 import mimetypes
+import os
 import shutil
+import tempfile
 from email.message import EmailMessage
 from pathlib import Path
 
@@ -32,7 +34,15 @@ def _mail_draft(doc: Path, out_dir: Path, subject: str) -> Path:
     )
     msg.set_boundary("docmill-export-boundary")  # 무작위 경계 대신 고정값: 같은 입력이면 같은 파일
     target = out_dir / f"{doc.stem}.eml"
-    target.write_bytes(bytes(msg))
+    # 임시 파일에 쓴 뒤 교체한다. 교체는 링크를 따라가지 않아 링크 대상 외부 파일이 보존된다.
+    fd, tmp = tempfile.mkstemp(dir=out_dir, prefix=f".{target.stem}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(bytes(msg))
+        os.replace(tmp, target)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
     return target
 
 

@@ -631,7 +631,7 @@ async function hwpFile(
   const data = await readBytes(req);
   if (!data) return sendJson(res, 413, { error: "파일이 너무 큽니다." });
   if (data.length === 0) return sendJson(res, 400, { error: "빈 파일은 저장할 수 없습니다." });
-  await replaceFile(file.abs, data);
+  await withFileLock(file.rel, () => replaceFile(file.abs, data));
   sendJson(res, 200, { ok: true, bytes: data.length });
 }
 

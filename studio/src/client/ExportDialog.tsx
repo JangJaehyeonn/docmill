@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { exportMessage, type ExportKind, type ExportReply } from "./exporter";
 
 interface Props {
@@ -22,6 +22,15 @@ export function ExportDialog({ path, saveBefore, onClose }: Props) {
   const [failures, setFailures] = useState<string[] | null>(null);
   const [checked, setChecked] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+
+  const firstRadio = useRef<HTMLInputElement | null>(null);
+
+  // 열릴 때 첫 라디오로 초점을 옮기고, 닫힐 때 연 버튼으로 되돌린다 (비모달이라 가두지 않는다).
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    firstRadio.current?.focus();
+    return () => opener?.focus();
+  }, []);
 
   const run = async (confirmed: boolean): Promise<void> => {
     if (!kind || busy) return;
@@ -59,11 +68,12 @@ export function ExportDialog({ path, saveBefore, onClose }: Props) {
         <>
           <fieldset disabled={busy}>
             <legend>내보낼 방식</legend>
-            {KINDS.map((k) => (
+            {KINDS.map((k, idx) => (
               <label key={k.kind}>
                 <input
                   type="radio"
                   name="export-kind"
+                  ref={idx === 0 ? firstRadio : undefined}
                   checked={kind === k.kind}
                   onChange={() => setKind(k.kind)}
                 />
