@@ -68,6 +68,21 @@ def preflight_command(
     typer.echo(logged(preflight, ai_used=False)(path, workspace=workspace or None))
 
 
+@app.command("export-doc")
+def export_doc_command(
+    path: str = typer.Argument(..., help="내보낼 문서 경로"),
+    kind: str = typer.Option(..., "--kind", help="mail(메일 초안 .eml) 또는 folder(폴더에 저장)"),
+    folder: str = typer.Option("", "--folder", help="저장할 폴더 (작업 폴더 안의 상대 경로)"),
+    workspace: str = typer.Option("", "--workspace", help="작업 폴더"),
+) -> None:
+    """문서를 폴더에 저장하거나 메일 초안(.eml)으로 만들고 결과를 JSON으로 출력합니다. FR-46."""
+    from docmill.runlog import logged
+    from docmill.tools.export import export_document
+
+    out = logged(export_document, ai_used=False)(path, kind, folder, "", workspace or None)
+    typer.echo(out)
+
+
 @app.command("refresh-links")
 def refresh_links_command(
     path: str = typer.Argument(..., help="새 숫자로 고칠 문서 경로"),

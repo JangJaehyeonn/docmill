@@ -87,6 +87,58 @@ describe("createApp", () => {
     },
   );
 
+  it.skipIf(process.platform === "win32")(
+    "내보내기 확인은 내용 기준이라 같은 내용으로 다시 저장해도 다시 묻지 않고, 내용이 바뀌면 다시 점검한다",
+    async () => {
+      server = makeApp();
+      const port = await listen(server);
+      const doc = path.join(lastWorkspace, "memo.docx");
+      writeFileSync(doc, "v1");
+      const bin = mkdtempSync(path.join(tmpdir(), "fake-docmill-"));
+      const log = path.join(bin, "calls.txt");
+      writeFileSync(
+        path.join(bin, "docmill"),
+        [
+          "#!/bin/sh",
+          `echo "$1" >> "${log}"`,
+          'if [ "$1" = preflight ]; then echo \'{"checks": [{"name": "개인정보", "status": "실패", "locations": [1]}]}\'; exit 0; fi',
+          'if [ "$1" = export-doc ]; then echo \'{"path": "내보내기/memo.docx"}\'; exit 0; fi',
+          "exit 1",
+          "",
+        ].join("\n"),
+        { mode: 0o755 },
+      );
+      const oldPath = process.env.PATH;
+      process.env.PATH = `${bin}${path.delimiter}${oldPath ?? ""}`;
+      const post = async (extra: Record<string, unknown>) => {
+        const r = await fetch(`http://127.0.0.1:${port}/api/export`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ path: "memo.docx", kind: "folder", ...extra }),
+        });
+        return (await r.json()) as { needsConfirm?: boolean; checked?: string; path?: string };
+      };
+      try {
+        const first = await post({});
+        expect(first.needsConfirm).toBe(true);
+        // 확인 직전 같은 내용으로 다시 저장된 경우 (수정 시각만 바뀜)
+        writeFileSync(doc, "v1");
+        utimesSync(doc, new Date(2031, 0, 1), new Date(2031, 0, 1));
+        const done = await post({ confirmed: true, checked: first.checked });
+        expect(done.path).toBe("내보내기/memo.docx");
+        expect(readFileSync(log, "utf-8").trim().split("\n")).toEqual(["preflight", "export-doc"]);
+        // 확인 뒤 내용이 바뀌면 다시 점검하고 확인을 다시 받는다
+        const again = await post({});
+        writeFileSync(doc, "v2");
+        const changed = await post({ confirmed: true, checked: again.checked });
+        expect(changed.needsConfirm).toBe(true);
+        expect(changed.checked).not.toBe(again.checked);
+      } finally {
+        process.env.PATH = oldPath;
+      }
+    },
+  );
+
   it("주소를 해석할 수 없는 요청에는 400을 돌려주고 서버는 계속 동작한다", async () => {
     server = makeApp();
     const port = await listen(server);
