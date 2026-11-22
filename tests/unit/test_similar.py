@@ -98,3 +98,23 @@ def test_hwpx_title_from_first_paragraph(tmp_path: Path, monkeypatch: pytest.Mon
 def test_hwp_title_from_real_document(tmp_path: Path) -> None:
     shutil.copyfile(FIXTURES / "meeting_1111.hwp", tmp_path / "x.hwp")
     assert document_title(tmp_path / "x.hwp").startswith("주간 회의록")
+
+
+def test_corrupt_xlsx_does_not_stop_search(tmp_path: Path) -> None:
+    bad = tmp_path / "bad.xlsx"
+    _xlsx(bad, "주간 보고 " * 50)
+    with zipfile.ZipFile(bad) as z:
+        parts = {i.filename: z.read(i) for i in z.infolist()}
+    with zipfile.ZipFile(bad, "w", zipfile.ZIP_DEFLATED) as z:
+        for name, data in parts.items():
+            z.writestr(name, data)
+    raw = bytearray(bad.read_bytes())
+    with zipfile.ZipFile(bad) as z:
+        info = z.getinfo("xl/worksheets/sheet1.xml")
+    start = info.header_offset + 30 + len(info.filename.encode()) + len(info.extra)
+    raw[start : start + info.compress_size] = b"\xff" * info.compress_size
+    bad.write_bytes(bytes(raw))
+    _docx(tmp_path / "ok.docx", "주간 보고")
+    assert document_title(bad) == ""
+    out = json.loads(find_similar_documents(str(tmp_path), "주간 보고"))
+    assert [i["path"] for i in out["similar"]] == ["ok.docx"]

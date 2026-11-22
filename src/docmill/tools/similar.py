@@ -10,6 +10,7 @@ import html
 import json
 import re
 import zipfile
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -50,7 +51,7 @@ def _read_member(path: Path, name: str) -> str:
     try:
         with zipfile.ZipFile(path) as archive, archive.open(name) as member:
             raw = member.read(MAX_XML_BYTES + 1)
-    except (OSError, KeyError, zipfile.BadZipFile):
+    except (OSError, KeyError, EOFError, zipfile.BadZipFile, zlib.error):
         return ""
     return "" if len(raw) > MAX_XML_BYTES else raw.decode("utf-8", "replace")
 
@@ -71,7 +72,7 @@ def _xlsx_title(path: Path) -> str:
         return title
     try:
         cells = read_snapshot(path).cells
-    except (ReviewError, ValueError, SyntaxError):
+    except (ReviewError, ValueError, SyntaxError, EOFError, zlib.error):
         return ""
     return next((v.strip() for v in cells.values() if v.strip()), "")
 
