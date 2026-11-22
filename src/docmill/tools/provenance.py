@@ -39,7 +39,7 @@ _R = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
 _REL = "{http://schemas.openxmlformats.org/package/2006/relationships}"
 _RANGE = re.compile(r"\$?([A-Z]+)\$?(\d+)(?::\$?[A-Z]+\$?\d+)?")
 _CHART_REL = "/relationships/chart"
-_DIGITS = re.compile(r"\d[\d,]*(?:\.\d+)?")
+_DIGITS = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
 
 class ProvenanceError(Exception):
@@ -358,7 +358,10 @@ def collect_sentences(
 
 
 def sentence_key(text: str) -> str:
-    """숫자를 `#`로 바꾼 문장. 원본 값이 바뀌어 숫자만 달라진 문장을 같은 문장으로 본다."""
+    """숫자를 `#`로 바꾼 문장. 원본 값이 바뀌어 숫자만 달라진 문장을 같은 문장으로 본다.
+
+    값의 부호(`-`)도 숫자에 포함해 양수↔음수로 바뀐 문장도 같은 문장으로 본다.
+    """
     return _DIGITS.sub("#", text.strip())
 
 

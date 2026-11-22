@@ -122,6 +122,16 @@ def test_retext_sentences_follows_refreshed_numbers(tmp_path: Path) -> None:
     assert sentence_key("최대: A팀 4,050 (39.9%)") == "최대: A팀 # (#%)"
 
 
+@pytest.mark.parametrize(
+    ("old", "new"), [("매출 합계: 100", "매출 합계: -100"), ("매출 합계: -100", "매출 합계: 100")]
+)
+def test_retext_sentences_follows_sign_change(tmp_path: Path, old: str, new: str) -> None:
+    pptx = _pptx(tmp_path / "r.pptx", _shape(3, [new]))
+    sentences = [{"text": old, "location": {"slide": 1, "shape": "3"}, "source": {}}]
+    assert [s["text"] for s in retext_sentences(pptx.read_bytes(), sentences)] == [new]
+    assert sentence_key(old) == sentence_key(new)
+
+
 # ── 할 일 표 ────────────────────────────────────────────────────────────
 
 
