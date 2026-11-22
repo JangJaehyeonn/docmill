@@ -361,8 +361,13 @@ def sentence_key(text: str) -> str:
     """숫자를 `#`로 바꾼 문장. 원본 값이 바뀌어 숫자만 달라진 문장을 같은 문장으로 본다.
 
     값의 부호(`-`)도 숫자에 포함해 양수↔음수로 바뀐 문장도 같은 문장으로 본다.
+    `항목: 값` 꼴이면 `:` 앞 항목명(예: `1팀`)의 숫자는 식별자로 남기고 값 부분만 바꾼다.
     """
-    return _DIGITS.sub("#", text.strip())
+    stripped = text.strip()
+    head, sep, value = stripped.partition(":")
+    if not sep:
+        return _DIGITS.sub("#", stripped)
+    return head + sep + _DIGITS.sub("#", value)
 
 
 def _shape_lines(archive: zipfile.ZipFile) -> dict[tuple[int, str], list[str]]:
@@ -385,16 +390,28 @@ def retext_sentences(pptx: bytes, sentences: list[dict[str, Any]]) -> list[dict[
     with zipfile.ZipFile(io.BytesIO(pptx)) as archive:
         lines = _shape_lines(archive)
     renewed: list[dict[str, Any]] = []
+    used: dict[tuple[int, str], set[int]] = {}
     for item in sentences:
         loc = item.get("location", {}) if isinstance(item, dict) else {}
         text = str(item.get("text", "")) if isinstance(item, dict) else ""
-        candidates = lines.get((int(loc.get("slide", 0)), str(loc.get("shape", ""))), [])
-        if text and text not in candidates:
-            match = next((c for c in candidates if sentence_key(c) == sentence_key(text)), None)
-            if match is not None:
-                item = {**item, "text": match}
+        shape = (int(loc.get("slide", 0)), str(loc.get("shape", "")))
+        taken = used.setdefault(shape, set())
+        match = _match_line(lines.get(shape, []), text, taken) if text else None
+        if match is not None:
+            taken.add(match[0])
+            item = {**item, "text": match[1]}
         renewed.append(item)
     return renewed
+
+
+def _match_line(candidates: list[str], text: str, taken: set[int]) -> tuple[int, str] | None:
+    """아직 쓰지 않은 줄 중 text와 같은 줄, 없으면 숫자만 다른 첫 줄(문단 순서)을 고른다."""
+    free = [(i, c) for i, c in enumerate(candidates) if i not in taken]
+    exact = next(((i, c) for i, c in free if c == text), None)
+    if exact is not None:
+        return exact
+    key = sentence_key(text)
+    return next(((i, c) for i, c in free if sentence_key(c) == key), None)
 
 
 def load_chart_sources(document: Path) -> dict[tuple[str, int, int], dict[str, Any]] | None:

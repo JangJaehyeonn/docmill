@@ -122,6 +122,28 @@ def test_retext_sentences_follows_refreshed_numbers(tmp_path: Path) -> None:
     assert sentence_key("최대: A팀 4,050 (39.9%)") == "최대: A팀 # (#%)"
 
 
+def test_retext_sentences_keeps_digits_in_item_names(tmp_path: Path) -> None:
+    pptx = _pptx(tmp_path / "r.pptx", _shape(3, ["1팀: 20 (33.3%)", "2팀: 40 (66.7%)"]))
+    loc = {"slide": 1, "shape": "3"}
+    sentences = [
+        {"text": "1팀: 10 (25.0%)", "location": loc, "source": {"criteria": "1팀"}},
+        {"text": "2팀: 30 (75.0%)", "location": loc, "source": {"criteria": "2팀"}},
+    ]
+    renewed = retext_sentences(pptx.read_bytes(), sentences)
+    assert [s["text"] for s in renewed] == ["1팀: 20 (33.3%)", "2팀: 40 (66.7%)"]
+    assert sentence_key("1팀: 10") != sentence_key("2팀: 10")
+
+
+def test_retext_sentences_skips_used_lines_with_same_key(tmp_path: Path) -> None:
+    pptx = _pptx(tmp_path / "r.pptx", _shape(3, ["합계: 5", "합계: 7"]))
+    loc = {"slide": 1, "shape": "3"}
+    sentences = [{"text": "합계: 1", "location": loc}, {"text": "합계: 2", "location": loc}]
+    assert [s["text"] for s in retext_sentences(pptx.read_bytes(), sentences)] == [
+        "합계: 5",
+        "합계: 7",
+    ]
+
+
 @pytest.mark.parametrize(
     ("old", "new"), [("매출 합계: 100", "매출 합계: -100"), ("매출 합계: -100", "매출 합계: 100")]
 )
