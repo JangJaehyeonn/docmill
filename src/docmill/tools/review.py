@@ -4,7 +4,8 @@
 
 - `출처 없음`: 문서 옆 `<문서 이름>.provenance.json`(FR-21)에 기록되지 않은 숫자.
   출처 파일에 문장 출처(`sentences`, FR-47)가 있으면 그 목록에 없는 pptx 본문 문장도
-  (제목·부제목 개체 틀과 표는 빼고, 숫자로 이미 걸린 문장은 한 번만) 같은 이유로 걸린다.
+  (제목·부제목 개체 틀과 표, 도구가 쓰는 고정 안내 문구는 빼고,
+  숫자로 이미 걸린 문장은 한 번만) 같은 이유로 걸린다.
 - `근거 없는 예측`: 예측·평가 표현('예상', '전망', '증가할', '최고' 등)이 있는데
   출처 있는 숫자가 없는 문장
 - `이번에 바뀜`: 기준 버전(baseline)과 비교해 바뀌거나 새로 생기거나 사라진 문단·그래프 값
@@ -27,6 +28,7 @@ from xml.etree import ElementTree as ET
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
 from docmill.tools.provenance import (
+    TOOL_NOTICES,
     _points,
     _rels,
     provenance_path,
@@ -282,6 +284,8 @@ def _sentences(text: str) -> list[str]:
 def _sentence_sourced(segment: Segment, sentence: str, prov: Provenance) -> bool:
     """문장 출처 검사가 필요 없거나(대상 아님) 출처 파일의 sentences에 있으면 True."""
     if prov.sentences is None or not segment.body or "slide" not in segment.location:
+        return True
+    if sentence.strip() in TOOL_NOTICES or segment.text.strip() in TOOL_NOTICES:
         return True
     loc = segment.location
     recorded = prov.sentences.get((int(loc["slide"]), str(loc["shape"])), set())

@@ -41,6 +41,10 @@ _RANGE = re.compile(r"\$?([A-Z]+)\$?(\d+)(?::\$?[A-Z]+\$?\d+)?")
 _CHART_REL = "/relationships/chart"
 _DIGITS = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
 
+# Fixed notices the tools write themselves (no source data behind them, FR-47).
+EMPTY_DETAIL = "추가 항목 없음"
+TOOL_NOTICES = frozenset({EMPTY_DETAIL})
+
 
 class ProvenanceError(Exception):
     """문서에서 숫자 위치를 찾지 못해 출처를 기록할 수 없을 때 발생한다."""

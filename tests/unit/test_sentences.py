@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from docmill.tools.provenance import (
+    EMPTY_DETAIL,
     ProvenanceError,
     SentenceSpec,
     SheetTable,
@@ -18,7 +19,7 @@ from docmill.tools.provenance import (
     retext_sentences,
     sentence_key,
 )
-from docmill.tools.report import Group, sentence_specs
+from docmill.tools.report import Group, _detail_lines, plan_slides, sentence_specs
 from docmill.tools.review import UNFOUNDED, UNSOURCED, build_review
 from docmill.tools.tasks import Task, locate_tasks, source_paragraphs, task_sentences
 
@@ -231,3 +232,13 @@ def test_review_accepts_sentence_whose_number_was_refreshed(tmp_path: Path) -> N
     # 다른 도형에 적힌 같은 문장은 출처로 치지 않는다.
     items = _reviewed(tmp_path, _shape(3, ["매출 합계: 45"]), [_recorded("매출 합계: 45", "9")])
     assert [i["text"] for i in items] == ["매출 합계: 45"]
+
+
+def test_review_skips_empty_detail_notice_for_seven_slides_one_group(tmp_path: Path) -> None:
+    groups = [Group("A팀", 15.0, 100.0)]
+    specs = sentence_specs(groups, {"slides": 7, "value": "매출", "group_by": "부서"}, _sources())
+    plan = plan_slides(7)
+    empty = [i for i, kind in enumerate(plan) if kind == "detail" and not specs.get(i)]
+    assert len(empty) == 2 and _detail_lines(groups, 1, 3) == EMPTY_DETAIL
+    shapes = _shape(3, ["매출 합계: 45"]) + _shape(4, [EMPTY_DETAIL])
+    assert _reviewed(tmp_path, shapes, [_recorded("매출 합계: 45")]) == []

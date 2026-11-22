@@ -24,6 +24,7 @@ from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.inputschema import map_header
 from docmill.runlog import current_run_id, get_home, new_run_id, output_stem
 from docmill.tools.provenance import (
+    EMPTY_DETAIL,
     ProvenanceError,
     SentenceSpec,
     SheetTable,
@@ -138,7 +139,7 @@ def _detail_line(group: Group) -> str:
 
 def _detail_lines(groups: list[Group], index: int, parts: int) -> str:
     lines = [_detail_line(g) for g in _detail_chunk(groups, index, parts)]
-    return "\n".join(lines) or "추가 항목 없음"
+    return "\n".join(lines) or EMPTY_DETAIL
 
 
 def _top(groups: list[Group]) -> Group:
