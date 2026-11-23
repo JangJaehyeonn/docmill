@@ -71,7 +71,7 @@ export function readVersions(provenance: string): Map<string, Set<string>> {
  * `docmill refresh-links` 와 같은 규칙으로 원본 경로를 푼다: 절대 경로는 그대로, 상대 경로는 작업 폴더 기준과
  * 문서 폴더 기준 중 있는 파일. 두 기준에 서로 다른 파일이 모두 있으면 어느 쪽인지 정할 수 없으므로 null.
  */
-async function resolveSource(root: string, docAbs: string, file: string): Promise<string | null> {
+export async function resolveSource(root: string, docAbs: string, file: string): Promise<string | null> {
   if (path.isAbsolute(file)) return path.resolve(file);
   const found: string[] = [];
   for (const candidate of [path.resolve(root, file), path.resolve(path.dirname(docAbs), file)]) {

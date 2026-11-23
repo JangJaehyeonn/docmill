@@ -32,7 +32,13 @@ from xml.sax.saxutils import escape
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.ooxml import OoxmlError, Package
-from docmill.tools.provenance import column_letter, column_number, dump, provenance_path
+from docmill.tools.provenance import (
+    column_letter,
+    column_number,
+    dump,
+    load_sentences,
+    provenance_path,
+)
 from docmill.tools.refresh import (
     RefreshError,
     _commit,
@@ -376,6 +382,14 @@ def _existing(document: Path) -> list[dict[str, Any]]:
     return numbers
 
 
+def _existing_sentences(document: Path) -> list[dict[str, Any]] | None:
+    """기존 출처 파일의 문장 출처(FR-47). 다시 쓸 때 잃지 않게 그대로 옮긴다."""
+    try:
+        return load_sentences(document)
+    except (OSError, ValueError, TypeError) as exc:
+        raise DropInError("provenance", f"기존 출처 파일을 읽지 못했다: {exc}") from exc
+
+
 def _journal(document: Path) -> Path:
     """발행 도중 끊겼을 때 되돌릴 이전 파일을 두는 폴더 (임시 폴더, 문서 경로별 하나)."""
     digest = hashlib.sha256(str(document.resolve()).encode("utf-8")).hexdigest()[:24]
@@ -534,7 +548,7 @@ def _insert(
     except (OoxmlError, zipfile.BadZipFile, ValueError) as exc:
         raise DropInError("document", f"문서에 표를 넣지 못했다: {exc}") from exc
     added = _numbers(grid, (r1, c1), (source, sheet, source_digest(raw)), slide, shape)
-    sidecar = dump([*_existing(document), *added])
+    sidecar = dump([*_existing(document), *added], _existing_sentences(document))
     _publish_pair(document, data, original, sidecar, receipt)
     return {
         "document": str(document),

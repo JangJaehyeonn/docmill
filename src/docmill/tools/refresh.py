@@ -22,6 +22,7 @@ import shutil
 import sys
 import tempfile
 import time
+import zipfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from decimal import Decimal
@@ -31,7 +32,7 @@ from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.ooxml import OoxmlError, Package, element_spans, ordered_targets
-from docmill.tools.provenance import dump, provenance_path
+from docmill.tools.provenance import dump, load_sentences, provenance_path, retext_sentences
 from docmill.tools.scope import shape_key
 
 _S = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -816,6 +817,17 @@ def _differs(shown: float, old: float, *, literal: bool = False) -> bool:
     return shown != old
 
 
+def _sentences(document: Path, new_document: bytes | None) -> list[dict[str, Any]] | None:
+    """출처 파일의 문장 출처(FR-47)를 잃지 않고, 숫자를 고친 문서의 문장으로 맞춘다."""
+    try:
+        sentences = load_sentences(document)
+        if sentences is None or new_document is None:
+            return sentences
+        return retext_sentences(new_document, sentences)
+    except (OSError, ValueError, TypeError, AttributeError, zipfile.BadZipFile) as exc:
+        raise RefreshError("provenance", f"문장 출처를 읽지 못했다: {exc}") from exc
+
+
 def _refresh(document: Path, run_id: str, workspace: Path | None = None) -> dict[str, Any]:
     from docmill.tools.dropin import _recover  # lazy: dropin imports this module
 
@@ -854,7 +866,9 @@ def _refresh(document: Path, run_id: str, workspace: Path | None = None) -> dict
             new_document = package.write({**package.parts, **changed})
         except (OoxmlError, ValueError, KeyError) as exc:
             raise RefreshError("locate", f"문서를 고치지 못했다: {exc}") from exc
-    _commit(document, new_document, original, dump(renewed) if renewed != numbers else None)
+    sentences = _sentences(document, new_document)
+    sidecar = dump(renewed, sentences) if renewed != numbers else None
+    _commit(document, new_document, original, sidecar)
     _mark_read(document, sources.read_at_ns)
     summary = (
         f"숫자 {len(changes)}곳을 새 원본 값으로 고쳤다"

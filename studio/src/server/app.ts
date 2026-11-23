@@ -38,6 +38,7 @@ import { fetchSimilar } from "./similar.js";
 import { fetchSuggestions } from "./suggest.js";
 import { readSettings, settingsLines, writeSettings } from "./settings.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
+import { sentenceRefs } from "./sentences.js";
 
 export interface AppOptions {
   workspace: string;
@@ -244,6 +245,12 @@ async function handleApi(
     if (!file) return;
     const root = await fs.realpath(opts.workspace);
     return sendJson(res, 200, { sources: await linkStatus(root, file.abs) });
+  }
+  if (req.method === "GET" && pathname === "/api/sentences") {
+    const file = await resolveQuery(opts, res, query);
+    if (!file) return;
+    const root = await fs.realpath(opts.workspace);
+    return sendJson(res, 200, { sentences: await sentenceRefs(root, file.abs) });
   }
   if (req.method === "POST" && pathname === "/api/links/refresh") return refreshLinks(opts, req, res);
   if (req.method === "POST" && pathname === "/api/export") return exportDocument(opts, req, res);

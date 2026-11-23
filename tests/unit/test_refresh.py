@@ -530,3 +530,23 @@ def test_workspace_is_the_base_for_relative_sources(
     out = json.loads(refresh_links_within(str(doc), str(root)))
     assert out["step"] == "source"
     assert "연결을 다시" in out["error"]
+
+
+def test_refresh_keeps_sentence_provenance_and_follows_new_numbers(tmp_path: Path) -> None:
+    source, doc = make_doc(tmp_path)
+    numbers = json.loads(provenance_path(doc).read_text(encoding="utf-8"))["numbers"]
+    sentences = [
+        {"text": line, "location": {"slide": 2, "shape": "5"}, "source": {"file": str(source)}}
+        for line in LINES
+    ]
+    provenance_path(doc).write_bytes(dump(numbers, sentences))
+    write_xlsx(source, [("가팀", 60), ("나팀", 300), ("가팀", 140), (None, None)])
+    assert _run(doc)["changes"]
+    kept = json.loads(provenance_path(doc).read_text(encoding="utf-8"))["sentences"]
+    assert [s["text"] for s in kept] == [
+        "매출 합계: 500",
+        "부서 수: 2개",
+        "최대: 나팀 300 (60.0%)",
+        "가팀: 200 (40.0%)",
+    ]
+    assert all(s["source"] == {"file": str(source)} for s in kept)

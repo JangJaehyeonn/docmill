@@ -2,7 +2,10 @@
 
 문서에서 사람이 확인해야 할 곳만 골라 위치와 이유로 돌려준다. 이유는 세 가지다.
 
-- `출처 없음`: 문서 옆 `<문서 이름>.provenance.json`(FR-21)에 기록되지 않은 숫자
+- `출처 없음`: 문서 옆 `<문서 이름>.provenance.json`(FR-21)에 기록되지 않은 숫자.
+  출처 파일에 문장 출처(`sentences`, FR-47)가 있으면 그 목록에 없는 pptx 본문 문장도
+  (제목·부제목 개체 틀과 표, 도구가 쓰는 고정 안내 문구는 빼고,
+  숫자로 이미 걸린 문장은 한 번만) 같은 이유로 걸린다.
 - `근거 없는 예측`: 예측·평가 표현('예상', '전망', '증가할', '최고' 등)이 있는데
   출처 있는 숫자가 없는 문장
 - `이번에 바뀜`: 기준 버전(baseline)과 비교해 바뀌거나 새로 생기거나 사라진 문단·그래프 값
@@ -24,7 +27,14 @@ from xml.etree import ElementTree as ET
 
 from docmill.runlog import current_run_id, new_run_id
 from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
-from docmill.tools.provenance import _points, _rels, provenance_path, slide_parts
+from docmill.tools.provenance import (
+    TOOL_NOTICES,
+    _points,
+    _rels,
+    provenance_path,
+    sentence_key,
+    slide_parts,
+)
 
 UNSOURCED = "출처 없음"
 UNFOUNDED = "근거 없는 예측"
@@ -57,6 +67,7 @@ _PREDICTION_WORDS = (
     "확실",
 )
 _TOLERANCE = 1e-9
+_TITLE_PLACEHOLDERS = {"title", "ctrTitle", "subTitle"}
 
 
 class ReviewError(Exception):
@@ -76,6 +87,7 @@ class Segment:
     text: str
     location: dict[str, Any]
     value: float | None = None
+    body: bool = False  # pptx 본문 도형의 문단 (제목·부제목·표 제외): 문장 출처 검사 대상
 
 
 @dataclass
@@ -84,6 +96,7 @@ class Provenance:
 
     text: dict[tuple[int, str], list[float]] = field(default_factory=dict)
     chart: dict[tuple[str, int, int], float] = field(default_factory=dict)
+    sentences: dict[tuple[int, str], set[str]] | None = None
 
 
 def _close(a: float, b: float) -> bool:
@@ -116,6 +129,13 @@ def _cnv_id(shape: ET.Element) -> str:
     return str(c_nv.get("id", "")) if c_nv is not None else ""
 
 
+def _is_body(shape: ET.Element) -> bool:
+    if shape.tag != f"{_P}sp":
+        return False
+    ph = next(shape.iter(f"{_P}ph"), None)
+    return ph is None or ph.get("type", "body") not in _TITLE_PLACEHOLDERS
+
+
 def _chart_segments(
     archive: zipfile.ZipFile, chart_part: str, location: dict[str, Any]
 ) -> list[Segment]:
@@ -144,10 +164,12 @@ def _slide_segments(archive: zipfile.ZipFile, part: str) -> list[Segment]:
         if shape.tag not in (f"{_P}sp", f"{_P}graphicFrame"):
             continue
         base = {"slide": slide, "shape": _cnv_id(shape)}
+        body = _is_body(shape)
         for p_no, paragraph in enumerate(shape.iter(f"{_A}p"), start=1):
             text = _paragraph_text(paragraph, f"{_A}t")
             if text:
-                segments.append(Segment("text", text, {**base, "paragraph": p_no}))
+                loc = {**base, "paragraph": p_no}
+                segments.append(Segment("text", text, loc, body=body))
         for chart in shape.iter(f"{_C}chart"):
             target = rels.get(chart.get(f"{_R}id", ""), "")
             if target:
@@ -220,7 +242,19 @@ def load_provenance(document: Path) -> Provenance:
         elif "slide" in loc and "shape" in loc:
             key = (int(loc["slide"]), str(loc["shape"]))
             found.text.setdefault(key, []).append(value)
+    if isinstance(data.get("sentences"), list):
+        found.sentences = _sentence_keys(data["sentences"])
     return found
+
+
+def _sentence_keys(items: list[Any]) -> dict[tuple[int, str], set[str]]:
+    keys: dict[tuple[int, str], set[str]] = {}
+    for item in items:
+        loc = item.get("location", {})
+        if "slide" in loc and "shape" in loc:
+            key = (int(loc["slide"]), str(loc["shape"]))
+            keys.setdefault(key, set()).add(sentence_key(str(item.get("text", ""))))
+    return keys
 
 
 # ── 규칙 ────────────────────────────────────────────────────────────────
@@ -247,6 +281,17 @@ def _sentences(text: str) -> list[str]:
     return [s for s in _SENTENCE_END.split(text) if s.strip()]
 
 
+def _sentence_sourced(segment: Segment, sentence: str, prov: Provenance) -> bool:
+    """문장 출처 검사가 필요 없거나(대상 아님) 출처 파일의 sentences에 있으면 True."""
+    if prov.sentences is None or not segment.body or "slide" not in segment.location:
+        return True
+    if sentence.strip() in TOOL_NOTICES or segment.text.strip() in TOOL_NOTICES:
+        return True
+    loc = segment.location
+    recorded = prov.sentences.get((int(loc["slide"]), str(loc["shape"])), set())
+    return sentence_key(sentence) in recorded or sentence_key(segment.text) in recorded
+
+
 def _text_items(segment: Segment, prov: Provenance) -> list[dict[str, Any]]:
     sourced = _sourced_values(segment, prov)
     items: list[dict[str, Any]] = []
@@ -255,10 +300,14 @@ def _text_items(segment: Segment, prov: Provenance) -> list[dict[str, Any]]:
         unsourced = [
             raw for raw, v in numbers if v is None or not any(_close(v, s) for s in sourced)
         ]
+        found: list[dict[str, Any]] = []
         if any(w in sentence for w in _PREDICTION_WORDS) and len(unsourced) == len(numbers):
-            items.append(_item(UNFOUNDED, sentence, segment.location))
+            found.append(_item(UNFOUNDED, sentence, segment.location))
         for raw in unsourced:
-            items.append(_item(UNSOURCED, raw, segment.location, context=sentence))
+            found.append(_item(UNSOURCED, raw, segment.location, context=sentence))
+        if not found and not _sentence_sourced(segment, sentence, prov):
+            found.append(_item(UNSOURCED, sentence, segment.location))
+        items += found
     return items
 
 

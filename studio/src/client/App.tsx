@@ -6,7 +6,15 @@ import { SettingsPanel } from "./SettingsPanel";
 import { createLatestGate } from "./similar";
 import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
-import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
+import {
+  beginSave,
+  endSave,
+  exportHwp,
+  focusHwpParagraph,
+  hasUnsavedHwpEdits,
+  isHwpPath,
+  notifyHwpSaved,
+} from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
 import {
   baseName,
@@ -19,6 +27,7 @@ import {
 } from "./links";
 import { DRAG_TYPE, canDropOn, isCellRange, type DraggedRange } from "./dropin";
 import { resolvePicked } from "./pick";
+import { parseSentenceRefs, sentenceAction, type SentenceRef, type SourceHighlight } from "./sentences";
 import { afterRefresh, readOpenParam } from "./startup";
 import { closeTab, openTab, type TabState } from "./tabs";
 
@@ -77,6 +86,9 @@ export function App() {
   const [keyTarget, setKeyTarget] = useState("");
   const [showSettings, setShowSettings] = useState(false);
   const [showExport, setShowExport] = useState(false);
+  const [sentenceRefs, setSentenceRefs] = useState<SentenceRef[]>([]);
+  const [highlight, setHighlight] = useState<SourceHighlight | null>(null);
+  const [sentenceMessage, setSentenceMessage] = useState<string | null>(null);
   const dragged = useRef<DraggedRange | null>(null);
   const droppingRef = useRef(false);
   const refreshingRef = useRef(false);
@@ -195,6 +207,42 @@ export function App() {
       clearInterval(timer);
     };
   }, [tabPaths]);
+
+  // 활성 탭 문서의 문장 출처(FR-47)를 불러온다. 출처 파일이 없으면 빈 목록이다.
+  const activePath = tabState.active;
+  const activeReload = activePath ? (reloads[activePath] ?? 0) : 0;
+  useEffect(() => {
+    setSentenceRefs([]);
+    setSentenceMessage(null);
+    if (!activePath) return;
+    let stopped = false;
+    getJson<unknown>(`/api/sentences?path=${encodeURIComponent(activePath)}`)
+      .then((body) => {
+        if (!stopped) setSentenceRefs(parseSentenceRefs(body));
+      })
+      .catch(() => undefined);
+    return () => {
+      stopped = true;
+    };
+  }, [activePath, activeReload]);
+
+  // 문장을 누르면 근거 원본 탭을 활성으로 만들고(없으면 연다) 근거 위치를 강조한다.
+  const showSource = async (ref: SentenceRef): Promise<void> => {
+    const action = sentenceAction(ref, tabsRef.current.tabs.map((t) => t.path));
+    if (action.kind === "missing") {
+      setSentenceMessage(action.message);
+      return;
+    }
+    setHighlight(action.highlight);
+    const tab = tabsRef.current.tabs.find((t) => t.path === action.highlight.path);
+    if (action.open || !tab) await openPath(action.highlight.path);
+    else setTabState((s) => openTab(s, tab));
+    const target = action.highlight.target;
+    if (target && isHwpPath(action.highlight.path)) {
+      // 한글 원본은 편집기 안에서도 근거 문단으로 캐럿과 화면을 옮긴다.
+      void focusHwpParagraph(action.highlight.path, target);
+    }
+  };
 
   const dismissLinks = (doc: string): void => {
     handledLinks.current = markHandled(doc, linkAlerts[doc] ?? [], handledLinks.current);
@@ -494,6 +542,23 @@ export function App() {
         </section>
       )}
 
+      {active && sentenceRefs.length > 0 && (
+        <section role="region" aria-label="문장 출처" className="sentences">
+          <h2>문장 출처</h2>
+          <p className="hint">문장을 누르면 근거가 된 원본 위치를 원본 탭에서 보여 줘요.</p>
+          <ul>
+            {sentenceRefs.map((s, i) => (
+              <li key={`${i}:${s.text}`}>
+                <button type="button" title={`근거 위치: ${s.label}`} onClick={() => void showSource(s)}>
+                  {s.text}
+                </button>
+              </li>
+            ))}
+          </ul>
+          {sentenceMessage && <p role="status">{sentenceMessage}</p>}
+        </section>
+      )}
+
       {showExport && active && (
         <ExportDialog
           key={active.path}
@@ -568,6 +633,16 @@ export function App() {
           role="tabpanel"
           data-editor-state={activeEditing ? activeState : undefined}
         >
+          {active && highlight && highlight.path === active.path && (
+            <div className="source-highlight-bar">
+              <p data-role="source-highlight" role="status" className="source-highlight">
+                근거 위치: {highlight.label} — “{highlight.text}”
+              </p>
+              <button type="button" onClick={() => setHighlight(null)}>
+                강조 닫기
+              </button>
+            </div>
+          )}
           {active && activeHwp ? (
             <>
               <div className="editor-bar">
