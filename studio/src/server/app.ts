@@ -34,6 +34,7 @@ import { addRecent, listRecent } from "./recent.js";
 import { convertToPdf, failedChecks, failureLine, parseKind, pdfTargetOf, runExportDoc, writePdf } from "./export.js";
 import { runPreflight } from "./preflight.js";
 import { isHwpFile, serveRhwp } from "./rhwp.js";
+import { fetchSimilar } from "./similar.js";
 import { fetchSuggestions } from "./suggest.js";
 import { readSettings, settingsLines, writeSettings } from "./settings.js";
 import { listFiles, resolveInWorkspace, WorkspaceError } from "./workspace.js";
@@ -228,6 +229,11 @@ async function handleApi(
     const file = await resolveQuery(opts, res, query);
     if (!file) return;
     return sendJson(res, 200, { suggestions: await fetchSuggestions(file.abs) });
+  }
+  if (req.method === "GET" && pathname === "/api/similar") {
+    const q = (query.get("q") ?? "").trim();
+    if (q === "") return sendJson(res, 400, { error: "작업 이름을 입력하세요." });
+    return sendJson(res, 200, { similar: await fetchSimilar(await fs.realpath(opts.workspace), q) });
   }
   if (req.method === "GET" && pathname === "/api/preflight") {
     const file = await resolveQuery(opts, res, query);
