@@ -103,4 +103,31 @@ describe("focusHwpParagraph", () => {
       false,
     );
   });
+
+  it("moves only to the latest request when several wait for the editor", async () => {
+    vi.useFakeTimers();
+    const calls: unknown[] = [];
+    const editor = {
+      focusTarget: async (t: unknown) => {
+        calls.push(t);
+        return { focused: true, page: 1 };
+      },
+    } as unknown as RhwpEditor;
+    try {
+      const first = focusHwpParagraph("late.hwp", { section: 0, paragraph: 1, length: 3 });
+      await vi.advanceTimersByTimeAsync(100);
+      const second = focusHwpParagraph("late.hwp", { section: 0, paragraph: 5, length: 4 });
+      await vi.advanceTimersByTimeAsync(150);
+      registerHwpEditor("late.hwp", editor);
+      await vi.advanceTimersByTimeAsync(400);
+      expect(await first).toBe(false);
+      expect(await second).toBe(true);
+      expect(calls).toEqual([
+        { kind: "body_paragraph", section: 0, paragraph: 5, charOffset: 0, length: 4 },
+      ]);
+    } finally {
+      unregisterHwpEditor("late.hwp", editor);
+      vi.useRealTimers();
+    }
+  });
 });

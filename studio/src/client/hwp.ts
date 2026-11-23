@@ -115,22 +115,28 @@ export interface ParagraphTarget {
   length: number;
 }
 
+/** 근거 문단 이동 요청 세대 번호. 더 새로운 요청이 오면 이전 요청은 캐럿을 옮기지 않는다. */
+let focusGeneration = 0;
+
 /**
  * 열린(또는 곧 열릴) 한글 편집기에서 근거 문단으로 캐럿과 화면을 옮긴다 (FR-47 근거 강조).
- * 편집기가 준비될 때까지 기다리고, 편집기가 이 기능을 지원하지 않으면 false.
+ * 편집기가 준비될 때까지 기다리고, 편집기가 이 기능을 지원하지 않거나
+ * 기다리는 동안 더 새로운 요청이 오면 false.
  */
 export async function focusHwpParagraph(
   path: string,
   target: ParagraphTarget,
   waitMs = 15_000,
 ): Promise<boolean> {
+  const generation = ++focusGeneration;
   const end = Date.now() + waitMs;
   let editor = open.get(path);
   while (!editor && Date.now() < end) {
     await new Promise((r) => setTimeout(r, 200));
+    if (generation !== focusGeneration) return false;
     editor = open.get(path);
   }
-  if (!editor) return false;
+  if (!editor || generation !== focusGeneration) return false;
   try {
     const result = await editor.focusTarget({
       kind: "body_paragraph",
