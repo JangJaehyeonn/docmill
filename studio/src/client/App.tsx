@@ -5,7 +5,15 @@ import { ExportDialog } from "./ExportDialog";
 import { SettingsPanel } from "./SettingsPanel";
 import { hasOfficePending, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
-import { beginSave, endSave, exportHwp, hasUnsavedHwpEdits, isHwpPath, notifyHwpSaved } from "./hwp";
+import {
+  beginSave,
+  endSave,
+  exportHwp,
+  focusHwpParagraph,
+  hasUnsavedHwpEdits,
+  isHwpPath,
+  notifyHwpSaved,
+} from "./hwp";
 import { NO_SERVER_NOTICE, OfficeEditor, type EditorState } from "./OfficeEditor";
 import {
   baseName,
@@ -225,6 +233,11 @@ export function App() {
     const tab = tabsRef.current.tabs.find((t) => t.path === action.highlight.path);
     if (action.open || !tab) await openPath(action.highlight.path);
     else setTabState((s) => openTab(s, tab));
+    const target = action.highlight.target;
+    if (target && isHwpPath(action.highlight.path)) {
+      // 한글 원본은 편집기 안에서도 근거 문단으로 캐럿과 화면을 옮긴다.
+      void focusHwpParagraph(action.highlight.path, target);
+    }
   };
 
   const dismissLinks = (doc: string): void => {

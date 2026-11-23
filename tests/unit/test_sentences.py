@@ -3,6 +3,7 @@
 import json
 import zipfile
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -242,3 +243,42 @@ def test_review_skips_empty_detail_notice_for_seven_slides_one_group(tmp_path: P
     assert len(empty) == 2 and _detail_lines(groups, 1, 3) == EMPTY_DETAIL
     shapes = _shape(3, ["매출 합계: 45"]) + _shape(4, [EMPTY_DETAIL])
     assert _reviewed(tmp_path, shapes, [_recorded("매출 합계: 45")]) == []
+
+
+def test_hwp_task_rows_record_editor_paragraph_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import docmill.tools.tasks as tasks
+
+    lines = ["회의록", "할 일: 견적서 보내기 / 담당: 김민수 / 마감: 2026-11-15", "표 안 줄"]
+    body = [
+        {"section": 1, "paragraph": 1, "text": "회의록"},
+        {
+            "section": 1,
+            "paragraph": 2,
+            "text": "할 일: 견적서 보내기 / 담당: 김민수 / 마감: 2026-11-15",
+        },
+    ]
+    monkeypatch.setattr(tasks, "read_hwp_paragraphs", lambda _src: body)
+    kept = [t for line in lines for t in tasks.parse_tasks(line)]
+    rows = task_sentences(kept, Path("/w/m.hwp"), lines)
+    assert rows[0]["source"]["paragraph"] == 1
+    assert rows[0]["source"]["hwp"] == {"section": 0, "paragraph": 1, "length": len(lines[1])}
+
+
+def test_hwp_targets_are_skipped_when_paragraphs_cannot_be_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import docmill.tools.tasks as tasks
+    from docmill.tools.hwp import HwpError
+
+    def broken(_src: Path) -> list[dict[str, Any]]:
+        raise HwpError("no engine")
+
+    monkeypatch.setattr(tasks, "read_hwp_paragraphs", broken)
+    lines = ["할 일: 견적서 보내기 / 담당: 김민수 / 마감: 2026-11-15"]
+    kept = tasks.parse_tasks(lines[0])
+    rows = task_sentences(kept, Path("/w/m.hwp"), lines)
+    assert rows[0]["source"] == {"file": "/w/m.hwp", "paragraph": 0}
+    docx = task_sentences(kept, Path("/w/m.docx"), lines)
+    assert "hwp" not in docx[0]["source"]

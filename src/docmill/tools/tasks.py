@@ -26,7 +26,7 @@ from xml.etree import ElementTree as ET
 from docmill.engines import get_tool
 from docmill.engines.base import DirectToolCaller, EngineResult
 from docmill.runlog import current_run_id, get_home, new_run_id
-from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines
+from docmill.tools.hwp import HwpError, is_hwp, read_hwp_lines, read_hwp_paragraphs
 from docmill.tools.provenance import dump, provenance_path
 
 HEADERS = ["할 일", "담당자", "마감일", "상태"]
@@ -169,9 +169,54 @@ def locate_tasks(tasks: list[Task], paragraphs: list[str]) -> list[int | None]:
     return located
 
 
+_HWP_TARGET_MAX = 4000  # rhwp focusTarget의 length 상한
+
+
+def hwp_targets(source: Path, paragraphs: list[str]) -> list[dict[str, int] | None]:
+    """한글 원본 줄마다 편집기에서 바로 찾아갈 본문 문단 위치(구역·문단, 0부터)를 찾는다.
+
+    줄 글자와 같은 본문 문단을 문서 순서로 짝짓는다. 표 안 줄처럼 본문 문단이 아니거나
+    문단 정보를 읽지 못하면 None이다 (위치 문구만 쓴다).
+    """
+    try:
+        body = read_hwp_paragraphs(source)
+    except HwpError:
+        return [None] * len(paragraphs)
+    used: set[int] = set()
+    found: list[dict[str, int] | None] = []
+    for line in paragraphs:
+        text = line.strip()
+        index = next(
+            (
+                i
+                for i, p in enumerate(body)
+                if i not in used and text != "" and str(p.get("text", "")).strip() == text
+            ),
+            None,
+        )
+        if index is None:
+            found.append(None)
+            continue
+        used.add(index)
+        para = body[index]
+        length = min(len(str(para.get("text", ""))), _HWP_TARGET_MAX)
+        found.append(
+            {
+                "section": int(para["section"]) - 1,
+                "paragraph": int(para["paragraph"]) - 1,
+                "length": length,
+            }
+        )
+    return found
+
+
 def task_sentences(kept: list[Task], source: Path, paragraphs: list[str]) -> list[dict[str, Any]]:
-    """표의 행마다 문장 출처 항목을 만든다. 1행은 머리글이라 항목은 2행부터다."""
+    """표의 행마다 문장 출처 항목을 만든다. 1행은 머리글이라 항목은 2행부터다.
+
+    한글 원본이면 편집기에서 근거 문단으로 바로 이동할 수 있게 `hwp`(구역·문단·길이)도 적는다.
+    """
     last_col = chr(ord("A") + len(HEADERS) - 1)
+    targets = hwp_targets(source, paragraphs) if is_hwp(source) else None
     sentences: list[dict[str, Any]] = []
     for row, (task, paragraph) in enumerate(
         zip(kept, locate_tasks(kept, paragraphs), strict=True), start=2
@@ -179,6 +224,9 @@ def task_sentences(kept: list[Task], source: Path, paragraphs: list[str]) -> lis
         origin: dict[str, Any] = {"file": str(source)}
         if paragraph is not None:
             origin["paragraph"] = paragraph
+            target = targets[paragraph] if targets is not None else None
+            if target is not None:
+                origin["hwp"] = target
         location = {"row": row, "range": f"A{row}:{last_col}{row}"}
         sentences.append({"text": task.item, "location": location, "source": origin})
     return sentences

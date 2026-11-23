@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   beginSave,
   endSave,
+  focusHwpParagraph,
   isCurrentHwpEditor,
   notifyHwpSaved,
   registerHwpEditor,
@@ -53,5 +54,53 @@ describe("hwp save helpers", () => {
     expect(e.notifySaved).not.toHaveBeenCalled();
     expect(await notifyHwpSaved({ path: "y.hwp", editor: e, changeSeq: 4 })).toBe(true);
     unregisterHwpEditor("y.hwp", e);
+  });
+});
+
+describe("focusHwpParagraph", () => {
+  it("moves the open editor to the source paragraph", async () => {
+    const calls: unknown[] = [];
+    const editor = {
+      focusTarget: async (t: unknown) => {
+        calls.push(t);
+        return { focused: true, page: 1 };
+      },
+    } as unknown as RhwpEditor;
+    registerHwpEditor("m.hwp", editor);
+    try {
+      expect(await focusHwpParagraph("m.hwp", { section: 0, paragraph: 2, length: 7 }, 0)).toBe(
+        true,
+      );
+      expect(calls).toEqual([
+        {
+          kind: "body_paragraph",
+          section: 0,
+          paragraph: 2,
+          charOffset: 0,
+          length: 7,
+        },
+      ]);
+    } finally {
+      unregisterHwpEditor("m.hwp", editor);
+    }
+  });
+
+  it("returns false when the editor cannot navigate or is not open", async () => {
+    const editor = {
+      focusTarget: async () => {
+        throw new Error("capability missing");
+      },
+    } as unknown as RhwpEditor;
+    registerHwpEditor("old.hwp", editor);
+    try {
+      expect(await focusHwpParagraph("old.hwp", { section: 0, paragraph: 0, length: 1 }, 0)).toBe(
+        false,
+      );
+    } finally {
+      unregisterHwpEditor("old.hwp", editor);
+    }
+    expect(await focusHwpParagraph("none.hwp", { section: 0, paragraph: 0, length: 1 }, 0)).toBe(
+      false,
+    );
   });
 });

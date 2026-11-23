@@ -107,3 +107,40 @@ export async function hasUnsavedHwpEdits(path: string): Promise<boolean> {
     return true;
   }
 }
+
+/** 근거 문단 이동 대상 (편집기 `focusTarget` 의 body_paragraph). */
+export interface ParagraphTarget {
+  section: number;
+  paragraph: number;
+  length: number;
+}
+
+/**
+ * 열린(또는 곧 열릴) 한글 편집기에서 근거 문단으로 캐럿과 화면을 옮긴다 (FR-47 근거 강조).
+ * 편집기가 준비될 때까지 기다리고, 편집기가 이 기능을 지원하지 않으면 false.
+ */
+export async function focusHwpParagraph(
+  path: string,
+  target: ParagraphTarget,
+  waitMs = 15_000,
+): Promise<boolean> {
+  const end = Date.now() + waitMs;
+  let editor = open.get(path);
+  while (!editor && Date.now() < end) {
+    await new Promise((r) => setTimeout(r, 200));
+    editor = open.get(path);
+  }
+  if (!editor) return false;
+  try {
+    const result = await editor.focusTarget({
+      kind: "body_paragraph",
+      section: target.section,
+      paragraph: target.paragraph,
+      charOffset: 0,
+      length: target.length,
+    });
+    return result.focused;
+  } catch {
+    return false; // older rhwp studio without target-navigation-v1
+  }
+}

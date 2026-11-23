@@ -2,7 +2,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { parseSentences, sentenceRefs, sourceLabel } from "./sentences.js";
+import { hwpTarget, parseSentences, sentenceRefs, sourceLabel } from "./sentences.js";
 
 describe("sourceLabel", () => {
   it("shows sheet and range for cells", () => {
@@ -19,20 +19,41 @@ describe("sourceLabel", () => {
   });
 });
 
+describe("hwpTarget", () => {
+  it("reads a hwp paragraph target and rejects malformed ones", () => {
+    expect(hwpTarget({ hwp: { section: 0, paragraph: 3, length: 12 } })).toEqual({
+      section: 0,
+      paragraph: 3,
+      length: 12,
+    });
+    expect(hwpTarget({ hwp: { section: 0, paragraph: -1, length: 1 } })).toBeNull();
+    expect(hwpTarget({ hwp: { section: 0, paragraph: 1, length: 5000 } })).toBeNull();
+    expect(hwpTarget({ paragraph: 2 })).toBeNull();
+  });
+});
+
 describe("parseSentences", () => {
   it("keeps document order and drops malformed items", () => {
     const text = JSON.stringify({
       numbers: [],
       sentences: [
-        { text: "매출 합계: 10", source: { file: "/a.xlsx", sheet: "S", range: "C2:C4" } },
+        {
+          text: "매출 합계: 10",
+          source: { file: "/a.xlsx", sheet: "S", range: "C2:C4" },
+        },
         { text: "", source: { file: "/a.xlsx" } },
         { text: "no source" },
         { text: "할 일", source: { file: "/m.docx", paragraph: 2 } },
       ],
     });
     expect(parseSentences(text)).toEqual([
-      { text: "매출 합계: 10", file: "/a.xlsx", label: "S!C2:C4" },
-      { text: "할 일", file: "/m.docx", label: "3번째 문단" },
+      {
+        text: "매출 합계: 10",
+        file: "/a.xlsx",
+        label: "S!C2:C4",
+        target: null,
+      },
+      { text: "할 일", file: "/m.docx", label: "3번째 문단", target: null },
     ]);
   });
   it("returns empty for broken or missing sentences", () => {
@@ -60,16 +81,25 @@ describe("sentenceRefs", () => {
     await fs.writeFile(doc, "x");
     const prov = {
       sentences: [
-        { text: "a", source: { file: path.join(root, "sales.xlsx"), range: "C2:C4" } },
-        { text: "b", source: { file: path.join(outside, "secret.xlsx"), range: "A1" } },
-        { text: "c", source: { file: path.join(root, "missing.xlsx"), range: "A1" } },
+        {
+          text: "a",
+          source: { file: path.join(root, "sales.xlsx"), range: "C2:C4" },
+        },
+        {
+          text: "b",
+          source: { file: path.join(outside, "secret.xlsx"), range: "A1" },
+        },
+        {
+          text: "c",
+          source: { file: path.join(root, "missing.xlsx"), range: "A1" },
+        },
       ],
     };
     await fs.writeFile(`${doc}.provenance.json`, JSON.stringify(prov));
     expect(await sentenceRefs(root, doc)).toEqual([
-      { text: "a", source: "sales.xlsx", label: "C2:C4" },
-      { text: "b", source: null, label: "A1" },
-      { text: "c", source: null, label: "A1" },
+      { text: "a", source: "sales.xlsx", label: "C2:C4", target: null },
+      { text: "b", source: null, label: "A1", target: null },
+      { text: "c", source: null, label: "A1", target: null },
     ]);
   });
 
