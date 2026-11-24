@@ -43,14 +43,19 @@ class RecipeError(Exception):
 class SessionRecorder:
     """한 세션에서 성공한 업무 도구 호출을 순서대로 모은다."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self, on_add: Callable[[str, dict[str, Any], str | None], None] | None = None
+    ) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.outputs: list[str | None] = []  # result `path` of each call
+        self._on_add = on_add  # e.g. persist the call for repeat detection (FR-49)
 
     def add(self, tool: str, args: dict[str, Any], output: str | None = None) -> None:
         """성공한 호출 하나와 그 결과 산출물 경로를 기록한다."""
         self.calls.append((tool, dict(args)))
         self.outputs.append(output)
+        if self._on_add is not None:
+            self._on_add(tool, dict(args), output)
 
 
 def _parse_success(value: Any) -> dict[str, Any] | None:
@@ -135,8 +140,15 @@ def _validate_name(name: str) -> str:
 
 def save_session_recipe(recorder: SessionRecorder, name: str) -> dict[str, Any]:
     """세션의 성공한 호출을 `name` 레시피로 저장하고 name·steps·path를 돌려준다."""
+    return write_recipe(name, recorder.calls, recorder.outputs)
+
+
+def write_recipe(
+    name: str, calls: list[tuple[str, dict[str, Any]]], outputs: list[str | None] | None
+) -> dict[str, Any]:
+    """호출 목록을 save_recipe와 같은 형식의 `name` 레시피로 저장하고 name·steps·path를 돌려준다."""
     clean = _validate_name(name)
-    steps, variables = _build(recorder.calls, recorder.outputs)
+    steps, variables = _build(calls, outputs)
     if not steps:
         raise RecipeError("steps", "저장할 성공한 도구 호출이 이 세션에 없다")
     document: dict[str, Any] = {"name": clean, "steps": steps}

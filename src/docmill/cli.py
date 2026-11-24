@@ -322,6 +322,29 @@ def recipes_show(
         typer.echo(f"열: {', '.join(columns)}")
 
 
+@recipes_app.command("suggest")
+def recipes_suggest(
+    accept_name: str | None = typer.Option(
+        None, "--accept", help="제안을 수락해 이 이름의 레시피로 저장합니다"
+    ),
+    pick: int = typer.Option(1, "--pick", help="수락할 제안 번호(1부터)"),
+) -> None:
+    """같은 순서로 3번 이상 반복한 작업을 레시피로 저장하자고 제안합니다. FR-49."""
+    import json
+
+    from docmill.learn import accept, suggest
+
+    if accept_name is None:
+        found = [s.to_dict() for s in suggest()]
+        typer.echo(json.dumps({"suggestions": found}, ensure_ascii=False, indent=2))
+        return
+    try:
+        saved = accept(accept_name, pick)
+    except RecipeError as exc:
+        raise _fail(exc) from exc
+    typer.echo(json.dumps(saved, ensure_ascii=False, indent=2))
+
+
 @recipes_app.command("delete")
 def recipes_delete(name: str = typer.Argument(..., help="삭제할 레시피 이름")) -> None:
     """레시피를 삭제합니다."""
