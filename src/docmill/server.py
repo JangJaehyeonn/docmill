@@ -12,8 +12,9 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from docmill import __version__
+from docmill.learn import call_logger
 from docmill.recipes import SessionRecorder, make_save_recipe, recording
-from docmill.runlog import logged
+from docmill.runlog import logged, new_run_id
 from docmill.runner import run_recipe
 from docmill.tools.compare import compare_versions
 from docmill.tools.contradictions import find_contradictions
@@ -159,7 +160,8 @@ def _log_every_tool(server: MCPServer, recorder: SessionRecorder) -> None:
 def build_server() -> MCPServer:
     """도구가 등록된 MCP 서버를 만든다."""
     server = MCPServer(SERVER_NAME)
-    recorder = SessionRecorder()
+    # 성공한 호출은 세션 ID와 함께 남겨 반복 작업을 찾는다 (FR-49).
+    recorder = SessionRecorder(on_add=call_logger(new_run_id()))
     _log_every_tool(server, recorder)
     for register in TOOL_REGISTRARS:
         register(server)
