@@ -265,6 +265,26 @@ def run(
     typer.echo(result["path"])
 
 
+@app.command("watch")
+def watch_cmd(
+    recipe: str = typer.Argument(..., help="자동 실행할 레시피 이름"),
+    watch_dir: str = typer.Option(..., "--dir", help="감시할 폴더"),
+    out: str = typer.Option(..., "--out", help="결과를 저장할 폴더"),
+    ext: str = typer.Option(".xlsx", "--ext", help="처리할 파일 확장자"),
+) -> None:
+    """감시 폴더에 새 파일이 들어오면 레시피를 자동 실행합니다. 종료하려면 Ctrl+C. FR-50."""
+    import contextlib
+    from pathlib import Path
+
+    from docmill.watch import watch
+
+    folder = Path(watch_dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    typer.echo(f"감시 시작: {folder}", err=True)
+    with contextlib.suppress(KeyboardInterrupt):
+        watch(recipe, folder, Path(out), ext=ext.lower())
+
+
 recipes_app = typer.Typer(help="저장된 레시피를 관리합니다.", invoke_without_command=True)
 app.add_typer(recipes_app, name="recipes")
 
