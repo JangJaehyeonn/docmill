@@ -152,9 +152,10 @@ def _periodic(block: list[Call]) -> bool:
     return False
 
 
-def _contains(outer: list[str], inner: list[str]) -> bool:
+def _contains(outer: list[Call], inner: list[dict[str, Any]]) -> bool:
+    """`outer` 호출의 어느 연속 구간을 다시 정규화했을 때 인자·연결까지 `inner`와 같은지."""
     n = len(inner)
-    return any(outer[i : i + n] == inner for i in range(len(outer) - n + 1))
+    return any(_steps(outer[i : i + n]) == inner for i in range(len(outer) - n + 1))
 
 
 def find_repeats(sessions: list[list[Call]], accepted: set[str] | None = None) -> list[Suggestion]:
@@ -182,12 +183,18 @@ def find_repeats(sessions: list[list[Call]], accepted: set[str] | None = None) -
 
 def _covered(item: Suggestion, others: list[Suggestion]) -> bool:
     """같은 만큼 이상 반복된 더 긴 작업의 일부이면 따로 제안하지 않는다."""
-    tools = [step["tool"] for step in item.steps]
     return any(
-        len(o.steps) > len(item.steps)
-        and o.count >= item.count
-        and _contains([step["tool"] for step in o.steps], tools)
+        len(o.steps) > len(item.steps) and o.count >= item.count and _contains(o.calls, item.steps)
         for o in others
+    )
+
+
+def _extra_inputs(steps: list[dict[str, Any]]) -> bool:
+    """`$input2` 같은, run_recipe가 바인딩하지 못하는 입력 변수를 쓰는지."""
+    return any(
+        isinstance(v, str) and v.startswith("$input") and v != "$input"
+        for step in steps
+        for v in step["args"].values()
     )
 
 
@@ -208,6 +215,8 @@ def accept(name: str, pick: int = 1, home: Path | None = None) -> dict[str, Any]
     if not 1 <= pick <= len(found):
         raise RecipeError("suggest", f"제안 번호는 1~{len(found)} 사이여야 한다: {pick}")
     chosen = found[pick - 1]
+    if _extra_inputs(chosen.steps):
+        raise RecipeError("suggest", "입력 파일이 둘 이상인 작업은 run_recipe로 실행할 수 없다")
     saved = write_recipe(
         name, [(tool, args) for tool, args, _ in chosen.calls], [o for _, _, o in chosen.calls]
     )

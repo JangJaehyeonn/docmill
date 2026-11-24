@@ -97,3 +97,22 @@ def test_cli_suggest_and_accept() -> None:
     assert (recipes_dir() / "주간.json").is_file()
     again = runner.invoke(app, ["recipes", "suggest", "--accept", "주간2"])
     assert again.exit_code == 1
+
+
+def test_same_tools_with_other_args_are_not_covered() -> None:
+    names = ["a", "b", "c", "d", "e", "f"]
+    calls = [_report(n + ".xlsx", 5 if i < 3 else 3) for i, n in enumerate(names)]
+    # slides=5 report x3 is also a prefix of a longer report->verify task with slides=3
+    longer = [c for n in "xyz" for c in (_report(n + ".xlsx", 3), _verify(n + ".pptx"))]
+    found = find_repeats([calls[:3], longer])
+    slides = [s.steps[0]["args"]["slides"] for s in found if len(s.steps) == 1]
+    assert 5 in slides
+
+
+def test_accept_rejects_pattern_with_two_inputs() -> None:
+    for n in ["a", "b", "c"]:
+        record_call("s", "excel_to_report_ppt", {"input": n + ".xlsx"}, n + ".pptx")
+        record_call("s", "verify_numbers", {"source": "ref.xlsx", "document": n + ".pptx"}, None)
+    assert suggest()
+    with pytest.raises(RecipeError):
+        accept("two-inputs")
