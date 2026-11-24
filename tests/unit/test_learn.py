@@ -1,4 +1,5 @@
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -7,7 +8,8 @@ from typer.testing import CliRunner
 
 from docmill.cli import app
 from docmill.learn import Call, accept, call_logger, find_repeats, record_call, suggest
-from docmill.recipes import RecipeError, SessionRecorder, recipes_dir, show_recipe
+from docmill.recipes import RecipeError, SessionRecorder, recipes_dir, recording, show_recipe
+from docmill.runlog import DB_NAME, get_home
 
 runner = CliRunner()
 
@@ -116,3 +118,40 @@ def test_accept_rejects_pattern_with_two_inputs() -> None:
     assert suggest()
     with pytest.raises(RecipeError):
         accept("two-inputs")
+
+
+def test_guarded_edit_is_logged_but_not_in_recipe() -> None:
+    recorder = SessionRecorder(on_add=call_logger("s1"))
+    recorder.log_only("guarded_edit", {"input": "a.docx"}, "o.docx")
+    assert recorder.calls == []
+    con = sqlite3.connect(get_home(None) / DB_NAME)
+    rows = con.execute("SELECT tool FROM session_calls").fetchall()
+    con.close()
+    assert rows == [("guarded_edit",)]
+
+
+def test_recording_logs_successful_guarded_edit_only() -> None:
+    recorder = SessionRecorder(on_add=call_logger("s1"))
+
+    def guarded_edit(input: str, fail: bool = False) -> str:
+        return json.dumps({"error": "x"} if fail else {"path": "o.docx"})
+
+    wrapped = recording(guarded_edit, recorder)
+    wrapped("a.docx", fail=True)
+    wrapped("b.docx")
+    con = sqlite3.connect(get_home(None) / DB_NAME)
+    rows = con.execute("SELECT tool, args_json FROM session_calls").fetchall()
+    con.close()
+    assert [r[0] for r in rows] == ["guarded_edit"]
+    assert "b.docx" in rows[0][1]
+    assert recorder.calls == []
+
+
+def test_edit_breaks_the_sequence() -> None:
+    recorder = SessionRecorder(on_add=call_logger("s1"))
+    for n in ("a", "b", "c"):
+        tool, args, out = _report(f"{n}.xlsx")
+        recorder.add(tool, args, out)
+        recorder.log_only("guarded_edit", {"input": out}, "o")
+        recorder.add(*_verify(f"{n}.pptx")[:2], None)
+    assert all(len(s.steps) == 1 for s in suggest())

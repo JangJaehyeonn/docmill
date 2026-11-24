@@ -22,6 +22,8 @@ from docmill.runlog import current_run_id, get_home, new_run_id
 RECIPE_TOOLS = frozenset(
     {"excel_to_report_ppt", "doc_to_task_table", "apply_template", "verify_numbers"}
 )
+# Edit tools: logged for repeat detection (FR-49) but not replayable by run_recipe.
+LOG_ONLY_TOOLS = frozenset({"guarded_edit"})
 # Arguments that hold input file paths -> become `$name` variables.
 INPUT_ARGS = ("input", "document", "source")
 # Environment-dependent arguments are not stored; the runner supplies them.
@@ -50,6 +52,11 @@ class SessionRecorder:
         self.outputs: list[str | None] = []  # result `path` of each call
         self._on_add = on_add  # e.g. persist the call for repeat detection (FR-49)
 
+    def log_only(self, tool: str, args: dict[str, Any], output: str | None = None) -> None:
+        """레시피에는 넣지 않고 반복 작업 기록(on_add)에만 남긴다."""
+        if self._on_add is not None:
+            self._on_add(tool, dict(args), output)
+
     def add(self, tool: str, args: dict[str, Any], output: str | None = None) -> None:
         """성공한 호출 하나와 그 결과 산출물 경로를 기록한다."""
         self.calls.append((tool, dict(args)))
@@ -68,8 +75,9 @@ def _parse_success(value: Any) -> dict[str, Any] | None:
 
 def recording(fn: _F, recorder: SessionRecorder) -> _F:
     """도구 함수를 감싸, 성공한 호출(결과에 error가 없음)만 recorder에 남긴다."""
-    if fn.__name__ not in RECIPE_TOOLS:
+    if fn.__name__ not in RECIPE_TOOLS | LOG_ONLY_TOOLS:
         return fn
+    record = recorder.add if fn.__name__ in RECIPE_TOOLS else recorder.log_only
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -78,9 +86,7 @@ def recording(fn: _F, recorder: SessionRecorder) -> _F:
         if data is not None:
             bound = inspect.signature(fn).bind_partial(*args, **kwargs)
             path = data.get("path")
-            recorder.add(
-                fn.__name__, dict(bound.arguments), path if isinstance(path, str) else None
-            )
+            record(fn.__name__, dict(bound.arguments), path if isinstance(path, str) else None)
         return value
 
     return wrapper  # type: ignore[return-value]

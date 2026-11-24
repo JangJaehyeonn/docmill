@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from docmill.recipes import RecipeError, build_steps, write_recipe
+from docmill.recipes import RECIPE_TOOLS, RecipeError, build_steps, write_recipe
 from docmill.runlog import DB_NAME, get_home
 
 logger = logging.getLogger(__name__)
@@ -114,12 +114,16 @@ def _load(home: Path | None) -> tuple[list[list[Call]], set[str]]:
         accepted = {row[0] for row in con.execute("SELECT pattern FROM learned_patterns")}
     finally:
         con.close()
-    sessions: dict[str, list[Call]] = {}
+    sessions: dict[str, list[list[Call]]] = {}
     for session_id, tool, args_json, output in rows:
         args = json.loads(args_json)
-        if isinstance(args, dict):
-            sessions.setdefault(session_id, []).append((tool, args, output))
-    return list(sessions.values()), accepted
+        if not isinstance(args, dict):
+            continue
+        if tool in RECIPE_TOOLS:
+            sessions.setdefault(session_id, [[]])[-1].append((tool, args, output))
+        else:  # an edit between recipe tools breaks the sequence (not replayable)
+            sessions.setdefault(session_id, [[]]).append([])
+    return [part for parts in sessions.values() for part in parts if part], accepted
 
 
 def _steps(block: list[Call]) -> list[dict[str, Any]]:
