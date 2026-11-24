@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import time
 from collections.abc import Callable
 from pathlib import Path
@@ -35,7 +36,9 @@ def _load_state(path: Path) -> set[str]:
 
 def _save_state(path: Path, seen: set[str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(sorted(seen)), encoding="utf-8")
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(sorted(seen)), encoding="utf-8")
+    os.replace(tmp, path)  # atomic: a failed write keeps the previous valid state
 
 
 def process_file(recipe: str, file: Path, out_dir: Path, home: Path | None = None) -> bool:
@@ -85,8 +88,12 @@ def scan_once(
     seen: set[str],
     ext: str = ".xlsx",
     home: Path | None = None,
+    on_handled: Callable[[], None] | None = None,
 ) -> int:
-    """감시 폴더를 한 번 훑어 처리하지 않은 새 파일을 실행한다. 처리한 개수를 돌려준다."""
+    """감시 폴더를 한 번 훑어 처리하지 않은 새 파일을 실행한다. 처리한 개수를 돌려준다.
+
+    `on_handled`는 파일 하나를 처리할 때마다(다음 파일 전에) 호출된다. 상태 저장용이다.
+    """
     handled = 0
     for file in sorted(watch_dir.iterdir()):
         if not file.is_file() or file.name.startswith((".", "~$")) or file.suffix.lower() != ext:
@@ -105,6 +112,8 @@ def scan_once(
         except Exception:  # one bad file must not stop the watcher
             logger.exception("감시 실행 실패: %s", file)
         handled += 1
+        if on_handled is not None:
+            on_handled()
     return handled
 
 
@@ -122,6 +131,14 @@ def watch(
     seen = _load_state(state_file)
     sizes: dict[Path, int] = {}
     while not should_stop():
-        if scan_once(recipe, watch_dir, out_dir, sizes, seen, ext, home):
-            _save_state(state_file, seen)
+        scan_once(
+            recipe,
+            watch_dir,
+            out_dir,
+            sizes,
+            seen,
+            ext,
+            home,
+            on_handled=lambda: _save_state(state_file, seen),
+        )
         time.sleep(poll)
