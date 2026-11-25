@@ -5,4 +5,4 @@ from importlib.metadata import PackageNotFoundError, version
 try:
     __version__ = version("docmill")
 except PackageNotFoundError:  # pragma: no cover - 소스 트리에서 직접 실행할 때
-    __version__ = "0.0.0"
+    __version__ = "0.1.0"
