@@ -79,16 +79,16 @@ function untilSent(path: string, ms: number): Promise<boolean> {
  * 편집기는 상태를 postMessage로 늦게 알린다. 셀에 입력하고 Enter를 누른 직후 저장하면 "보내지 않은 변경 있음"
  * 알림이 아직 오지 않아, 바로 저장하면 그 편집이 강제 저장에 빠진다 (#162). 그래서 대기 중인 변경이 없어
  * 보여도 `settleMs` 동안 새 알림이 오는지 지켜보고, 오면 보낼 때까지 기다린다. 다 보낸 뒤에도 문서 서버가
- * 변경을 반영할 짧은 틈(`settleMs`의 1/5)을 두고 다시 확인한다.
+ * 변경을 반영할 짧은 틈(`settleMs`의 1/3)을 두고 다시 확인한다.
  */
-export async function waitOfficeSynced(path: string, ms: number, settleMs = 1500): Promise<boolean> {
+export async function waitOfficeSynced(path: string, ms: number, settleMs = 3000): Promise<boolean> {
   const end = Date.now() + ms;
   const left = (): number => Math.max(0, end - Date.now());
   for (;;) {
     if (pending.get(path) === true) {
       if (!(await untilSent(path, left()))) return false;
       // 다 보냈다는 알림 뒤에 이어지는 편집이 있는지 잠깐 더 본다.
-      const after = await nextEvent(path, Math.min(Math.floor(settleMs / 5), left()));
+      const after = await nextEvent(path, Math.min(Math.floor(settleMs / 3), left()));
       if (after === true) continue;
       return true;
     }
