@@ -747,10 +747,17 @@ async function forceSave(
     // 잠깐(최대 retryOneSec초) 다시 요청하고, 그래도 1이면 편집이 없는 것으로 본다 (연 뒤 바로 점검하는 경우).
     const retryOneSec = opts.forceSaveRetryOneSec ?? 5;
     let code = await commandForceSave(server, key, saved.token);
+    const codes = [code];
     for (let i = 0; i < 30 && (code === 4 || (code === 1 && i < retryOneSec)); i++) {
       await new Promise((r) => setTimeout(r, 1000));
       code = await commandForceSave(server, key, saved.token);
+      codes.push(code);
     }
+    // 진단용: 강제 저장 응답 코드 흐름 (예: 4,4,0). 간헐 저장 누락(#162)을 CI 로그에서 추적한다.
+    const trace = (query.get("trace") ?? "").replace(/[^tf+0-9,]/g, "").slice(0, 200);
+    console.error(
+      `강제 저장 응답: ${rel} → ${codes.join(",")} (편집기 동기화=${query.get("sync") ?? "?"} 알림=${trace || "없음"})`,
+    );
     const unchanged = code === 1 || code === 4;
     if (code !== 0 && !unchanged) throw new Error(`문서 서버 오류 ${code}`);
     if (unchanged) {

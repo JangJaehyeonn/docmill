@@ -4,7 +4,7 @@ import { ChatPanel } from "./ChatPanel";
 import { ExportDialog } from "./ExportDialog";
 import { SettingsPanel } from "./SettingsPanel";
 import { createLatestGate } from "./similar";
-import { hasOfficePending, waitOfficeSynced } from "./officeSync";
+import { hasOfficePending, officeTrace, waitOfficeSynced } from "./officeSync";
 import { HwpEditor } from "./HwpEditor";
 import {
   beginSave,
@@ -327,8 +327,9 @@ export function App() {
     try {
       // 방금 입력한 내용이 문서 서버에 닿을 때까지 잠깐 기다린다 (닿지 않은 편집은 강제 저장에 빠진다).
       const synced = await waitOfficeSynced(path, 15_000);
-      // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다.
-      const res = await fetch(`/api/save?path=${encodeURIComponent(path)}`, { method: "POST" });
+      // 서버는 문서 서버가 파일을 다 쓴 뒤에 응답한다. sync·trace는 진단 로그용이다 (#162).
+      const diag = `&sync=${synced ? 1 : 0}&trace=${encodeURIComponent(officeTrace(path))}`;
+      const res = await fetch(`/api/save?path=${encodeURIComponent(path)}${diag}`, { method: "POST" });
       const body = (await res.json()) as { error?: string };
       if (res.ok && !synced) {
         setSaveMessage("저장했지만 최근 편집이 문서 서버에 다 닿지 않아 파일에 빠졌을 수 있어요. 잠시 뒤 다시 저장해 주세요.");

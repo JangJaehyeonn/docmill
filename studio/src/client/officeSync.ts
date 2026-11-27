@@ -10,7 +10,19 @@ const waiters = new Map<string, Set<(ok: boolean) => void>>();
 const events = new Map<string, Set<(v: boolean | null) => void>>();
 
 /** 편집기가 알린 상태를 기록한다. false 가 되면 기다리던 저장을 깨운다. */
+const traces = new Map<string, string[]>();
+
+/** 진단용: 이 문서의 최근 편집기 상태 알림 (예: `t+120,f+480` = 열린 뒤 ms). 저장 요청에 실어 서버 로그에 남긴다. */
+export function officeTrace(path: string): string {
+  return (traces.get(path) ?? []).slice(-12).join(",");
+}
+
+const opened = Date.now();
+
 export function setOfficePending(path: string, value: boolean): void {
+  const trace = traces.get(path) ?? [];
+  trace.push(`${value ? "t" : "f"}+${Date.now() - opened}`);
+  traces.set(path, trace.slice(-24));
   pending.set(path, value);
   for (const notify of [...(events.get(path) ?? [])]) notify(value);
   if (!value) {
